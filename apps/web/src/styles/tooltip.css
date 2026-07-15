@@ -1,0 +1,7 @@
+/* Looped tooltip override — daisy ships tooltip text at 0.875rem (text-sm)
+   which reads heavy next to the icon-only buttons it usually anchors to.
+   Drop to 0.75rem (text-xs) so the tip stays subordinate to its trigger. */
+.tooltip > .tooltip-content,
+.tooltip[data-tip]:before {
+  font-size: 0.75rem;
+}

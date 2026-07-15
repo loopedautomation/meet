@@ -1,0 +1,93 @@
+name: looped-meet
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.8
+    command: --config /etc/livekit.yaml
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      # Must match rtc.port_range_start/end in livekit.yaml
+      - "51000-51100:51000-51100/udp"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
+      NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
+      BRIDGE_URL: ${BRIDGE_URL:-http://agent-bridge:8090}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN}
+    depends_on:
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:3000/api/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  agent-bridge:
+    build:
+      context: .
+      dockerfile: apps/agent-bridge/Dockerfile
+    ports:
+      - "8090:8090"
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN}
+      AGENTS_CONFIG: /app/agents.yaml
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN}
+    volumes:
+      - ./agents.yaml:/app/agents.yaml:ro
+    depends_on:
+      livekit:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://localhost:8090/health').then((r)=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  demo-agent:
+    image: ghcr.io/loopedautomation/agent:latest
+    volumes:
+      - ./examples/demo-agent:/agent:ro
+    working_dir: /agent
+    environment:
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+      SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN}
+    expose:
+      - "8300"
+    restart: unless-stopped

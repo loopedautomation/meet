@@ -1,0 +1,19 @@
+# Agents available to invite into meetings.
+# Mounted into the agent-bridge container; each `brain` points at a running
+# looped-af agent's TTY trigger (or webhook).
+agents:
+  - id: scout
+    name: Scout
+    description: A general-purpose research assistant that can look things up mid-meeting.
+    greeting: "Hi, I'm Scout. Ask me anything — I can look things up while we talk."
+    brain:
+      kind: tty
+      url: ws://demo-agent:8300/tty
+      token_env: SCOUT_TTY_TOKEN
+    stt:
+      provider: openai
+      model: gpt-4o-mini-transcribe
+    tts:
+      provider: openai
+      model: gpt-4o-mini-tts
+      voice: alloy

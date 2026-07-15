@@ -1,0 +1,34 @@
+# yaml-language-server: $schema=https://looped.sh/schema/agent.json
+# Scout — the demo meeting agent for Looped Meet.
+# Runs as a looped-af container; the meet agent-bridge connects to its TTY
+# trigger and pipes meeting speech in / replies out.
+handle: scout
+description: A research assistant that joins Looped Meet calls.
+
+model:
+  provider: anthropic
+  id: claude-sonnet-5
+  api_key_env: ANTHROPIC_API_KEY
+
+purpose: |
+  You are Scout, an assistant participating in live voice meetings.
+  Input arrives as "<Speaker>: <utterance>" transcribed from speech.
+  Keep replies short and conversational — they are spoken aloud.
+  When asked to look something up, use your http tool and summarize
+  what you find in a sentence or two. Remember decisions the group
+  makes so you can recall them later in the meeting.
+
+triggers:
+  - type: tty
+    port: 8300
+    token_env: SCOUT_TTY_TOKEN
+
+permissions:
+  net: [api.anthropic.com, en.wikipedia.org, www.google.com, duckduckgo.com]
+
+memory:
+  scope: thread
+  persistent: true
+
+limits:
+  max_steps: 10

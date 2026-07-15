@@ -1,0 +1,532 @@
+/* Register the shadow-offset variables with @property so they have a
+   defined type and can interpolate cleanly. Without this they're treated
+   as opaque <custom-ident> tokens, which means transitioning through
+   them via `box-shadow: var(--btn-shadow)` is unreliable — particularly
+   after DaisyUI's :active rule directly overwrites `--btn-shadow`, the
+   cascade unwind can leave the resolved box-shadow stuck on the active
+   value until the element remounts. */
+@property --btn-shadow-offset-x {
+    syntax: "<length>";
+    inherits: true;
+    initial-value: 0px;
+}
+@property --btn-shadow-offset-y {
+    syntax: "<length>";
+    inherits: true;
+    initial-value: 0px;
+}
+
+/* Looped button overrides — extends DaisyUI v5 `.btn`.
+   Imported alongside themes.css in every app.
+
+   Two variants of the brutalist silhouette ship in this file:
+
+   1. Unvariant `.btn` (no semantic colour) — soft brutalist using
+      base-300 for both border and shadow. This is the default look for any
+      `<button class="btn">` without a variant class. Surface-anchored,
+      reads as "card with a hint of elevation."
+
+   2. `.btn-brutalist` modifier — punchy brutalist using a darkened mix of
+      the button's own --btn-color for border + shadow. Opt in on top of
+      any DaisyUI variant.
+
+   Both share the same shadow offsets, border-width, radius, hover/active
+   translate, and disabled treatment. Only the colour cascade differs. */
+
+/* --- Sizing -------------------------------------------------------- */
+
+/* Small (`btn-sm`) is the new default size. */
+.btn:where(:not(.btn-xs, .btn-md, .btn-lg, .btn-xl)) {
+    --fontsize: 0.75rem;
+    --btn-p: 0.75rem;
+    --size: calc(var(--size-field, 0.25rem) * 8);
+}
+
+/* --- Colours ------------------------------------------------------- */
+
+/* Unvariant default — base-100 fill, base-300 border + shadow. */
+.btn:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)) {
+    --btn-bg: var(--color-base-100);
+    --btn-fg: var(--color-base-content);
+    --btn-shadow-color: var(--color-base-300);
+    --btn-border: var(--color-base-300);
+}
+
+/* Brutalist modifier — three-step gradient from fill to shadow: the
+   button bg is the variant colour, the border is a 10% black mix of it
+   (visible against the fill but not stark), and the shadow is a 20% mix
+   (darker still). The intermediate border keeps the silhouette legible
+   while the deeper shadow gives genuine depth. Falls back to base-300
+   when no variant is set so unvariant `btn-brutalist` matches the soft
+   default. */
+.btn-brutalist {
+    --btn-border: color-mix(
+        in oklch,
+        var(--btn-color, var(--color-base-300)),
+        black 10%
+    );
+    --btn-shadow-color: color-mix(
+        in oklch,
+        var(--btn-color, var(--color-base-300)),
+        black 35%
+    );
+}
+
+/* Unvariant `btn-brutalist` keeps the border at the plain base-300 token
+   instead of the 10%-darker mix — when there's no variant colour to
+   build a gradient from, base-300 reads cleaner on the base-100 fill.
+   Shadow also lightens to a 20% mix instead of 35% — base-300 is already
+   a light gray in light mode, so mixing 35% black reads as too heavy on
+   the page. Variants (.btn-primary etc.) still get the 10% / 35% mixes. */
+.btn-brutalist:where(
+    :not(
+        .btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash
+    )
+) {
+    --btn-border: var(--color-base-300);
+    /* Mix in `oklab` (not `oklch`): when `base-300` has chroma 0 the hue
+       channel is undefined, and oklch interpolation toward black (hue 0)
+       sweeps through 250→305°→0° picking up a red/orange tint mid-mix.
+       oklab interpolates lightness/a/b directly, staying neutral. */
+    --btn-shadow-color: color-mix(in oklab, var(--color-base-300), black 20%);
+}
+
+/* Outline + brutalist — same colour for border and shadow as a filled
+   brutalist variant; the outline's transparent fill is the only difference.
+   DaisyUI's `.btn-outline` paints `border-color: currentColor` directly
+   (not via `--btn-border`), so the visible top-button border ignores our
+   variable and renders in the text colour. Pin both: the variable for the
+   shadow's 1px outer ring, and `border-color` for the actual button edge,
+   so the outline silhouette matches the variant. */
+.btn-brutalist.btn-outline {
+    --btn-border: var(--btn-color, var(--color-base-content));
+    border-color: var(--btn-color, var(--color-base-content));
+}
+
+/* --- Shared brutalist mechanics ------------------------------------ */
+/* Applies to BOTH the unvariant default and any `.btn-brutalist`. */
+
+.btn-brutalist,
+.btn:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)) {
+    --btn-shadow-offset-x: 0.5px;
+    --btn-shadow-offset-y: 2px;
+    /* Two-layer box-shadow: the inner layer is the offset block in the
+       shadow colour; the outer layer (with 1px spread) sits 1px wider on
+       every side, painted in the same border colour as the button — so
+       the shadow rectangle gets the same outline as the button itself.
+       The horizontal offset is intentionally sub-pixel — barely visible,
+       just enough to hint at depth without reading as an asymmetric drop. */
+    --btn-shadow:
+        0.5px 2px 0 0 var(--btn-shadow-color),
+        0.5px 2px 0 1px var(--btn-border);
+    border-width: 1px;
+    /* Focus ring extends past the offset shadow so the whole button +
+       shadow silhouette is enclosed. The offset accounts for the
+       shadow's vertical reach (`--btn-shadow-offset-y`) plus the 1px
+       spread of the outer shadow ring. Per-size overrides further down
+       adjust this for xs and md where the shadow extent differs. */
+    outline-offset: 3px;
+    /* Use the `translate` individual property (not `transform: translate()`)
+       so we share the same animation channel as DaisyUI's `translate: 0 .5px`
+       on :active. Mixing the two leaves the properties desynchronized when
+       :active ends — translate snaps back instantly while transform
+       transitions — which manifests as "hover stops working" until the
+       element remounts. */
+    transition:
+        translate 0.08s ease,
+        box-shadow 0.08s ease,
+        background-color 0.2s,
+        color 0.2s;
+}
+
+/* Radius — match DaisyUI's `--radius-field`; defer to circle/square. */
+.btn-brutalist:not(.btn-circle, .btn-square),
+.btn:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash,
+        .btn-circle,
+        .btn-square)) {
+    border-radius: var(--radius-field, 0.5rem);
+}
+
+/* Hover — half-press: button drops vertically, shadow keeps both axes.
+   The silhouette's outer edge stays put while the bottom shadow band
+   shrinks 2px → 1px and the right shadow band stays visible — reads as
+   "midway between resting and pressed" without collapsing into the active
+   look. The previous diagonal translate landed too close to active. */
+.btn-brutalist:hover,
+.btn:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)):hover {
+    --btn-shadow-offset-x: 0.5px;
+    --btn-shadow-offset-y: 1px;
+    --btn-shadow:
+        0.5px 1px 0 0 var(--btn-shadow-color),
+        0.5px 1px 0 1px var(--btn-border);
+    translate: 0 1px;
+}
+
+/* Active — full press: shadow flattened to zero, button fully translated. */
+.btn-brutalist:active,
+.btn:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)):active {
+    --btn-shadow-offset-x: 0px;
+    --btn-shadow-offset-y: 0px;
+    --btn-shadow: none;
+    translate: 0.5px 2px;
+}
+
+/* Hover/active for the per-size offsets — keep the lift/press pattern. */
+
+/* Disabled — fade bg, border, and shadow heavily but keep text crisp.
+   Each variant retains its own colour identity (primary stays primary-
+   tinted, error stays error-tinted) just at ~35% opacity. Sits at the
+   rest position (no translate, no shadow shrink) so the button reads as
+   "fully unpressed and not pressable" — never half-pressed.
+
+   DaisyUI's `.btn-disabled, .btn:disabled` rule sets `box-shadow: none`
+   and a custom `background-color` *directly* (not via the CSS variables),
+   so we have to re-set those properties here — overriding tokens isn't
+   enough. Specificity uses doubled `.btn.btn-brutalist` to clear DaisyUI's
+   `:not(.btn-link, .btn-ghost)` selector at (0,2,1). */
+.btn.btn-brutalist:is(:disabled, [disabled]),
+.btn:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)).btn:is(:disabled, [disabled]) {
+    --btn-bg: color-mix(
+        in oklch,
+        var(--btn-color, var(--color-base-100)),
+        transparent 65%
+    );
+    --btn-border: color-mix(
+        in oklch,
+        var(--btn-color, var(--color-base-300)),
+        transparent 65%
+    );
+    --btn-shadow-color: color-mix(
+        in oklch,
+        var(--btn-color, var(--color-base-300)),
+        transparent 65%
+    );
+
+    /* Re-assert paint values directly so DaisyUI's `box-shadow: none` and
+       hard-coded `background-color` don't collapse the silhouette. The
+       shadow stays at the size-specific REST offsets (xs `0.5px 1px`,
+       default `0.5px 2px`, md `0.5px 3px`) by reading the same vars the
+       rest rule sets. */
+    background-color: var(--btn-bg);
+    box-shadow:
+        var(--btn-shadow-offset-x) var(--btn-shadow-offset-y) 0 0
+            var(--btn-shadow-color),
+        var(--btn-shadow-offset-x) var(--btn-shadow-offset-y) 0 1px
+            var(--btn-border);
+
+    /* DaisyUI's :disabled rule mutes --btn-fg to ~20% of base-content;
+       force-restore the text to full base-content so the label stays
+       readable on the faded fill. */
+    color: var(--color-base-content);
+
+    /* DaisyUI sets `pointer-events: none` on disabled buttons, which
+       prevents `cursor: not-allowed` from ever rendering (the cursor
+       belongs to the parent in that mode). Re-enable pointer events so
+       the not-allowed cursor actually shows — the native `disabled`
+       attribute still blocks click activation on real buttons. */
+    pointer-events: auto;
+    cursor: not-allowed;
+    translate: none;
+}
+
+/* --- Join groups ---------------------------------------------------- */
+/* In a `.join`, each segment automatically gets the brutalist colour
+   gradient even without `btn-brutalist` on the markup — variant segments
+   pick up their own 35%-darker shadow, unvariant segments fall back to
+   base-300. This keeps `<button class="btn join-item">` matching the
+   default brutalist button look without forcing every join consumer to
+   sprinkle `btn-brutalist` onto each item. */
+.join > .btn {
+    --btn-shadow-color: color-mix(
+        in oklch,
+        var(--btn-color, var(--color-base-300)),
+        black 35%
+    );
+}
+.join > .btn:where(
+    :not(
+        .btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash
+    )
+) {
+    --btn-shadow-color: color-mix(in oklab, var(--color-base-300), black 20%);
+}
+
+/* DaisyUI's default `-1px` overlap matches its 1px border, which is
+   exactly what brutalist buttons now use too — so no override needed.
+   Left in place as a documented no-op for clarity. */
+.join.join-horizontal > .join-item:where(:not(:first-child, :disabled, [disabled], .btn-disabled)),
+.join:not(.join-vertical) > .join-item:where(:not(:first-child, :disabled, [disabled], .btn-disabled)) {
+    margin-inline-start: -1px;
+}
+.join.join-vertical > .join-item:where(:not(:first-child, :disabled, [disabled], .btn-disabled)) {
+    margin-block-start: -1px;
+    margin-inline-start: 0;
+}
+
+/* Restore the per-segment radius from DaisyUI's `--join-*` vars (only
+   the first/last segments end up with non-zero radii, so the inner
+   segments stay square and adjacent corners meet flush). The brutalist
+   default `border-radius: var(--radius-field)` would otherwise round
+   every segment and break the joined silhouette. */
+.join > .btn,
+.join > .btn-brutalist {
+    border-start-start-radius: var(--join-ss, 0);
+    border-start-end-radius: var(--join-se, 0);
+    border-end-end-radius: var(--join-ee, 0);
+    border-end-start-radius: var(--join-es, 0);
+}
+
+/* Per-segment hover/active is left intact so each segment lifts on hover
+   and presses on active just like a regular button — matches the rest
+   of the platform's button feel. The natural shadow shrink + translate
+   does shift the clicked segment relative to its neighbours by a pixel
+   or two, but that's the desired press affordance, not a bug. */
+
+/* DaisyUI promotes a focused/clicked join child to `z-index: 1` and
+   gives the hovered child `isolation: isolate` so their focus outline
+   isn't clipped by neighbours. With our `-2px` overlap this has the side
+   effect of revealing the segment's right border (which normally sits
+   *under* the next segment) — the segment's right edge "jumps forward"
+   by 2px on click or hover. Reset to natural sibling stacking.
+
+   Bumped specificity (`.join > .btn` instead of `.join > :where()`) to
+   guarantee these win over DaisyUI's layered rules regardless of bundler
+   layer ordering. */
+.join > .btn:focus,
+.join > .btn:focus-visible,
+.join > .btn:focus-within,
+.join > .btn:active,
+.join > .btn:hover {
+    z-index: auto;
+    isolation: auto;
+}
+
+/* --- Per-size shadow offsets --------------------------------------- */
+
+.btn-brutalist.btn-xs,
+.btn-xs:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)) {
+    --btn-shadow-offset-x: 0.5px;
+    --btn-shadow-offset-y: 1px;
+    --btn-shadow:
+        0.5px 1px 0 0 var(--btn-shadow-color),
+        0.5px 1px 0 1px var(--btn-border);
+    /* xs has a smaller shadow (1px + 1px ring), so the focus ring needs
+       less room to clear it. */
+    outline-offset: 2px;
+}
+
+.btn-brutalist.btn-xs:hover,
+.btn-xs:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)):hover {
+    --btn-shadow-offset-x: 0.5px;
+    --btn-shadow-offset-y: 0px;
+    --btn-shadow:
+        0.5px 0 0 0 var(--btn-shadow-color),
+        0.5px 0 0 1px var(--btn-border);
+    translate: 0 1px;
+}
+
+.btn-brutalist.btn-xs:active,
+.btn-xs:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)):active {
+    --btn-shadow-offset-x: 0px;
+    --btn-shadow-offset-y: 0px;
+    --btn-shadow: none;
+    translate: 0.5px 1px;
+}
+
+.btn-brutalist.btn-md,
+.btn-md:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)) {
+    --btn-shadow-offset-x: 0.5px;
+    --btn-shadow-offset-y: 3px;
+    --btn-shadow:
+        0.5px 3px 0 0 var(--btn-shadow-color),
+        0.5px 3px 0 1px var(--btn-border);
+    /* md has a deeper shadow (3px + 1px ring), so the focus ring needs
+       more room to clear it. */
+    outline-offset: 4px;
+}
+
+.btn-brutalist.btn-md:hover,
+.btn-md:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)):hover {
+    --btn-shadow-offset-x: 0.5px;
+    --btn-shadow-offset-y: 2px;
+    --btn-shadow:
+        0.5px 2px 0 0 var(--btn-shadow-color),
+        0.5px 2px 0 1px var(--btn-border);
+    translate: 0 1px;
+}
+
+.btn-brutalist.btn-md:active,
+.btn-md:where( :not(.btn-primary,
+        .btn-secondary,
+        .btn-accent,
+        .btn-neutral,
+        .btn-info,
+        .btn-success,
+        .btn-warning,
+        .btn-error,
+        .btn-ghost,
+        .btn-link,
+        .btn-soft,
+        .btn-outline,
+        .btn-dash)):active {
+    --btn-shadow-offset-x: 0px;
+    --btn-shadow-offset-y: 0px;
+    --btn-shadow: none;
+    translate: 0.5px 3px;
+}

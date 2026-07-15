@@ -1,0 +1,17 @@
+/* Looped dropdown override — every `.dropdown-content` (and `.menu`
+   inside a dropdown) renders with the same brutalist silhouette as the
+   modal: 1px `base-300` border, dual-layer `0 2px` offset shadow with the
+   inner fill at `color-mix(base-300, black 20%)` and a 1px ring at
+   `base-300`. Reads as the same surface-anchored elevation as modals,
+   just at dropdown scale.
+
+   Imported alongside themes.css in every app. */
+.dropdown-content,
+.dropdown.menu {
+    border-width: 1px;
+    border-style: solid;
+    border-color: var(--color-base-300);
+    box-shadow:
+        0 2px 0 0 color-mix(in oklab, var(--color-base-300), black 20%),
+        0 2px 0 1px var(--color-base-300);
+}

@@ -1,0 +1,9 @@
+@import "tailwindcss";
+@plugin "daisyui";
+@import "./themes.css";
+@import "./button.css";
+@import "./modal.css";
+@import "./badge.css";
+@import "./tooltip.css";
+@import "./dropdown.css";
+@import "./alert.css";

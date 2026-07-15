@@ -1,0 +1,15 @@
+# LiveKit server config for local/self-hosted deployments.
+# Keys here MUST match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env.
+# For production behind NAT, see README (node-ip, TURN).
+port: 7880
+rtc:
+  tcp_port: 7881
+  # If this range clashes with something on your host, change it here AND in
+  # docker-compose.yaml (the two must match).
+  port_range_start: 51000
+  port_range_end: 51100
+  use_external_ip: false
+keys:
+  devkey: devsecret_change_me_32_characters_x
+logging:
+  level: info

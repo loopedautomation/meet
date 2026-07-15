@@ -1,0 +1,40 @@
+"use client"
+
+import { useStore } from "@nanostores/react"
+import { X } from "lucide-react"
+import { AgentsPanel } from "@/components/room/panels/AgentsPanel"
+import { ChatPanel } from "@/components/room/panels/ChatPanel"
+import { TranscriptPanel } from "@/components/room/panels/TranscriptPanel"
+import { $openPanel } from "@/stores/panels"
+
+const titles = {
+  agents: "Agents",
+  transcript: "Transcript",
+  chat: "Chat",
+} as const
+
+export function PanelHost({ slug }: { slug: string }) {
+  const openPanel = useStore($openPanel)
+  if (!openPanel) return null
+
+  return (
+    <aside className="flex w-80 shrink-0 flex-col rounded-box bg-base-100">
+      <div className="flex items-center justify-between border-base-300 border-b px-4 py-3">
+        <h2 className="font-medium">{titles[openPanel]}</h2>
+        <button
+          type="button"
+          className="btn btn-ghost btn-circle btn-sm"
+          onClick={() => $openPanel.set(null)}
+          aria-label="Close panel"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {openPanel === "agents" && <AgentsPanel slug={slug} />}
+        {openPanel === "transcript" && <TranscriptPanel />}
+        {openPanel === "chat" && <ChatPanel />}
+      </div>
+    </aside>
+  )
+}

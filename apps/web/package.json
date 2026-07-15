@@ -1,0 +1,36 @@
+{
+  "name": "@meet/web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --port 3000",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@livekit/components-react": "catalog:",
+    "@meet/shared": "workspace:*",
+    "@nanostores/react": "catalog:",
+    "@tanstack/react-query": "catalog:",
+    "livekit-client": "catalog:",
+    "livekit-server-sdk": "catalog:",
+    "lucide-react": "catalog:",
+    "motion": "catalog:",
+    "nanoid": "^5.1.5",
+    "nanostores": "catalog:",
+    "next": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.17",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "daisyui": "catalog:",
+    "tailwindcss": "catalog:",
+    "typescript": "catalog:"
+  }
+}

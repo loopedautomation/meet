@@ -1,0 +1,49 @@
+/* Looped badge override — every badge renders outline-only.
+
+   The platform never uses solid-fill badges. A filled badge reads as a
+   stamp on our flat surfaces and clashes with the brutalist button
+   language; an outline badge is quieter and lets typographic hierarchy do
+   the work. Variant colour now drives the text + border; background stays
+   transparent.
+
+   Excludes `.badge-ghost`, `.badge-soft`, and `.badge-dash` which already
+   ship from DaisyUI as non-solid styles — touching them would re-style
+   them in surprising ways. If a badge genuinely needs a soft tinted fill,
+   reach for `badge-soft` explicitly. */
+.badge:where(:not(.badge-ghost, .badge-soft, .badge-dash)) {
+  color: var(--badge-color, var(--color-base-content));
+  --badge-bg: transparent;
+  background-image: none;
+  border-color: currentColor;
+}
+
+/* Soft badges — deepen DaisyUI's stock tint. The default 8% background /
+   10% border mix is nearly invisible on base-100, so a soft badge reads
+   as just another outline badge. A 15% fill with no border makes it a
+   proper tinted chip, clearly distinct from the outline default. */
+.badge-soft {
+  background-color: color-mix(
+    in oklab,
+    var(--badge-color, var(--color-base-content)) 15%,
+    var(--color-base-100)
+  );
+  border-color: transparent;
+}
+
+/* Bump every badge font-size down one step from DaisyUI's defaults. The
+   stock sizing reads slightly heavy in dense tables/list rows where badges
+   live; one step smaller keeps them legible without dominating the row.
+   Mapping: lg 1rem → 0.875rem · default 0.875rem → 0.75rem ·
+   sm 0.75rem → 0.625rem · xs 0.625rem → 0.5rem. */
+.badge {
+  font-size: 0.75rem;
+}
+.badge-xs {
+  font-size: 0.5rem;
+}
+.badge-sm {
+  font-size: 0.625rem;
+}
+.badge-lg {
+  font-size: 0.875rem;
+}

@@ -1,0 +1,107 @@
+/* Looped alert override — every `.alert` renders filled-brutalist with
+   the same three-step colour gradient as buttons and modals:
+
+       fill  →  border (10% darker)  →  shadow (35% darker)
+
+   For variant alerts (info / success / warning / error / etc.) the fill
+   is the variant colour and the border + shadow derive from it.
+
+   For plain alerts (no variant) the fill is `base-100` (the page colour)
+   and the border + shadow anchor on `base-300` instead — matching the
+   unvariant button: `base-300` border, `base-300` shadow at 20% darken.
+
+   Three changes from DaisyUI's stock alert:
+   1. **Always filled.** The `alert-outline` modifier is ignored —
+      `background-color` is re-asserted to `--alert-color` so old
+      `alert alert-outline alert-info` markup still renders filled.
+   2. **Three-step brutalist gradient** (fill / 10%-darker border /
+      35%-darker shadow) with a 1px ring layer at the border colour, so
+      the offset block reads as a button-shaped duplicate sitting under
+      the alert.
+   3. **`--radius-field` corners** matching the rest of the brutalist
+      surfaces. */
+
+/* Variant alerts (default rule) — 10% / 35% gradient on the fill. */
+.alert {
+    border-width: 1px;
+    border-style: solid;
+    border-radius: var(--radius-field, 0.5rem);
+    background-color: var(--alert-color, var(--color-base-100));
+    background-image: none;
+    border-color: color-mix(in oklch,
+            var(--alert-color, var(--color-base-300)),
+            black 10%);
+    box-shadow:
+        0 2px 0 0 color-mix(in oklch,
+            var(--alert-color, var(--color-base-300)),
+            black 35%),
+        0 2px 0 1px color-mix(in oklch,
+            var(--alert-color, var(--color-base-300)),
+            black 10%);
+}
+
+/* DaisyUI lays the alert out as a grid with a `minmax(auto, 1fr)`
+   content column, which never shrinks below its intrinsic width — long
+   error strings overflow horizontally instead of wrapping. Allow the
+   content cell (and any wrapper inside it) to shrink so text wraps
+   normally. */
+.alert>* {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    white-space: unset;
+}
+
+/* Filled variants need the matching `*-content` foreground — DaisyUI's
+   stock alert sets `color: var(--alert-color)`, which after our re-fill
+   leaves variant-coloured text on a same-coloured background (e.g. red
+   on red). Re-assert the content colour per variant so text stays
+   readable. */
+.alert.alert-info {
+    color: var(--color-info-content);
+}
+
+.alert.alert-success {
+    color: var(--color-success-content);
+}
+
+.alert.alert-warning {
+    color: var(--color-warning-content);
+}
+
+.alert.alert-error {
+    color: var(--color-error-content);
+}
+
+.alert.alert-primary {
+    color: var(--color-primary-content);
+}
+
+.alert.alert-secondary {
+    color: var(--color-secondary-content);
+}
+
+.alert.alert-accent {
+    color: var(--color-accent-content);
+}
+
+.alert.alert-neutral {
+    color: var(--color-neutral-content);
+}
+
+/* Plain alerts (no variant) — anchor border + shadow on `base-300`
+   instead of mixing from `base-100`. A 10% darken of base-100 would be
+   barely visible against a base-100 page; base-300 reads cleanly. The
+   shadow uses 20% darken of base-300 to match the unvariant button. */
+.alert:where( :not(.alert-info,
+        .alert-success,
+        .alert-warning,
+        .alert-error,
+        .alert-primary,
+        .alert-secondary,
+        .alert-accent,
+        .alert-neutral)) {
+    border-color: var(--color-base-300);
+    box-shadow:
+        0 2px 0 0 color-mix(in oklab, var(--color-base-300), black 20%),
+        0 2px 0 1px var(--color-base-300);
+}

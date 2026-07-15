@@ -1,0 +1,45 @@
+/* Looped modal overrides — extends DaisyUI v5 `.modal-box`.
+   Imported alongside themes.css in every app. */
+
+/* Keep native dialog modals visually solid during rubber-band / elastic
+   overscroll. Without this, long modal content can chain scroll to the page
+   and briefly reveal transparent edges behind the backdrop on touch devices. */
+.modal {
+    overscroll-behavior: contain;
+}
+
+.modal::backdrop,
+.modal-backdrop {
+    position: fixed;
+    inset: 0;
+}
+
+.modal-box {
+    overscroll-behavior: contain;
+}
+
+/* Brutalist modifier — hard offset shadow + 2px border, applied to the
+   modal-box. Pass via the Modal component's className prop:
+     <Modal className="modal-brutalist">…</Modal>
+   or directly on a raw .modal-box element:
+     <div class="modal-box modal-brutalist">…</div>
+
+   Border and shadow both use --color-base-300 — soft enough to read as
+   surface elevation rather than a stark outline, while the shorter 4px
+   offset keeps the shadow tucked close to the box. Radius matches
+   DaisyUI's default (--radius-box) so the rounding is consistent with
+   non-brutalist modals. */
+.modal-box.modal-brutalist {
+    /* Border stays at the plain base-300; the shadow steps darker (35%
+       black mix) so the offset block reads as genuine depth. The dual-
+       layer shadow (inner darker fill + 1px ring at base-300) gives the
+       shadow its own outline matching the modal's border. */
+    --modal-shadow-color: color-mix(in oklab, var(--color-base-300), black 20%);
+    border-width: 1px;
+    border-style: solid;
+    border-color: var(--color-base-300);
+    border-radius: var(--radius-box, 1rem);
+    box-shadow:
+        0.25px 2px 0 0 var(--modal-shadow-color),
+        0.25px 2px 0 1px var(--color-base-300);
+}
