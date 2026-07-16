@@ -35,7 +35,7 @@ Requirements: Docker + Docker Compose.
 git clone <this repo> && cd meet
 cp .env.example .env
 # edit .env:
-#  - set LIVEKIT_API_SECRET (any 32+ char string; must match livekit.yaml keys)
+#  - set LIVEKIT_API_SECRET (any 32+ char string)
 #  - set BRIDGE_TOKEN and SCOUT_TTY_TOKEN to random strings
 #  - set OPENAI_API_KEY   (speech-to-text / text-to-speech for agent voices)
 #  - set ANTHROPIC_API_KEY (the demo agent's model)
@@ -60,21 +60,24 @@ The demo agent lives in [`examples/demo-agent/agent.yaml`](./examples/demo-agent
 
 ## Production deploy (TLS + domains)
 
-A production overlay adds Caddy with automatic TLS:
+Same compose file — the `prod` profile adds Caddy with automatic TLS:
 
 ```sh
-cp .env.example .env    # secrets + your domains (MEET_DOMAIN, LK_DOMAIN)
-docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
+cp .env.example .env    # secrets, domains, and:
+                        #   NEXT_PUBLIC_LIVEKIT_URL=wss://$LK_DOMAIN
+                        #   LIVEKIT_USE_EXTERNAL_IP=true
+                        #   LIVEKIT_NODE_IP=          (empty — auto-detect)
+docker compose --profile prod up -d --build
 ```
 
 - Point `MEET_DOMAIN` (the app, e.g. `meet.lpd.sh`) and `LK_DOMAIN` (LiveKit signaling, e.g. `lk.lpd.sh`) at your host; `MEET_ALIAS_DOMAIN` 301-redirects to the app.
 - Open `80`/`443` (Caddy) plus `7881/tcp` and `51000-51100/udp` (WebRTC media — flows directly to LiveKit, not through Caddy).
-- `livekit.prod.yaml` enables `use_external_ip` for NAT'd hosts. **Change the API secret** in both `.env` and that file.
-- The web image bakes `wss://$LK_DOMAIN` in at build time via a build arg — rebuild if the domain changes.
+- All LiveKit config is templated from `.env` inside the compose file — there is no separate LiveKit yaml. **Change `LIVEKIT_API_SECRET`** before exposing anything.
+- The web image bakes `NEXT_PUBLIC_LIVEKIT_URL` in at build time — rebuild if the domain changes.
 
 ## Deploying beyond localhost
 
-- **WebRTC needs UDP.** Expose ports `7880` (ws), `7881/tcp` and `51000-51100/udp` on your host, and set `use_external_ip: true` plus your server's public IP (`rtc.node_ip`) in `livekit.yaml`. If the UDP range clashes with something on your machine, change it in both `livekit.yaml` and `docker-compose.yaml`.
+- **WebRTC needs UDP.** Expose ports `7880` (ws), `7881/tcp` and `51000-51100/udp` on your host, and set `LIVEKIT_USE_EXTERNAL_IP=true` (with `LIVEKIT_NODE_IP` empty) in `.env`. If the UDP range clashes with something on your machine, change it in `docker-compose.yaml` (both the port mapping and the templated LiveKit config).
 - **Set `NEXT_PUBLIC_LIVEKIT_URL`** to your public LiveKit URL (`wss://…` behind TLS). It's baked into the web build — pass it as a build arg (`docker compose build --build-arg NEXT_PUBLIC_LIVEKIT_URL=wss://meet.example.com:7880` or via compose `build.args`).
 - **Restrictive NATs / corporate firewalls** may need TURN. LiveKit ships an embedded TURN server — see the [LiveKit self-hosting guide](https://docs.livekit.io/home/self-hosting/) for the `turn:` config block and TLS certificates.
 - **Scaling**: a single node comfortably handles dozens of concurrent video participants. For multi-node LiveKit you'll need Redis — out of scope here.

@@ -3,13 +3,26 @@ name: looped-meet
 services:
   livekit:
     image: livekit/livekit-server:v1.8
-    command: --config /etc/livekit.yaml
-    volumes:
-      - ./livekit.yaml:/etc/livekit.yaml:ro
+    # Config is templated from .env — no separate livekit.yaml to keep in sync.
+    # Local (defaults): advertises 127.0.0.1 so browsers on this machine work.
+    # Production: set LIVEKIT_USE_EXTERNAL_IP=true and unset LIVEKIT_NODE_IP.
+    environment:
+      LIVEKIT_CONFIG: |
+        port: 7880
+        rtc:
+          tcp_port: 7881
+          port_range_start: 51000
+          port_range_end: 51100
+          use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP:-false}
+          node_ip: ${LIVEKIT_NODE_IP:-127.0.0.1}
+        keys:
+          ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+        logging:
+          level: info
     ports:
       - "7880:7880"
       - "7881:7881"
-      # Must match rtc.port_range_start/end in livekit.yaml
+      # Must match rtc.port_range_start/end above
       - "51000-51100:51000-51100/udp"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
@@ -18,10 +31,32 @@ services:
       retries: 5
     restart: unless-stopped
 
+  # TLS reverse proxy — production only: docker compose --profile prod up
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["prod"]
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      MEET_DOMAIN: ${MEET_DOMAIN:-meet.lpd.sh}
+      LK_DOMAIN: ${LK_DOMAIN:-lk.lpd.sh}
+      MEET_ALIAS_DOMAIN: ${MEET_ALIAS_DOMAIN:-meet.looped.sh}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+      - livekit
+    restart: unless-stopped
+
   web:
     build:
       context: .
       dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
     ports:
       - "3000:3000"
     environment:
@@ -95,3 +130,5 @@ services:
 
 volumes:
   demo-agent-data:
+  caddy-data:
+  caddy-config:

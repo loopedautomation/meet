@@ -29,6 +29,7 @@ export function RoomClient({ slug }: { slug: string }) {
     prefs: JoinPreferences
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [rejoining, setRejoining] = useState(false)
 
   const handleJoin = useCallback(
     async (prefs: JoinPreferences) => {
@@ -41,6 +42,9 @@ export function RoomClient({ slug }: { slug: string }) {
         })
         if (!res.ok) throw new Error(`token request failed (${res.status})`)
         const token = (await res.json()) as TokenResponse
+        try {
+          sessionStorage.setItem(`rejoin:${slug}`, JSON.stringify(prefs))
+        } catch {}
         setSession({ token, prefs })
       } catch {
         setError("Could not join the meeting. Please try again.")
@@ -49,11 +53,34 @@ export function RoomClient({ slug }: { slug: string }) {
     [slug],
   )
 
-  // Back to the lobby (not the landing page) so a refresh or accidental
-  // disconnect is one click from rejoining.
+  // A refresh rejoins the meeting automatically; only an explicit leave (or a
+  // server-side disconnect) drops back to the lobby.
+  useEffect(() => {
+    let stored: JoinPreferences | null = null
+    try {
+      const raw = sessionStorage.getItem(`rejoin:${slug}`)
+      if (raw) stored = JSON.parse(raw) as JoinPreferences
+    } catch {}
+    if (!stored?.displayName) return
+    setRejoining(true)
+    handleJoin(stored).finally(() => setRejoining(false))
+  }, [slug, handleJoin])
+
   const handleLeave = useCallback(() => {
+    try {
+      sessionStorage.removeItem(`rejoin:${slug}`)
+    } catch {}
     setSession(null)
-  }, [])
+  }, [slug])
+
+  if (rejoining) {
+    return (
+      <main className="flex min-h-dvh items-center justify-center gap-3">
+        <span className="loading loading-spinner" />
+        Rejoining…
+      </main>
+    )
+  }
 
   if (!session) {
     return <Lobby slug={slug} onJoin={handleJoin} error={error} />
