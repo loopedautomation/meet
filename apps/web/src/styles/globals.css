@@ -1,6 +1,28 @@
 @import "tailwindcss";
 @plugin "daisyui";
 @import "./themes.css";
+
+@layer base {
+  @font-face {
+    font-family: "Mona Sans";
+    font-weight: 200 900;
+    font-display: block;
+    font-style: normal;
+    font-stretch: 125%;
+    src: url("../../public/fonts/Mona-Sans.woff2") format("woff2");
+  }
+
+  @theme {
+    --font-sans:
+      "Mona Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji",
+      "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  }
+
+  p {
+    font-weight: 300;
+  }
+}
+
 @import "./button.css";
 @import "./modal.css";
 @import "./badge.css";
