@@ -1,0 +1,15 @@
+# LiveKit server config for production (used by docker-compose.prod.yaml).
+# Keys MUST match LIVEKIT_API_KEY / LIVEKIT_API_SECRET in .env — and change
+# the secret from the dev default before exposing this to the internet.
+port: 7880
+rtc:
+  tcp_port: 7881
+  # Must match the UDP port mapping in docker-compose.yaml
+  port_range_start: 51000
+  port_range_end: 51100
+  # Advertise the host's public IP to clients (required behind NAT).
+  use_external_ip: true
+keys:
+  devkey: devsecret_change_me_32_characters_x
+logging:
+  level: info

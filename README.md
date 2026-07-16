@@ -58,6 +58,20 @@ agents:
 
 The demo agent lives in [`examples/demo-agent/agent.yaml`](./examples/demo-agent/agent.yaml) — edit its `purpose`, tools, and permissions like any looped-af agent.
 
+## Production deploy (TLS + domains)
+
+A production overlay adds Caddy with automatic TLS:
+
+```sh
+cp .env.example .env    # secrets + your domains (MEET_DOMAIN, LK_DOMAIN)
+docker compose -f docker-compose.yaml -f docker-compose.prod.yaml up -d --build
+```
+
+- Point `MEET_DOMAIN` (the app, e.g. `meet.lpd.sh`) and `LK_DOMAIN` (LiveKit signaling, e.g. `lk.lpd.sh`) at your host; `MEET_ALIAS_DOMAIN` 301-redirects to the app.
+- Open `80`/`443` (Caddy) plus `7881/tcp` and `51000-51100/udp` (WebRTC media — flows directly to LiveKit, not through Caddy).
+- `livekit.prod.yaml` enables `use_external_ip` for NAT'd hosts. **Change the API secret** in both `.env` and that file.
+- The web image bakes `wss://$LK_DOMAIN` in at build time via a build arg — rebuild if the domain changes.
+
 ## Deploying beyond localhost
 
 - **WebRTC needs UDP.** Expose ports `7880` (ws), `7881/tcp` and `51000-51100/udp` on your host, and set `use_external_ip: true` plus your server's public IP (`rtc.node_ip`) in `livekit.yaml`. If the UDP range clashes with something on your machine, change it in both `livekit.yaml` and `docker-compose.yaml`.

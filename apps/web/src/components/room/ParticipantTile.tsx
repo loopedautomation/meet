@@ -33,10 +33,15 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
     <div
       className={`relative overflow-hidden rounded-box bg-base-300 transition-shadow ${
         speaking ? "ring-2 ring-primary" : ""
-      } ${compact ? "aspect-video" : "aspect-video"}`}
+      } ${compact ? "aspect-video shrink-0" : "size-full min-h-0"}`}
     >
       {hasVideo ? (
-        <VideoTrack trackRef={trackRef} className="size-full object-cover" />
+        <VideoTrack
+          trackRef={trackRef}
+          className={`size-full object-cover ${
+            participant.isLocal ? "scale-x-[-1]" : ""
+          }`}
+        />
       ) : (
         <div className="flex size-full items-center justify-center">
           <div

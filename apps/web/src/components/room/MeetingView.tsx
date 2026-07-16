@@ -17,18 +17,22 @@ export function MeetingView({ slug }: { slug: string }) {
   })
   const focused = screenTracks[0]
 
+  const localTrack = cameraTracks.find((t) => t.participant.isLocal)
+  const remoteTracks = cameraTracks.filter((t) => !t.participant.isLocal)
+  const alone = remoteTracks.length === 0
+
   return (
     <div className="flex h-dvh flex-col bg-base-200">
       <RoomAudioRenderer />
 
-      <div className="flex min-h-0 flex-1 gap-3 p-3">
+      <div className="relative flex min-h-0 flex-1 gap-3 p-3">
         {focused ? (
           <>
             <div className="min-w-0 flex-1">
               <ScreenShareTile trackRef={focused} />
             </div>
             <div className="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto">
-              {cameraTracks.map((trackRef) => (
+              {remoteTracks.map((trackRef) => (
                 <ParticipantTile
                   key={trackRef.participant.identity}
                   trackRef={trackRef}
@@ -37,14 +41,22 @@ export function MeetingView({ slug }: { slug: string }) {
               ))}
             </div>
           </>
+        ) : alone ? (
+          // Just you: your own camera fills the stage.
+          localTrack && (
+            <div className="min-h-0 min-w-0 flex-1">
+              <ParticipantTile trackRef={localTrack} />
+            </div>
+          )
         ) : (
           <div
-            className="grid flex-1 content-center gap-3"
+            className="grid min-h-0 min-w-0 flex-1 gap-3"
             style={{
-              gridTemplateColumns: `repeat(${gridColumns(cameraTracks.length)}, minmax(0, 1fr))`,
+              gridTemplateColumns: `repeat(${gridColumns(remoteTracks.length)}, minmax(0, 1fr))`,
+              gridTemplateRows: `repeat(${gridRows(remoteTracks.length)}, minmax(0, 1fr))`,
             }}
           >
-            {cameraTracks.map((trackRef) => (
+            {remoteTracks.map((trackRef) => (
               <ParticipantTile
                 key={trackRef.participant.identity}
                 trackRef={trackRef}
@@ -52,6 +64,14 @@ export function MeetingView({ slug }: { slug: string }) {
             ))}
           </div>
         )}
+
+        {/* Your own video floats bottom-right once others are in the call. */}
+        {!alone && localTrack && (
+          <div className="absolute right-6 bottom-6 z-10 w-48 shadow-lg sm:w-56">
+            <ParticipantTile trackRef={localTrack} compact />
+          </div>
+        )}
+
         <PanelHost slug={slug} />
       </div>
 
@@ -65,4 +85,8 @@ function gridColumns(count: number): number {
   if (count <= 4) return 2
   if (count <= 9) return 3
   return 4
+}
+
+function gridRows(count: number): number {
+  return Math.max(1, Math.ceil(count / gridColumns(count)))
 }
