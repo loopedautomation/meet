@@ -21,7 +21,8 @@
     "livekit-server-sdk": "catalog:",
     "ws": "^8.18.0",
     "yaml": "^2.7.0",
-    "zod": "catalog:"
+    "zod": "catalog:",
+    "sharp": "^0.34.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

@@ -62,10 +62,14 @@ export class LoopedTtyClient {
   }
 
   /**
-   * Run one turn: send `input` and yield frames until the run finishes.
+   * Run one turn: send `input` (optionally with images, e.g. a screenshare
+   * frame) and yield frames until the run finishes.
    * Throws if a turn is already in progress.
    */
-  async *runTurn(input: string): AsyncGenerator<TtyServerFrame> {
+  async *runTurn(
+    input: string,
+    images?: { mediaType: string; data: string }[],
+  ): AsyncGenerator<TtyServerFrame> {
     if (this.#turnActive) throw new Error("a TTY turn is already in progress")
     this.#turnActive = true
     try {
@@ -92,7 +96,13 @@ export class LoopedTtyClient {
 
       const deadline = Date.now() + this.#opts.turnTimeoutMs
       try {
-        ws.send(JSON.stringify({ type: "input", text: input }))
+        ws.send(
+          JSON.stringify({
+            type: "input",
+            text: input,
+            ...(images?.length ? { images } : {}),
+          }),
+        )
         while (true) {
           while (queue.length === 0) {
             if (closed) throw closed

@@ -1,7 +1,10 @@
 import type { TtyServerFrame } from "./looped-tty.js"
 
 export type Brain = {
-  runTurn: (input: string) => AsyncGenerator<TtyServerFrame>
+  runTurn: (
+    input: string,
+    images?: { mediaType: string; data: string }[],
+  ) => AsyncGenerator<TtyServerFrame>
   close: () => void
 }
 
@@ -20,7 +23,11 @@ export class LoopedWebhookClient implements Brain {
     this.#conversationId = opts.conversationId
   }
 
-  async *runTurn(input: string): AsyncGenerator<TtyServerFrame> {
+  // Webhook brains are text-only; screenshare frames are dropped.
+  async *runTurn(
+    input: string,
+    _images?: { mediaType: string; data: string }[],
+  ): AsyncGenerator<TtyServerFrame> {
     const res = await fetch(this.#url, {
       method: "POST",
       headers: {

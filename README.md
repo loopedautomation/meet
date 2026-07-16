@@ -10,6 +10,7 @@ Share a link, talk face to face — and invite an agent into the room. It listen
 - **Agents as participants** — invite a looped-af agent from the agents panel; it joins with its own tile, live state (listening / thinking / speaking), and voice.
 - **Tool activity feed** — watch the agent's tool calls stream in real time while it works.
 - **Agent mute** — mute an agent from its tile; it knows it's muted and replies into the chat instead of speaking. Unmute and it talks again.
+- **Screenshare vision** — share your screen and the agent sees it: every question it answers comes with a current frame of the share.
 - **Live transcript & chat** — built-in transcription panel and chat with `@AgentName` mentions.
 - **Screen sharing**, speaking indicators, light/dark looped theming (DaisyUI — easy to whitelabel).
 
@@ -115,7 +116,7 @@ The looped look lives in `apps/web/src/styles/` as DaisyUI themes (`themes.css`,
 ## Roadmap
 
 - Host controls (lock room, remove human participants)
-- Screenshare vision — let agents see the shared screen (frame sampling into the brain; the TTY protocol needs image attachments, or a bridge-side vision model as an interim)
+- ~~Screenshare vision~~ — done: while anyone shares a screen, agents get a frame of it with every turn (requires agent-framework > 0.9.1 and a vision-capable model)
 - OpenAI Realtime speech-to-speech mode with `ask_agent` delegation (~500ms latency)
 - ElevenLabs voices
 

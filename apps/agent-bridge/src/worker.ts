@@ -21,6 +21,7 @@ import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
+import { ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = { agentId: string }
 
@@ -93,11 +94,15 @@ export default defineAgent({
         .catch(() => undefined)
     }
 
-    const agent = new LoopedVoiceAgent(entry, brain, sessionState, {
-      publishActivity,
-      publishChat,
-      setState,
-    })
+    const screen = new ScreenCapture(ctx.room)
+
+    const agent = new LoopedVoiceAgent(
+      entry,
+      brain,
+      sessionState,
+      { publishActivity, publishChat, setState },
+      screen,
+    )
 
     const session = new voice.AgentSession({
       vad: ctx.proc.userData.vad as silero.VAD,
@@ -171,11 +176,20 @@ export default defineAgent({
     // Chat mentions get a chat reply — text in, text out; tool activity
     // still streams to the activity feed.
     const replyInChat = async (message: ChatMessage) => {
-      const input = `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`
+      let input = `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`
+      const capture = screen.active
+        ? await screen.latestJpeg().catch(() => null)
+        : null
+      const images = capture
+        ? [{ mediaType: capture.mediaType, data: capture.data }]
+        : undefined
+      if (capture) {
+        input = `[A current frame of ${capture.sharerName}'s shared screen is attached.]\n${input}`
+      }
       setState(sessionState.muted ? "muted" : "thinking")
       try {
         let reply = ""
-        for await (const frame of brain.runTurn(input)) {
+        for await (const frame of brain.runTurn(input, images)) {
           const at = Date.now()
           if (frame.type === "assistant") {
             reply += (reply ? "\n" : "") + frame.content

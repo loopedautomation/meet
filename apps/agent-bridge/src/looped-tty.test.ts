@@ -72,6 +72,42 @@ describe("LoopedTtyClient", () => {
     expect(receivedProtocols[0]).toBe("bearer.secret")
   })
 
+  it("sends images along with the input frame", async () => {
+    let received: unknown
+    server.removeAllListeners("connection")
+    server.on("connection", (socket) => {
+      socket.on("message", (data) => {
+        received = JSON.parse(String(data))
+        socket.send(
+          JSON.stringify({
+            type: "result",
+            status: "ok",
+            reply: "seen",
+            steps: 1,
+          }),
+        )
+      })
+    })
+    const client = new LoopedTtyClient({
+      url: `ws://127.0.0.1:${port}/tty`,
+      token: "secret",
+      conversationId: "room-scout",
+    })
+    const types: string[] = []
+    for await (const frame of client.runTurn("look at this", [
+      { mediaType: "image/jpeg", data: "aGVsbG8=" },
+    ])) {
+      types.push(frame.type)
+    }
+    client.close()
+    expect(types).toEqual(["result"])
+    expect(received).toMatchObject({
+      type: "input",
+      text: "look at this",
+      images: [{ mediaType: "image/jpeg", data: "aGVsbG8=" }],
+    })
+  })
+
   it("supports sequential turns on one connection", async () => {
     const client = new LoopedTtyClient({
       url: `ws://127.0.0.1:${port}/tty`,
