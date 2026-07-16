@@ -57,7 +57,7 @@ services:
       LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
       LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
-      BRIDGE_TOKEN: ${BRIDGE_TOKEN}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:?set BRIDGE_TOKEN in .env}
       AGENTS_CONFIG: /app/agents.yaml
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
@@ -81,13 +81,17 @@ services:
     restart: unless-stopped
 
   demo-agent:
+    # Requires agent-framework >= 0.9 (tty trigger)
     image: ghcr.io/loopedautomation/agent:latest
     volumes:
-      - ./examples/demo-agent:/agent:ro
-    working_dir: /agent
+      - ./examples/demo-agent/agent.yaml:/agent/agent.yaml:ro
+      - demo-agent-data:/data
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
-      SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
+      SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN:?set SCOUT_TTY_TOKEN in .env}
     expose:
       - "8300"
     restart: unless-stopped
+
+volumes:
+  demo-agent-data:
