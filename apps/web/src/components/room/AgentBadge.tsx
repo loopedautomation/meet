@@ -7,13 +7,14 @@ import {
   agentStateSchema,
 } from "@meet/shared"
 import type { Participant } from "livekit-client"
-import { Bot, MicOff } from "lucide-react"
+import { Bot, EarOff, MicOff } from "lucide-react"
 
 const stateLabel: Record<AgentState, string> = {
   listening: "listening",
   thinking: "thinking…",
   speaking: "speaking",
   muted: "muted",
+  deafened: "deafened",
 }
 
 export function useAgentState(participant: Participant): AgentState {
@@ -28,11 +29,15 @@ export function AgentBadge({ participant }: { participant: Participant }) {
   return (
     <span
       className={`badge badge-sm gap-1 ${
-        state === "muted" ? "badge-warning" : "badge-primary"
+        state === "muted" || state === "deafened"
+          ? "badge-warning"
+          : "badge-primary"
       }`}
     >
       {state === "muted" ? (
         <MicOff className="size-3" />
+      ) : state === "deafened" ? (
+        <EarOff className="size-3" />
       ) : (
         <Bot className="size-3" />
       )}

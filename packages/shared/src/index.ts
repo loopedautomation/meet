@@ -18,6 +18,7 @@ export const agentStateSchema = z.enum([
   "thinking",
   "speaking",
   "muted",
+  "deafened",
 ])
 export type AgentState = z.infer<typeof agentStateSchema>
 
@@ -40,7 +41,7 @@ export function parseParticipantMeta(
 
 /** Control messages published by participants on the `agent-control` topic. */
 export const agentControlSchema = z.object({
-  type: z.enum(["mute", "unmute"]),
+  type: z.enum(["mute", "unmute", "deafen", "undeafen"]),
   agentId: z.string(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>

@@ -136,6 +136,18 @@ export default defineAgent({
           } else if (control.type === "unmute" && sessionState.muted) {
             sessionState.muted = false
             setState("listening")
+          } else if (control.type === "deafen" && !sessionState.deafened) {
+            sessionState.deafened = true
+            session.input.setAudioEnabled(false)
+            setState("deafened")
+            publishChat(
+              "(I've been deafened — I can no longer hear the meeting. You can still reach me with @mentions here.)",
+            )
+          } else if (control.type === "undeafen" && sessionState.deafened) {
+            sessionState.deafened = false
+            session.input.setAudioEnabled(true)
+            sessionState.notifyUndeafened = true
+            setState(sessionState.muted ? "muted" : "listening")
           }
         } catch {
           // ignore malformed control messages

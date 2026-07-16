@@ -9,7 +9,7 @@ import {
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import type { Participant } from "livekit-client"
-import { Bot, Mic, MicOff, Plus, UserX, Wrench } from "lucide-react"
+import { Bot, Ear, EarOff, Plus, UserX, Wrench } from "lucide-react"
 import { useAgentState } from "@/components/room/AgentBadge"
 import { useAgentInvite } from "@/hooks/mutations/useAgentInvite"
 import { useAgents } from "@/hooks/queries/useAgents"
@@ -108,19 +108,21 @@ function InRoomControls({
   sendControl: (control: AgentControl) => void
 }) {
   const state = useAgentState(participant)
-  const muted = state === "muted"
+  const deafened = state === "deafened"
 
   return (
     <div className="flex items-center gap-1">
       <button
         type="button"
-        className={`btn btn-circle btn-sm ${muted ? "btn-warning" : "btn-ghost"}`}
-        aria-label={muted ? "Unmute agent" : "Mute agent"}
+        className={`btn btn-circle btn-sm ${deafened ? "btn-warning" : "btn-ghost"}`}
+        aria-label={
+          deafened ? "Undeafen agent (resume listening)" : "Deafen agent"
+        }
         onClick={() =>
-          sendControl({ type: muted ? "unmute" : "mute", agentId })
+          sendControl({ type: deafened ? "undeafen" : "deafen", agentId })
         }
       >
-        {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+        {deafened ? <EarOff className="size-4" /> : <Ear className="size-4" />}
       </button>
       <button
         type="button"

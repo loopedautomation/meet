@@ -94,8 +94,10 @@ export function MeetingView({ slug }: { slug: string }) {
           <motion.div
             drag
             dragConstraints={stageRef}
-            dragElastic={0.1}
-            dragMomentum={false}
+            dragElastic={0.25}
+            dragMomentum
+            dragTransition={{ bounceStiffness: 400, bounceDamping: 22 }}
+            whileDrag={{ scale: 1.04 }}
             className={`absolute bottom-6 z-10 w-48 cursor-grab shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
               openPanel ? "right-[22.25rem]" : "right-6"
             }`}

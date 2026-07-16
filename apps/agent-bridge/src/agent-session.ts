@@ -16,6 +16,10 @@ export class SessionState {
   muted = false
   /** Tracks whether the brain has been told about the current mute state. */
   notifiedMuted = false
+  /** Deafened: audio input is disabled entirely; only chat mentions get through. */
+  deafened = false
+  /** Set when undeafened so the brain learns it missed part of the meeting. */
+  notifyUndeafened = false
 }
 
 const instructions = (entry: AgentEntry) =>
@@ -61,6 +65,10 @@ export class LoopedVoiceAgent extends voice.Agent {
     const brain = this.#brain
 
     let text = input
+    if (state.notifyUndeafened) {
+      text = `[You were deafened for a while and missed part of the meeting; you can hear again now.]\n${text}`
+      state.notifyUndeafened = false
+    }
     if (state.muted && !state.notifiedMuted) {
       text = `[You have been muted by a participant. You are still heard in the meeting but cannot speak; your replies will appear in the meeting chat instead. Keep them brief.]\n${text}`
       state.notifiedMuted = true
