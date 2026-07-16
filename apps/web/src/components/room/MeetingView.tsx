@@ -1,7 +1,12 @@
 "use client"
 
-import { RoomAudioRenderer, useTracks } from "@livekit/components-react"
-import { Track } from "livekit-client"
+import {
+  RoomAudioRenderer,
+  useConnectionState,
+  useTracks,
+} from "@livekit/components-react"
+import { useStore } from "@nanostores/react"
+import { ConnectionState, Track } from "livekit-client"
 import { motion } from "motion/react"
 import { useRef } from "react"
 import { ControlBar } from "@/components/room/ControlBar"
@@ -9,6 +14,7 @@ import { ParticipantTile } from "@/components/room/ParticipantTile"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
+import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({ slug }: { slug: string }) {
   const cameraTracks = useTracks(
@@ -24,11 +30,23 @@ export function MeetingView({ slug }: { slug: string }) {
   const remoteTracks = cameraTracks.filter((t) => !t.participant.isLocal)
   const alone = remoteTracks.length === 0
   const stageRef = useRef<HTMLDivElement>(null)
+  const connectionState = useConnectionState()
+  const openPanel = useStore($openPanel)
 
   return (
     <div className="flex h-dvh flex-col bg-base-200">
       <RoomAudioRenderer />
       <RoomDataListener />
+
+      {connectionState !== ConnectionState.Connected && (
+        <div className="alert alert-warning fixed top-4 left-1/2 z-50 w-auto -translate-x-1/2 shadow-lg">
+          <span className="loading loading-spinner loading-sm" />
+          {connectionState === ConnectionState.Reconnecting ||
+          connectionState === ConnectionState.SignalReconnecting
+            ? "Connection lost — reconnecting…"
+            : "Connecting…"}
+        </div>
+      )}
 
       <div ref={stageRef} className="relative flex min-h-0 flex-1 gap-3 p-3">
         {focused ? (
@@ -70,14 +88,17 @@ export function MeetingView({ slug }: { slug: string }) {
           </div>
         )}
 
-        {/* Your own video floats bottom-right once others are in the call; drag it anywhere. */}
+        {/* Your own video floats bottom-right once others are in the call; drag it
+            anywhere. When a side panel is open it sits to the panel's left. */}
         {!alone && localTrack && (
           <motion.div
             drag
             dragConstraints={stageRef}
             dragElastic={0.1}
             dragMomentum={false}
-            className="absolute right-6 bottom-6 z-10 w-48 cursor-grab shadow-lg active:cursor-grabbing sm:w-56"
+            className={`absolute bottom-6 z-10 w-48 cursor-grab shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
+              openPanel ? "right-[22.25rem]" : "right-6"
+            }`}
           >
             <ParticipantTile trackRef={localTrack} compact />
           </motion.div>

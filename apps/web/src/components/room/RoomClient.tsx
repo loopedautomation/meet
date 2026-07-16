@@ -3,7 +3,8 @@
 import { LiveKitRoom } from "@livekit/components-react"
 import type { TokenResponse } from "@meet/shared"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { useCallback, useState } from "react"
+import { setLogLevel } from "livekit-client"
+import { useCallback, useEffect, useState } from "react"
 import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 
@@ -18,6 +19,11 @@ export type JoinPreferences = {
 }
 
 export function RoomClient({ slug }: { slug: string }) {
+  // Surface connection diagnostics in the console; full debug via env flag.
+  useEffect(() => {
+    setLogLevel(process.env.NEXT_PUBLIC_LK_DEBUG === "1" ? "debug" : "info")
+  }, [])
+
   const [session, setSession] = useState<{
     token: TokenResponse
     prefs: JoinPreferences
