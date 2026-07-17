@@ -27,7 +27,7 @@ export function Wordmark() {
     <Link href="/" className="flex items-center gap-2">
       <BrandMark className="h-6 w-auto" />
       <span className="font-semibold text-lg text-primary tracking-tight">
-        standups
+        meet
       </span>
     </Link>
   )

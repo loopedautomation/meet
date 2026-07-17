@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
-  title: "Looped Standups",
+  title: "Looped Meet",
   description:
     "Open-source meeting rooms with first-class AI agent participants",
 }

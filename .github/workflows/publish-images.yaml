@@ -1,7 +1,7 @@
 name: Publish Images
 
 # Build every service image on GitHub-hosted runners and push to GitHub
-# Container Registry (ghcr.io/loopedautomation/standups-<service>), so the
+# Container Registry (ghcr.io/loopedautomation/meet-<service>), so the
 # prod box never builds — its compose only pulls (see docker-compose.yaml).
 #
 # Triggers:
@@ -54,7 +54,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/standups-${{ matrix.service }}
+          images: ghcr.io/${{ github.repository_owner }}/meet-${{ matrix.service }}
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}

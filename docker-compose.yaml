@@ -1,4 +1,4 @@
-name: looped-standups
+name: looped-meet
 
 # Shared Infisical config injected into every service (same pattern as the
 # monorepo). In production only the bootstrap creds (INFISICAL_CLIENT_ID /
@@ -24,7 +24,7 @@ x-local-env: &local-env
 #   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up --build
 services:
   livekit:
-    image: ghcr.io/loopedautomation/standups-livekit:${IMAGE_TAG:-latest}
+    image: ghcr.io/loopedautomation/meet-livekit:${IMAGE_TAG:-latest}
     pull_policy: always
     <<: *local-env
     # Config is templated from .env — no separate livekit.yaml to keep in sync.
@@ -68,7 +68,7 @@ services:
     restart: unless-stopped
 
   web:
-    image: ghcr.io/loopedautomation/standups-web:${IMAGE_TAG:-latest}
+    image: ghcr.io/loopedautomation/meet-web:${IMAGE_TAG:-latest}
     pull_policy: always
     ports:
       - "3000:3000"
@@ -96,7 +96,7 @@ services:
     restart: unless-stopped
 
   agent-bridge:
-    image: ghcr.io/loopedautomation/standups-agent-bridge:${IMAGE_TAG:-latest}
+    image: ghcr.io/loopedautomation/meet-agent-bridge:${IMAGE_TAG:-latest}
     pull_policy: always
     ports:
       - "8090:8090"
@@ -125,7 +125,7 @@ services:
 
   demo-agent:
     # Requires agent-framework >= 0.9 (tty trigger)
-    image: ghcr.io/loopedautomation/standups-demo-agent:${IMAGE_TAG:-latest}
+    image: ghcr.io/loopedautomation/meet-demo-agent:${IMAGE_TAG:-latest}
     pull_policy: always
     volumes:
       - demo-agent-data:/data
