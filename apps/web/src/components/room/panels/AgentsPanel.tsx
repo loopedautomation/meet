@@ -24,7 +24,7 @@ import { useState } from "react"
 import { useAgentState } from "@/components/room/AgentBadge"
 import { useAgentInvite } from "@/hooks/mutations/useAgentInvite"
 import { useAgents } from "@/hooks/queries/useAgents"
-import { $agentActivity } from "@/stores/roomData"
+import { $agentActivity, $agentStats } from "@/stores/roomData"
 
 export function AgentsPanel({ slug }: { slug: string }) {
   const { data: agents = [], isLoading } = useAgents()
@@ -101,11 +101,60 @@ export function AgentsPanel({ slug }: { slug: string }) {
 
       <InviteByUrl slug={slug} />
 
+      <StatsForNerds agents={agents} />
+
       <div className="border-base-300 border-t px-4 py-2 font-medium text-base-content/60 text-xs uppercase tracking-wide">
         Activity
       </div>
       <ActivityFeed activity={activity} />
     </div>
+  )
+}
+
+/** Per-agent pipeline configuration + live latency, LiveKit-benchmark style. */
+function StatsForNerds({ agents }: { agents: { id: string; name: string }[] }) {
+  const stats = useStore($agentStats)
+  const entries = agents.filter((a) => stats[a.id])
+  if (entries.length === 0) return null
+
+  return (
+    <details className="border-base-300 border-t">
+      <summary className="cursor-pointer px-4 py-2 font-medium text-base-content/60 text-xs uppercase tracking-wide">
+        Stats for nerds
+      </summary>
+      <div className="space-y-3 px-4 pb-3">
+        {entries.map((agent) => {
+          const s = stats[agent.id]
+          return (
+            <div key={agent.id} className="rounded-field bg-base-200 p-3">
+              <p className="mb-1 font-medium text-sm">{agent.name}</p>
+              <table className="w-full text-xs">
+                <tbody>
+                  {Object.entries(s.config).map(([k, v]) => (
+                    <tr key={k}>
+                      <td className="py-0.5 pr-2 text-base-content/60">{k}</td>
+                      <td className="break-all font-mono">{v}</td>
+                    </tr>
+                  ))}
+                  {Object.entries(s.latencyMs).map(([k, v]) => (
+                    <tr key={k}>
+                      <td className="py-0.5 pr-2 text-base-content/60">
+                        {k} latency
+                      </td>
+                      <td
+                        className={`font-mono ${k === "overall" ? "font-semibold" : ""}`}
+                      >
+                        {v}ms
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        })}
+      </div>
+    </details>
   )
 }
 

@@ -96,8 +96,18 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     state: agentStateSchema,
     at: z.number(),
   }),
+  // "Stats for nerds": the agent's pipeline configuration plus rolling
+  // latency measurements, published by the bridge as they update.
+  z.object({
+    type: z.literal("stats"),
+    agentId: z.string(),
+    config: z.record(z.string(), z.string()),
+    latencyMs: z.record(z.string(), z.number()),
+    at: z.number(),
+  }),
 ])
 export type AgentActivityEvent = z.infer<typeof agentActivityEventSchema>
+export type AgentStatsEvent = Extract<AgentActivityEvent, { type: "stats" }>
 
 /** Messages on the `chat` data topic. */
 export const chatMessageSchema = z.object({

@@ -60,8 +60,31 @@ export async function runRealtimeAgent(opts: {
   publishOpts.source = TrackSource.SOURCE_MICROPHONE
   await local.publishTrack(track, publishOpts)
 
+  // Stats for nerds: realtime config + brain delegation latency.
+  const stats = {
+    config: {
+      mode: "realtime",
+      "speech-to-speech": `openai/${realtime.model}`,
+      voice: realtime.voice,
+      brain: "looped-af (tty, via ask_agent)",
+      "turn detection": "server vad",
+      "echo control": "half-duplex",
+      "noise suppression": "room transcriber (gtcrn)",
+    } as Record<string, string>,
+    latencyMs: {} as Record<string, number>,
+  }
+  const publishStats = () =>
+    callbacks.publishActivity({
+      type: "stats",
+      agentId: entry.id,
+      config: stats.config,
+      latencyMs: stats.latencyMs,
+      at: Date.now(),
+    })
+
   // ---- delegate: realtime model -> looped agent brain ---------------------
   const delegate = async (request: string): Promise<string> => {
+    const startedAt = Date.now()
     callbacks.setState("thinking")
     let input = request
     const capture = screen.active
@@ -85,6 +108,8 @@ export async function runRealtimeAgent(opts: {
       }
       return reply || "(the agent had nothing to add)"
     } finally {
+      stats.latencyMs["brain delegation"] = Date.now() - startedAt
+      publishStats()
       callbacks.setState(state.muted ? "muted" : "listening")
     }
   }
@@ -235,6 +260,7 @@ export async function runRealtimeAgent(opts: {
   })
 
   if (entry.greeting) session.say(entry.greeting)
+  publishStats()
 }
 
 function publishBrainActivity(

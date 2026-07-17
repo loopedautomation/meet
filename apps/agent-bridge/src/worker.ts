@@ -212,6 +212,58 @@ export default defineAgent({
             }),
     })
 
+    // Stats for nerds: pipeline configuration + rolling latency, published
+    // to the room so the Agents panel can render a benchmark card.
+    const stats = {
+      config: {
+        mode: "pipeline",
+        vad: "silero",
+        "speech-to-text": `openai/${entry.stt.model}`,
+        brain: "looped-af (tty)",
+        "text-to-speech": `${entry.tts.provider}/${entry.tts.model}`,
+        voice: entry.tts.voice,
+        "turn detection": "vad",
+        "noise suppression": "room transcriber (gtcrn)",
+      } as Record<string, string>,
+      latencyMs: {} as Record<string, number>,
+    }
+    const publishStats = () =>
+      publishActivity({
+        type: "stats",
+        agentId: entry.id,
+        config: stats.config,
+        latencyMs: stats.latencyMs,
+        at: Date.now(),
+      })
+    session.on(voice.AgentSessionEventTypes.MetricsCollected, (ev) => {
+      const m = ev.metrics as { type: string } & Record<string, unknown>
+      const num = (v: unknown) => Math.round(Number(v))
+      if (m.type === "stt_metrics" && Number(m.durationMs) > 0) {
+        stats.latencyMs["speech-to-text"] = num(m.durationMs)
+      } else if (m.type === "eou_metrics") {
+        stats.latencyMs["end of turn"] = num(m.endOfUtteranceDelayMs)
+      } else if (m.type === "llm_metrics") {
+        stats.latencyMs["brain (first token)"] = num(m.ttftMs)
+      } else if (m.type === "tts_metrics") {
+        stats.latencyMs["text-to-speech (first byte)"] = num(m.ttfbMs)
+      } else {
+        return
+      }
+      const parts = [
+        "end of turn",
+        "brain (first token)",
+        "text-to-speech (first byte)",
+      ]
+      if (parts.every((k) => k in stats.latencyMs)) {
+        stats.latencyMs.overall = parts.reduce(
+          (sum, k) => sum + stats.latencyMs[k],
+          0,
+        )
+      }
+      publishStats()
+    })
+    publishStats()
+
     // Mirror the pipeline's state onto a participant attribute for the UI.
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev) => {
       if (sessionState.muted) return
