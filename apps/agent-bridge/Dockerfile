@@ -15,6 +15,7 @@ FROM base AS runner
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo ./
+COPY agents.yaml /app/agents.yaml
 WORKDIR /repo/apps/agent-bridge
 EXPOSE 8090
 CMD ["node", "dist/index.js"]

@@ -1,5 +1,5 @@
 # Agents available to invite into meetings.
-# Mounted into the agent-bridge container; each `brain` points at a running
+# Baked into the agent-bridge image at build time; each `brain` points at a running
 # looped-af agent's TTY trigger (or webhook).
 agents:
   - id: scout

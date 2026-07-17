@@ -80,8 +80,6 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
       SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN}
-    volumes:
-      - ./agents.yaml:/app/agents.yaml:ro
     depends_on:
       livekit:
         condition: service_healthy
@@ -100,9 +98,9 @@ services:
 
   demo-agent:
     # Requires agent-framework >= 0.9 (tty trigger)
-    image: ghcr.io/loopedautomation/agent:latest
+    build:
+      context: examples/demo-agent
     volumes:
-      - ./examples/demo-agent/agent.yaml:/agent/agent.yaml:ro
       - demo-agent-data:/data
     environment:
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
