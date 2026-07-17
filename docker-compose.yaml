@@ -28,8 +28,9 @@ services:
     pull_policy: always
     <<: *local-env
     # Config is templated from .env — no separate livekit.yaml to keep in sync.
-    # Local (defaults): advertises 127.0.0.1 so browsers on this machine work.
-    # Production: set LIVEKIT_USE_EXTERNAL_IP=true and unset LIVEKIT_NODE_IP.
+    # Production: set LIVEKIT_NODE_IP to the host's public IP (pinned, not
+    # STUN-discovered: discovery behind Docker NAT yields random-port
+    # candidates and ICE flaps). Local dev sets 127.0.0.1 via .env.
     # In production the keys below interpolate empty — livekit-server instead
     # reads LIVEKIT_KEYS ("<key>: <secret>") pulled from Infisical, which
     # takes precedence over the config's keys section.
