@@ -24,7 +24,13 @@ import {
 import { useState } from "react"
 import { $openPanel, togglePanel } from "@/stores/panels"
 
-export function ControlBar({ slug }: { slug: string }) {
+export function ControlBar({
+  slug,
+  shareBase,
+}: {
+  slug: string
+  shareBase?: string
+}) {
   const room = useRoomContext()
   const {
     isMicrophoneEnabled,
@@ -63,7 +69,10 @@ export function ControlBar({ slug }: { slug: string }) {
   }
 
   const copyLink = async () => {
-    await navigator.clipboard.writeText(window.location.href)
+    // Prefer the short-link format when the deployment configures one.
+    await navigator.clipboard.writeText(
+      shareBase ? `${shareBase}/${slug}` : window.location.href,
+    )
     setCopied(true)
     setTimeout(() => setCopied(false), 1500)
   }

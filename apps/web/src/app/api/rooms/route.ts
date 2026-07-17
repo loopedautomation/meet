@@ -31,6 +31,11 @@ export async function POST(request: Request) {
     emptyTimeout: 300,
     departureTimeout: 60,
   })
-  const url = new URL(`/r/${slug}`, request.url)
-  return NextResponse.json({ slug, url: url.toString() })
+  // Share links use the short-link base when configured (e.g.
+  // https://lpd.sh/meet, redirected at the edge), else this deployment's URL.
+  const base = process.env.SHARE_LINK_BASE?.replace(/\/$/, "")
+  const url = base
+    ? `${base}/${slug}`
+    : new URL(`/r/${slug}`, request.url).toString()
+  return NextResponse.json({ slug, url })
 }

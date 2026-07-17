@@ -18,7 +18,13 @@ import { ScreenShareTile } from "@/components/room/ScreenShareTile"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { $openPanel } from "@/stores/panels"
 
-export function MeetingView({ slug }: { slug: string }) {
+export function MeetingView({
+  slug,
+  shareBase,
+}: {
+  slug: string
+  shareBase?: string
+}) {
   useJoinLeaveSounds()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
@@ -46,7 +52,7 @@ export function MeetingView({ slug }: { slug: string }) {
     <div className="flex h-dvh flex-col bg-base-200">
       <RoomAudioRenderer />
       <RoomDataListener />
-      <ControlBar slug={slug} />
+      <ControlBar slug={slug} shareBase={shareBase} />
 
       {connectionState !== ConnectionState.Connected && (
         <div className="alert alert-warning fixed bottom-6 left-1/2 z-50 w-auto -translate-x-1/2 shadow-lg">

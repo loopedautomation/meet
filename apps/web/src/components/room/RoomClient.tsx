@@ -19,7 +19,13 @@ export type JoinPreferences = {
   videoDeviceId?: string
 }
 
-export function RoomClient({ slug }: { slug: string }) {
+export function RoomClient({
+  slug,
+  shareBase,
+}: {
+  slug: string
+  shareBase?: string
+}) {
   // Surface connection diagnostics in the console; full debug via env flag.
   useEffect(() => {
     setLogLevel(process.env.NEXT_PUBLIC_LK_DEBUG === "1" ? "debug" : "info")
@@ -176,7 +182,7 @@ export function RoomClient({ slug }: { slug: string }) {
         {inWaitingRoom ? (
           <WaitingRoom prefs={session.prefs} onAdmitted={handleAdmitted} />
         ) : (
-          <MeetingView slug={slug} />
+          <MeetingView slug={slug} shareBase={shareBase} />
         )}
       </QueryClientProvider>
     </LiveKitRoom>
