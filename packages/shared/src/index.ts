@@ -42,6 +42,18 @@ export function parseParticipantMeta(
   }
 }
 
+/** Voices an agent may speak with (realtime model voices). */
+export const AGENT_VOICES = [
+  "marin",
+  "cedar",
+  "alloy",
+  "ash",
+  "coral",
+  "sage",
+  "verse",
+] as const
+export type AgentVoice = (typeof AGENT_VOICES)[number]
+
 /** True for infrastructure participants that the UI should not render. */
 export function isServiceParticipant(metadata: string | undefined): boolean {
   return parseParticipantMeta(metadata)?.kind === "service"

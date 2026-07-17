@@ -2,6 +2,7 @@
 
 import { useDataChannel, useParticipants } from "@livekit/components-react"
 import {
+  AGENT_VOICES,
   type AgentActivityEvent,
   type AgentControl,
   DataTopic,
@@ -112,6 +113,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
 function InviteByUrl({ slug }: { slug: string }) {
   const [url, setUrl] = useState("")
   const [token, setToken] = useState("")
+  const [voice, setVoice] = useState<string>(AGENT_VOICES[0])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -124,7 +126,7 @@ function InviteByUrl({ slug }: { slug: string }) {
       const res = await fetch(`/api/rooms/${slug}/agents`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), token: token.trim() }),
+        body: JSON.stringify({ url: url.trim(), token: token.trim(), voice }),
       })
       const data = (await res.json()) as { error?: string }
       if (!res.ok) throw new Error(data.error ?? "invite failed")
@@ -155,6 +157,18 @@ function InviteByUrl({ slug }: { slug: string }) {
         value={token}
         onChange={(e) => setToken(e.target.value)}
       />
+      <select
+        className="select select-sm w-full"
+        value={voice}
+        onChange={(e) => setVoice(e.target.value)}
+        aria-label="Agent voice"
+      >
+        {AGENT_VOICES.map((v) => (
+          <option key={v} value={v}>
+            Voice: {v}
+          </option>
+        ))}
+      </select>
       {error && <p className="text-error text-xs">{error}</p>}
       <button
         type="submit"

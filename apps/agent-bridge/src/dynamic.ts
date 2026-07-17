@@ -15,16 +15,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 const FILE = process.env.DYNAMIC_AGENTS_FILE ?? "/tmp/dynamic-agents.json"
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
 
-/** Voices a dynamic agent may pick from (realtime model voices). */
-export const VOICE_OPTIONS = [
-  "marin",
-  "cedar",
-  "alloy",
-  "ash",
-  "coral",
-  "sage",
-  "verse",
-] as const
+export { AGENT_VOICES } from "@meet/shared"
 
 export type DynamicAgentSpec = {
   url: string

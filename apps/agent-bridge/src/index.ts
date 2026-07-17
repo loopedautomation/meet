@@ -1,5 +1,6 @@
 import { serve } from "@hono/node-server"
 import { AgentServer, initializeLogger, ServerOptions } from "@livekit/agents"
+import { AGENT_VOICES, type AgentVoice } from "@meet/shared"
 import { Hono } from "hono"
 import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk"
 import {
@@ -77,6 +78,9 @@ app.post("/rooms/:room/agents", async (c) => {
     return c.json({ error: "invalid body" }, 400)
   }
   if (!body.url) return c.json({ error: "url required" }, 400)
+  if (body.voice && !AGENT_VOICES.includes(body.voice as AgentVoice)) {
+    return c.json({ error: "unknown voice" }, 400)
+  }
 
   const probe = await probeAgent(body.url, body.token ?? "")
   if ("error" in probe) return c.json({ error: probe.error }, 422)
