@@ -36,7 +36,10 @@ RUN apk add --no-cache curl tar bzip2 \
       ! -name 'tokens.txt' -delete \
  && rm -rf test_wavs \
  && curl -fsSL -o /opt/gtcrn_simple.onnx \
-    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx"
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx" \
+ && curl -fsSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2" \
+    | tar -xj -C /opt \
+ && rm -rf /opt/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/test_wavs
 
 FROM base AS runner
 # CA roots for the Infisical CLI (Go) — bookworm-slim ships without a usable
@@ -52,6 +55,11 @@ COPY --from=asrmodel /opt/gtcrn_simple.onnx /opt/asr-model/gtcrn_simple.onnx
 ENV TRANSCRIBER_MODEL_DIR=/opt/asr-model
 # Streaming noise suppression (GTCRN, ~0.5 MB) applied per speaker before STT.
 ENV DENOISER_MODEL=/opt/asr-model/gtcrn_simple.onnx
+# High-accuracy utterance finalizer (Parakeet TDT 0.6B int8, ~650 MB): the
+# streaming model provides live interim text; finals are re-transcribed here
+# with proper casing and punctuation.
+COPY --from=asrmodel /opt/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8 /opt/finalizer-model
+ENV FINALIZER_MODEL_DIR=/opt/finalizer-model
 # The sherpa-onnx native addon dlopens its shared libraries from the
 # platform package's directory; expose it via a stable symlink (the package
 # lives under pnpm's store path, which embeds a version hash).

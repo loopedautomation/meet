@@ -29,6 +29,30 @@ declare module "sherpa-onnx-node" {
     reset(): void
   }
 
+  export type OfflineStream = {
+    acceptWaveform(input: {
+      sampleRate: number
+      samples: Float32Array | number[]
+    }): void
+  }
+
+  export class OfflineRecognizer {
+    constructor(config: {
+      featConfig: { sampleRate: number; featureDim: number }
+      modelConfig: {
+        transducer: { encoder: string; decoder: string; joiner: string }
+        tokens: string
+        numThreads?: number
+        provider?: string
+        modelType?: string
+      }
+      decodingMethod?: string
+    })
+    createStream(): OfflineStream
+    decode(stream: OfflineStream): void
+    getResult(stream: OfflineStream): { text: string }
+  }
+
   export class OnlineRecognizer {
     constructor(config: {
       featConfig: { sampleRate: number; featureDim: number }

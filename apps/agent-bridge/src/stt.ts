@@ -47,6 +47,53 @@ const files = (dir: string) => {
   }
 }
 
+export type Finalizer = {
+  /** Transcribe a complete utterance (16 kHz mono float32) accurately. */
+  transcribe(samples: Float32Array): string
+}
+
+/**
+ * High-accuracy utterance finalizer (NVIDIA Parakeet TDT via sherpa-onnx,
+ * offline decoding with casing + punctuation). The streaming model provides
+ * live interim text; on endpoint the utterance is re-transcribed with this
+ * and the segment replaced. Null when the model isn't shipped — finals then
+ * come from the streaming model.
+ */
+export async function loadFinalizer(
+  modelDir = process.env.FINALIZER_MODEL_DIR ?? "",
+): Promise<Finalizer | null> {
+  if (!modelDir || !existsSync(join(modelDir, "encoder.int8.onnx"))) return null
+  let sherpa: typeof import("sherpa-onnx-node")
+  try {
+    sherpa = await import("sherpa-onnx-node")
+  } catch {
+    return null
+  }
+  const recognizer = new sherpa.OfflineRecognizer({
+    featConfig: { sampleRate: STT_SAMPLE_RATE, featureDim: 80 },
+    modelConfig: {
+      transducer: {
+        encoder: join(modelDir, "encoder.int8.onnx"),
+        decoder: join(modelDir, "decoder.int8.onnx"),
+        joiner: join(modelDir, "joiner.int8.onnx"),
+      },
+      tokens: join(modelDir, "tokens.txt"),
+      numThreads: Number(process.env.TRANSCRIBER_NUM_THREADS ?? 2),
+      provider: "cpu",
+      modelType: "nemo_transducer",
+    },
+    decodingMethod: "greedy_search",
+  })
+  return {
+    transcribe(samples) {
+      const s = recognizer.createStream()
+      s.acceptWaveform({ sampleRate: STT_SAMPLE_RATE, samples })
+      recognizer.decode(s)
+      return recognizer.getResult(s).text.trim()
+    },
+  }
+}
+
 export type Denoiser = {
   /** Denoise 16 kHz mono samples; output lags by the model's frame shift. */
   process(samples: Float32Array): Float32Array

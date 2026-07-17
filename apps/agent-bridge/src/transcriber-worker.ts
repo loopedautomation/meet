@@ -17,11 +17,16 @@ import {
 } from "@meet/shared"
 import {
   type Denoiser,
+  type Finalizer,
   loadDenoiserFactory,
+  loadFinalizer,
   loadSttEngine,
   STT_SAMPLE_RATE,
   type SttEngine,
 } from "./stt.js"
+
+/** Utterances longer than this are finalized from the streaming text. */
+const MAX_FINALIZE_SECONDS = 60
 
 // The platform transcriber: a hidden service participant that joins every
 // room, runs local streaming STT (sherpa-onnx) over every human mic, and
@@ -42,6 +47,7 @@ export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.stt = await loadSttEngine()
     proc.userData.denoiser = await loadDenoiserFactory()
+    proc.userData.finalizer = await loadFinalizer()
   },
   entry: async (ctx: JobContext) => {
     const engine = ctx.proc.userData.stt as
@@ -55,6 +61,10 @@ export default defineAgent({
 
     const makeDenoiser = ctx.proc.userData.denoiser as
       | (() => Denoiser)
+      | null
+      | undefined
+    const finalizer = ctx.proc.userData.finalizer as
+      | Finalizer
       | null
       | undefined
 
@@ -105,6 +115,29 @@ export default defineAgent({
         let segmentId = `seg-${participant.identity}-${nextSegment++}`
         let lastInterim = 0
         let lastText = ""
+        // The current utterance's audio, kept so the finalizer can
+        // re-transcribe it accurately (casing + punctuation) at endpoint.
+        let utterance: Float32Array[] = []
+        let utteranceLen = 0
+        const maxLen = MAX_FINALIZE_SECONDS * STT_SAMPLE_RATE
+
+        const finalText = (streamingText: string): string => {
+          if (!finalizer || utteranceLen === 0 || utteranceLen > maxLen) {
+            return streamingText
+          }
+          const joined = new Float32Array(utteranceLen)
+          let offset = 0
+          for (const chunk of utterance) {
+            joined.set(chunk, offset)
+            offset += chunk.length
+          }
+          try {
+            return finalizer.transcribe(joined) || streamingText
+          } catch {
+            return streamingText
+          }
+        }
+
         try {
           while (true) {
             const { value: frame, done } = await reader.read()
@@ -118,15 +151,22 @@ export default defineAgent({
             if (denoiser) samples = denoiser.process(samples)
             if (samples.length === 0) continue
             stt.accept(samples)
+            if (utteranceLen <= maxLen) {
+              const copy = new Float32Array(samples)
+              utterance.push(copy)
+              utteranceLen += copy.length
+            }
 
             const text = stt.text()
             if (stt.endpoint()) {
               if (text && text !== "") {
-                await publish(text, segmentId, true)
+                await publish(finalText(text), segmentId, true)
               }
               stt.reset()
               segmentId = `seg-${participant.identity}-${nextSegment++}`
               lastText = ""
+              utterance = []
+              utteranceLen = 0
               continue
             }
             const now = Date.now()
@@ -144,7 +184,7 @@ export default defineAgent({
           // track ended mid-read
         } finally {
           const text = stt.text()
-          if (text) await publish(text, segmentId, true)
+          if (text) await publish(finalText(text), segmentId, true)
           stt.free()
         }
       })()
