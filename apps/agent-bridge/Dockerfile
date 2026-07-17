@@ -22,6 +22,11 @@ COPY apps/agent-bridge apps/agent-bridge
 RUN cd apps/agent-bridge && pnpm build
 
 FROM base AS runner
+# CA roots for the Infisical CLI (Go) — bookworm-slim ships without a usable
+# CA store, so TLS to the Infisical API fails with "unknown authority".
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo ./
