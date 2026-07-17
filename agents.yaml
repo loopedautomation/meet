@@ -36,7 +36,12 @@ agents:
     stt:
       provider: openai
       model: gpt-4o-mini-transcribe
+    # ElevenLabs voices need a paid plan (free tier 402s on library voices
+    # via API). Until then Echo demos the pipeline with an OpenAI voice:
+    #   provider: elevenlabs
+    #   model: eleven_turbo_v2_5
+    #   voice: <a voice id from your ElevenLabs "My Voices">
     tts:
-      provider: elevenlabs
-      model: eleven_turbo_v2_5
-      voice: 21m00Tcm4TlvDq8ikWAM # "Rachel"
+      provider: openai
+      model: gpt-4o-mini-tts
+      voice: ash
