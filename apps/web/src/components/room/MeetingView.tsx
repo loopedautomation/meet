@@ -14,9 +14,11 @@ import { ParticipantTile } from "@/components/room/ParticipantTile"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
+import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({ slug }: { slug: string }) {
+  useJoinLeaveSounds()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
