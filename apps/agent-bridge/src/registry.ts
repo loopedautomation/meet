@@ -22,6 +22,15 @@ const agentEntrySchema = z.object({
   avatar: z.string().optional(),
   greeting: z.string().optional(),
   brain: brainSchema,
+  // When present, the agent runs on a realtime speech-to-speech model (the
+  // interaction layer) that delegates tool work to the brain — no STT/TTS
+  // pipeline. stt/tts below are ignored for realtime agents.
+  realtime: z
+    .object({
+      model: z.string().default("gpt-realtime"),
+      voice: z.string().default("marin"),
+    })
+    .optional(),
   stt: z
     .object({
       provider: z.enum(["openai"]).default("openai"),

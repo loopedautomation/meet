@@ -10,6 +10,11 @@ agents:
       kind: tty
       url: ws://demo-agent:8300/tty
       token_env: SCOUT_TTY_TOKEN
+    # Speech-to-speech interaction layer; tool work is delegated to the brain.
+    realtime:
+      model: gpt-realtime-2.1
+      voice: marin
+    # Fallback pipeline config (used only if `realtime` is removed).
     stt:
       provider: openai
       model: gpt-4o-mini-transcribe

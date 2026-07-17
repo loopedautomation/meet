@@ -20,6 +20,7 @@ import {
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
+import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
 import { ScreenCapture } from "./screen-capture.js"
 
@@ -95,6 +96,71 @@ export default defineAgent({
     }
 
     const screen = new ScreenCapture(ctx.room)
+
+    // Realtime agents: a speech-to-speech model is the interaction layer and
+    // the brain handles tool work — no STT/TTS pipeline at all.
+    if (entry.realtime) {
+      const replyInChatRealtime = async (message: ChatMessage) => {
+        setState(sessionState.muted ? "muted" : "thinking")
+        try {
+          let reply = ""
+          for await (const frame of brain.runTurn(
+            `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
+          )) {
+            if (frame.type === "assistant") {
+              reply += (reply ? "\n" : "") + frame.content
+            } else if (frame.type === "error") {
+              throw new Error(frame.error)
+            }
+          }
+          if (reply) publishChat(reply)
+        } catch (err) {
+          const busy = err instanceof Error && /in progress/.test(err.message)
+          publishChat(
+            busy
+              ? "(I'm mid-task right now — ask me again in a moment.)"
+              : "(Sorry, I couldn't process that.)",
+          )
+        } finally {
+          setState(sessionState.muted ? "muted" : "listening")
+        }
+      }
+      ctx.room.on("dataReceived", (payload: Uint8Array, _p, _k, topic) => {
+        if (topic === DataTopic.AgentControl) {
+          try {
+            const control = agentControlSchema.parse(
+              JSON.parse(new TextDecoder().decode(payload)),
+            )
+            if (control.agentId !== entry.id) return
+            if (control.type === "mute") sessionState.muted = true
+            else if (control.type === "unmute") sessionState.muted = false
+            else if (control.type === "deafen") sessionState.deafened = true
+            else if (control.type === "undeafen") sessionState.deafened = false
+            setState(sessionState.muted ? "muted" : "listening")
+          } catch {}
+        } else if (topic === DataTopic.Chat) {
+          try {
+            const message = chatMessageSchema.parse(
+              JSON.parse(new TextDecoder().decode(payload)),
+            )
+            if (message.from.startsWith("agent-")) return
+            if (!new RegExp(`@${entry.name}\\b`, "i").test(message.text)) return
+            console.log(`[${entry.id}] chat mention from ${message.fromName}`)
+            void replyInChatRealtime(message)
+          } catch {}
+        }
+      })
+      await runRealtimeAgent({
+        ctx,
+        entry,
+        realtime: entry.realtime,
+        brain,
+        state: sessionState,
+        callbacks: { publishActivity, publishChat, setState },
+        screen,
+      })
+      return
+    }
 
     const agent = new LoopedVoiceAgent(
       entry,
