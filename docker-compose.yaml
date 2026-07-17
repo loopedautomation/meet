@@ -39,8 +39,11 @@ services:
         port: 7880
         rtc:
           tcp_port: 7881
-          port_range_start: 51000
-          port_range_end: 51100
+          # Single muxed UDP port instead of a port range: through Docker's
+          # bridge/userland proxy a per-session range makes ICE pairs flap
+          # (clients reconnect every ~15s); one muxed port is the
+          # docker-friendly setup LiveKit documents.
+          udp_port: 7882
           use_external_ip: ${LIVEKIT_USE_EXTERNAL_IP:-false}
           node_ip: ${LIVEKIT_NODE_IP:-}
           # Docker Desktop's UDP proxy is unreliable for WebRTC on macOS —
@@ -53,8 +56,8 @@ services:
     ports:
       - "7880:7880"
       - "7881:7881"
-      # Must match rtc.port_range_start/end above
-      - "51000-51100:51000-51100/udp"
+      # Must match rtc.udp_port above
+      - "7882:7882/udp"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:7880"]
       interval: 10s

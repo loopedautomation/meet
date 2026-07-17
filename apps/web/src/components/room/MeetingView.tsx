@@ -42,7 +42,7 @@ export function MeetingView({ slug }: { slug: string }) {
       <ControlBar slug={slug} />
 
       {connectionState !== ConnectionState.Connected && (
-        <div className="alert alert-warning fixed top-4 left-1/2 z-50 w-auto -translate-x-1/2 shadow-lg">
+        <div className="alert alert-warning fixed bottom-6 left-1/2 z-50 w-auto -translate-x-1/2 shadow-lg">
           <span className="loading loading-spinner loading-sm" />
           {connectionState === ConnectionState.Reconnecting ||
           connectionState === ConnectionState.SignalReconnecting
