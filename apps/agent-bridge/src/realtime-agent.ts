@@ -149,6 +149,14 @@ export async function runRealtimeAgent(opts: {
 
   const pump = setInterval(() => {
     if (!session.live || fifos.size === 0) return
+    // Half-duplex: while the model is speaking, drop room audio instead of
+    // feeding it in. Participants on open speakers echo the agent's own voice
+    // into their mics, and the model ends up in a conversation with itself.
+    // (Trade-off: barge-in by voice is disabled while the agent talks.)
+    if (session.responding) {
+      for (const fifo of fifos.values()) fifo.length = 0
+      return
+    }
     const mixed = new Int16Array(SAMPLES_PER_MIX)
     let any = false
     for (const fifo of fifos.values()) {

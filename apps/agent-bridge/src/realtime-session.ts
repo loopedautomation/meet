@@ -63,6 +63,11 @@ export class RealtimeSession {
     return !this.#closed && this.#ws?.readyState === WebSocket.OPEN
   }
 
+  /** Whether the model is currently speaking a response. */
+  get responding(): boolean {
+    return this.#responding
+  }
+
   #send(event: Record<string, unknown>) {
     if (this.#ws?.readyState === WebSocket.OPEN)
       this.#ws.send(JSON.stringify(event))
@@ -197,6 +202,8 @@ export class RealtimeSession {
 
   /** Ask the model to say something specific (e.g. the join greeting). */
   say(text: string) {
+    // Creating a response while one is active is an API error; skip instead.
+    if (this.#responding) return
     this.#send({
       type: "response.create",
       response: { instructions: `Say, more or less: ${text}` },
