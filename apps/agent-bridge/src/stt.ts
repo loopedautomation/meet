@@ -7,6 +7,19 @@ import { join } from "node:path"
 
 export const STT_SAMPLE_RATE = 16_000
 
+
+/**
+ * sherpa-onnx-node is CJS; under dynamic import only some names get
+ * synthesized as named exports (OnlineRecognizer yes, OfflineRecognizer and
+ * OnlineSpeechDenoiser no). Normalize through the default export.
+ */
+async function importSherpa(): Promise<typeof import("sherpa-onnx-node")> {
+  const mod = (await import("sherpa-onnx-node")) as unknown as {
+    default?: typeof import("sherpa-onnx-node")
+  }
+  return mod.default ?? (mod as unknown as typeof import("sherpa-onnx-node"))
+}
+
 export type SttStream = {
   /** Feed 16 kHz mono float32 samples ([-1, 1]). */
   accept(samples: Float32Array): void
@@ -65,25 +78,34 @@ export async function loadFinalizer(
   if (!modelDir || !existsSync(join(modelDir, "encoder.int8.onnx"))) return null
   let sherpa: typeof import("sherpa-onnx-node")
   try {
-    sherpa = await import("sherpa-onnx-node")
+    sherpa = await importSherpa()
   } catch {
     return null
   }
-  const recognizer = new sherpa.OfflineRecognizer({
-    featConfig: { sampleRate: STT_SAMPLE_RATE, featureDim: 80 },
-    modelConfig: {
-      transducer: {
-        encoder: join(modelDir, "encoder.int8.onnx"),
-        decoder: join(modelDir, "decoder.int8.onnx"),
-        joiner: join(modelDir, "joiner.int8.onnx"),
+  let recognizer: InstanceType<
+    (typeof import("sherpa-onnx-node"))["OfflineRecognizer"]
+  >
+  try {
+    recognizer = new sherpa.OfflineRecognizer({
+      featConfig: { sampleRate: STT_SAMPLE_RATE, featureDim: 80 },
+      modelConfig: {
+        transducer: {
+          encoder: join(modelDir, "encoder.int8.onnx"),
+          decoder: join(modelDir, "decoder.int8.onnx"),
+          joiner: join(modelDir, "joiner.int8.onnx"),
+        },
+        tokens: join(modelDir, "tokens.txt"),
+        numThreads: Number(process.env.TRANSCRIBER_NUM_THREADS ?? 2),
+        provider: "cpu",
+        modelType: "nemo_transducer",
       },
-      tokens: join(modelDir, "tokens.txt"),
-      numThreads: Number(process.env.TRANSCRIBER_NUM_THREADS ?? 2),
-      provider: "cpu",
-      modelType: "nemo_transducer",
-    },
-    decodingMethod: "greedy_search",
-  })
+      decodingMethod: "greedy_search",
+    })
+  } catch (err) {
+    // Never let a finalizer problem take down transcription entirely.
+    console.error(`finalizer disabled: ${(err as Error).message}`)
+    return null
+  }
   return {
     transcribe(samples) {
       const s = recognizer.createStream()
@@ -110,7 +132,7 @@ export async function loadDenoiserFactory(
   if (!modelPath || !existsSync(modelPath)) return null
   let sherpa: typeof import("sherpa-onnx-node")
   try {
-    sherpa = await import("sherpa-onnx-node")
+    sherpa = await importSherpa()
   } catch {
     return null
   }
@@ -141,7 +163,7 @@ export async function loadSttEngine(
   }
   let sherpa: typeof import("sherpa-onnx-node")
   try {
-    sherpa = await import("sherpa-onnx-node")
+    sherpa = await importSherpa()
   } catch (err) {
     return {
       error: `sherpa-onnx-node failed to load: ${(err as Error).message}`,

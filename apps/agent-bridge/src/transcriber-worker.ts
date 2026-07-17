@@ -85,8 +85,14 @@ export default defineAgent({
       })
       const stt = engine.createStream()
       // Per-speaker streaming noise suppression ahead of recognition, when
-      // the GTCRN model is present.
-      const denoiser = makeDenoiser?.() ?? null
+      // the GTCRN model is present. A denoiser failure must not stop
+      // transcription — fall back to raw audio.
+      let denoiser: Denoiser | null = null
+      try {
+        denoiser = makeDenoiser?.() ?? null
+      } catch (err) {
+        console.error(`denoiser disabled: ${(err as Error).message}`)
+      }
 
       const publish = async (
         text: string,
