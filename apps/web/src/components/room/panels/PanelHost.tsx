@@ -4,6 +4,7 @@ import { useStore } from "@nanostores/react"
 import { X } from "lucide-react"
 import { AgentsPanel } from "@/components/room/panels/AgentsPanel"
 import { ChatPanel } from "@/components/room/panels/ChatPanel"
+import { ParticipantsPanel } from "@/components/room/panels/ParticipantsPanel"
 import { TranscriptPanel } from "@/components/room/panels/TranscriptPanel"
 import { $openPanel } from "@/stores/panels"
 
@@ -11,6 +12,7 @@ const titles = {
   agents: "Agents",
   transcript: "Transcript",
   chat: "Chat",
+  participants: "Participants",
 } as const
 
 export function PanelHost({ slug }: { slug: string }) {
@@ -35,6 +37,7 @@ export function PanelHost({ slug }: { slug: string }) {
         {openPanel === "agents" && <AgentsPanel slug={slug} />}
         {openPanel === "transcript" && <TranscriptPanel />}
         {openPanel === "chat" && <ChatPanel />}
+        {openPanel === "participants" && <ParticipantsPanel slug={slug} />}
       </div>
     </aside>
   )

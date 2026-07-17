@@ -7,6 +7,7 @@ import { setLogLevel } from "livekit-client"
 import { useCallback, useEffect, useState } from "react"
 import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
+import { WaitingRoom } from "@/components/room/WaitingRoom"
 
 const queryClient = new QueryClient()
 
@@ -30,20 +31,32 @@ export function RoomClient({ slug }: { slug: string }) {
   } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [rejoining, setRejoining] = useState(false)
+  const [admitted, setAdmitted] = useState(false)
 
   const handleJoin = useCallback(
-    async (prefs: JoinPreferences) => {
+    async (prefs: JoinPreferences, rejoinToken?: string) => {
       setError(null)
+      setAdmitted(false)
       try {
         const res = await fetch(`/api/rooms/${slug}/token`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ displayName: prefs.displayName }),
+          body: JSON.stringify({ displayName: prefs.displayName, rejoinToken }),
         })
+        if (res.status === 404) {
+          setError(
+            "This meeting doesn't exist or has already ended. Ask for a fresh link.",
+          )
+          return
+        }
         if (!res.ok) throw new Error(`token request failed (${res.status})`)
         const token = (await res.json()) as TokenResponse
         try {
-          sessionStorage.setItem(`rejoin:${slug}`, JSON.stringify(prefs))
+          sessionStorage.setItem(
+            `rejoin:${slug}`,
+            // The token doubles as proof of admission on the next refresh.
+            JSON.stringify({ prefs, rejoinToken: token.token }),
+          )
         } catch {}
         setSession({ token, prefs })
       } catch {
@@ -56,15 +69,56 @@ export function RoomClient({ slug }: { slug: string }) {
   // A refresh rejoins the meeting automatically; only an explicit leave (or a
   // server-side disconnect) drops back to the lobby.
   useEffect(() => {
-    let stored: JoinPreferences | null = null
+    let stored: { prefs: JoinPreferences; rejoinToken?: string } | null = null
     try {
       const raw = sessionStorage.getItem(`rejoin:${slug}`)
-      if (raw) stored = JSON.parse(raw) as JoinPreferences
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        // Older entries stored the preferences at the top level.
+        stored = parsed.prefs
+          ? parsed
+          : { prefs: parsed as JoinPreferences, rejoinToken: undefined }
+      }
     } catch {}
-    if (!stored?.displayName) return
+    if (!stored?.prefs?.displayName) return
     setRejoining(true)
-    handleJoin(stored).finally(() => setRejoining(false))
+    handleJoin(stored.prefs, stored.rejoinToken).finally(() =>
+      setRejoining(false),
+    )
   }, [slug, handleJoin])
+
+  // On admission, swap the stored waiting token for an admitted one while
+  // the server can still see us connected as human — so a later refresh
+  // walks straight in instead of knocking again.
+  const handleAdmitted = useCallback(() => {
+    setAdmitted(true)
+    const current = sessionStorage.getItem(`rejoin:${slug}`)
+    if (!current) return
+    try {
+      const stored = JSON.parse(current) as {
+        prefs: JoinPreferences
+        rejoinToken?: string
+      }
+      void fetch(`/api/rooms/${slug}/token`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          displayName: stored.prefs.displayName,
+          rejoinToken: stored.rejoinToken,
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((fresh: TokenResponse | null) => {
+          if (fresh && !fresh.waiting) {
+            sessionStorage.setItem(
+              `rejoin:${slug}`,
+              JSON.stringify({ prefs: stored.prefs, rejoinToken: fresh.token }),
+            )
+          }
+        })
+        .catch(() => undefined)
+    } catch {}
+  }, [slug])
 
   const handleLeave = useCallback(() => {
     try {
@@ -86,19 +140,25 @@ export function RoomClient({ slug }: { slug: string }) {
     return <Lobby slug={slug} onJoin={handleJoin} error={error} />
   }
 
+  const inWaitingRoom = session.token.waiting && !admitted
+
   return (
     <LiveKitRoom
       token={session.token.token}
       serverUrl={session.token.serverUrl}
-      // Join with the lobby's mic setting — unless others are already in the
-      // call, in which case join muted (unmute from the control bar).
+      // Waiting participants join without media; on admission WaitingRoom
+      // brings devices up per the lobby preferences. Otherwise join with the
+      // lobby's mic setting — unless others are already in the call, in
+      // which case join muted (unmute from the control bar).
       audio={
+        !session.token.waiting &&
         session.prefs.audioEnabled &&
         session.token.participantCount === 0 && {
           deviceId: session.prefs.audioDeviceId,
         }
       }
       video={
+        !session.token.waiting &&
         session.prefs.videoEnabled && {
           deviceId: session.prefs.videoDeviceId,
         }
@@ -113,7 +173,11 @@ export function RoomClient({ slug }: { slug: string }) {
       className="h-dvh"
     >
       <QueryClientProvider client={queryClient}>
-        <MeetingView slug={slug} />
+        {inWaitingRoom ? (
+          <WaitingRoom prefs={session.prefs} onAdmitted={handleAdmitted} />
+        ) : (
+          <MeetingView slug={slug} />
+        )}
       </QueryClientProvider>
     </LiveKitRoom>
   )

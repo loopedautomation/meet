@@ -1,6 +1,6 @@
 import type { ParticipantMeta } from "@meet/shared"
 import { parseParticipantMeta, tokenRequestSchema } from "@meet/shared"
-import { AccessToken } from "livekit-server-sdk"
+import { AccessToken, TokenVerifier } from "livekit-server-sdk"
 import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
@@ -19,24 +19,75 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "displayName required" }, { status: 400 })
   }
 
-  // First joiner becomes host (roomAdmin) — enables lock/remove controls.
+  // The room must exist: links to ended meetings 404 instead of silently
+  // recreating the room, which would bypass the creation gate.
+  const existing = await roomService()
+    .listRooms([slug])
+    .catch(() => [])
+  if (existing.length === 0) {
+    return NextResponse.json(
+      { error: "meeting not found or has ended" },
+      { status: 404 },
+    )
+  }
+
+  // Waiting room: the first human into an empty room enters directly (the
+  // creator arriving); everyone after knocks — they join with a restricted
+  // token (no publish/subscribe/data) and "waiting" metadata until someone
+  // inside admits them (see ../admit/route.ts).
   // Only humans count: a lingering transcriber or agent must never claim
   // host, and joining "alone with the transcriber" should still unmute.
   let participantCount = 0
   try {
     participantCount = (await roomService().listParticipants(slug)).filter(
-      (p) =>
-        parseParticipantMeta(p.metadata)?.kind !== "service" &&
-        parseParticipantMeta(p.metadata)?.kind !== "agent",
+      (p) => parseParticipantMeta(p.metadata)?.kind === "human",
     ).length
   } catch {
     participantCount = 0
   }
   const isHost = participantCount === 0
+  let waiting = !isHost
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()
+
+  // A refresh presents its previous token as proof of admission: accept it
+  // if it verifies for this room with admitted (human) metadata, or — for a
+  // knocker upgrading their proof right after admission — if its identity is
+  // currently connected with human metadata.
+  if (waiting && body.data.rejoinToken) {
+    try {
+      const claims = await new TokenVerifier(apiKey, apiSecret).verify(
+        body.data.rejoinToken,
+      )
+      if (claims.video?.room === slug) {
+        const kind = parseParticipantMeta(claims.metadata)?.kind
+        if (kind === "human") {
+          waiting = false
+        } else if (kind === "waiting") {
+          const sub = JSON.parse(
+            Buffer.from(
+              body.data.rejoinToken.split(".")[1] ?? "",
+              "base64url",
+            ).toString(),
+          ).sub as string | undefined
+          const live = sub
+            ? (
+                await roomService()
+                  .listParticipants(slug)
+                  .catch(() => [])
+              ).find((p) => p.identity === sub)
+            : undefined
+          if (live && parseParticipantMeta(live.metadata)?.kind === "human") {
+            waiting = false
+          }
+        }
+      }
+    } catch {
+      // invalid/expired proof — knock like anyone else
+    }
+  }
   const identity = `user-${nanoid(10)}`
-  const meta: ParticipantMeta = { kind: "human" }
+  const meta: ParticipantMeta = { kind: waiting ? "waiting" : "human" }
   const token = new AccessToken(apiKey, apiSecret, {
     identity,
     name: body.data.displayName,
@@ -46,11 +97,13 @@ export async function POST(request: Request, { params }: Params) {
   token.addGrant({
     room: slug,
     roomJoin: true,
-    roomCreate: true,
+    // Never roomCreate: meeting creation is gated by the management
+    // password; a join token must not be able to resurrect an ended room.
+    roomCreate: false,
     roomAdmin: isHost,
-    canPublish: true,
-    canSubscribe: true,
-    canPublishData: true,
+    canPublish: !waiting,
+    canSubscribe: !waiting,
+    canPublishData: !waiting,
   })
 
   return NextResponse.json({
@@ -58,5 +111,6 @@ export async function POST(request: Request, { params }: Params) {
     serverUrl: publicUrl,
     identity,
     participantCount,
+    waiting,
   })
 }

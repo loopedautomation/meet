@@ -24,8 +24,9 @@ export type AgentState = z.infer<typeof agentStateSchema>
 
 export const participantMetaSchema = z.object({
   // "service" participants (e.g. the platform transcriber) are invisible
-  // infrastructure: no tile, no chimes, no mention picker entry.
-  kind: z.enum(["human", "agent", "service"]),
+  // infrastructure: no tile, no chimes, no mention picker entry. "waiting"
+  // participants have knocked and sit in the waiting room until admitted.
+  kind: z.enum(["human", "agent", "service", "waiting"]),
   agentId: z.string().optional(),
   service: z.string().optional(),
 })
@@ -117,6 +118,11 @@ export type CreateRoomResponse = z.infer<typeof createRoomResponseSchema>
 
 export const tokenRequestSchema = z.object({
   displayName: z.string().min(1).max(64),
+  /**
+   * A previously issued token for this room, proving prior admission — a
+   * page refresh re-enters directly instead of knocking again.
+   */
+  rejoinToken: z.string().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 
@@ -126,6 +132,8 @@ export const tokenResponseSchema = z.object({
   identity: z.string(),
   /** How many participants were already in the room before this join. */
   participantCount: z.number().int().min(0).default(0),
+  /** True when the joiner enters the waiting room pending admission. */
+  waiting: z.boolean().default(false),
 })
 export type TokenResponse = z.infer<typeof tokenResponseSchema>
 

@@ -1,6 +1,11 @@
 "use client"
 
-import { useLocalParticipant, useRoomContext } from "@livekit/components-react"
+import {
+  useLocalParticipant,
+  useParticipants,
+  useRoomContext,
+} from "@livekit/components-react"
+import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import {
   Bot,
@@ -12,6 +17,7 @@ import {
   MonitorUp,
   PhoneOff,
   ScrollText,
+  Users,
   Video,
   VideoOff,
 } from "lucide-react"
@@ -29,6 +35,10 @@ export function ControlBar({ slug }: { slug: string }) {
   const [copied, setCopied] = useState(false)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const openPanel = useStore($openPanel)
+  const participants = useParticipants()
+  const waitingCount = participants.filter(
+    (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
+  ).length
 
   const toggle = (
     action: () => Promise<unknown>,
@@ -143,6 +153,19 @@ export function ControlBar({ slug }: { slug: string }) {
       </div>
 
       <div className="flex items-center gap-1">
+        <button
+          type="button"
+          className={`btn btn-circle indicator ${openPanel === "participants" ? "btn-primary" : "btn-ghost"}`}
+          onClick={() => togglePanel("participants")}
+          aria-label="Participants"
+        >
+          {waitingCount > 0 && (
+            <span className="badge indicator-item badge-warning badge-xs">
+              {waitingCount}
+            </span>
+          )}
+          <Users className="size-5" />
+        </button>
         <button
           type="button"
           className={`btn btn-circle ${openPanel === "agents" ? "btn-primary" : "btn-ghost"}`}

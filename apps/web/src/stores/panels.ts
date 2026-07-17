@@ -1,6 +1,6 @@
 import { atom } from "nanostores"
 
-export type Panel = "agents" | "transcript" | "chat" | null
+export type Panel = "agents" | "transcript" | "chat" | "participants" | null
 
 export const $openPanel = atom<Panel>(null)
 
