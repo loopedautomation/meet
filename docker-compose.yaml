@@ -6,7 +6,7 @@ name: looped-standups
 # its own secrets at start via docker-entrypoint.sh. Locally, leave them
 # unset and everything runs off the root .env instead (per-service env_file).
 x-infisical: &infisical
-  INFISICAL_API_URL: ${INFISICAL_API_URL:-https://infisical.looped.co.za/api}
+  INFISICAL_API_URL: ${INFISICAL_API_URL:-https://infisical.looped.sh/api}
   INFISICAL_ENV: ${INFISICAL_ENV:-prod}
   INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID:-396f8208-593a-4966-8943-97621affc25a}
   INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
