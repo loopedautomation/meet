@@ -67,16 +67,12 @@ services:
     ports:
       - "3000:3000"
     <<: *local-env
-    # Secrets (LIVEKIT_API_KEY/SECRET, BRIDGE_TOKEN) come from Infisical in
-    # production, or from the root .env locally — never set them here, or
-    # they'd shadow the injected values.
+    # All app config and secrets come from Infisical in production, or from
+    # the root .env locally — never set them here, or they'd shadow the
+    # injected values.
     environment:
       <<: *infisical
       INFISICAL_SECRETS_PATH: "/apps/web /shared"
-      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
-      # LIVEKIT_PUBLIC_URL (browser-facing, read server-side at runtime)
-      # comes from Infisical /apps/web in production, or .env locally.
-      BRIDGE_URL: ${BRIDGE_URL:-http://agent-bridge:8090}
     depends_on:
       livekit:
         condition: service_healthy
@@ -98,14 +94,12 @@ services:
     ports:
       - "8090:8090"
     <<: *local-env
-    # Secrets (LIVEKIT_API_KEY/SECRET, BRIDGE_TOKEN, OPENAI_API_KEY,
-    # ELEVENLABS_API_KEY, SCOUT_TTY_TOKEN) come from Infisical in production,
-    # or from the root .env locally.
+    # All app config and secrets come from Infisical in production, or from
+    # the root .env locally. AGENTS_CONFIG is set in the image — it points at
+    # a path baked into it.
     environment:
       <<: *infisical
       INFISICAL_SECRETS_PATH: "/apps/agent-bridge /shared"
-      LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
-      AGENTS_CONFIG: /app/agents.yaml
     depends_on:
       livekit:
         condition: service_healthy

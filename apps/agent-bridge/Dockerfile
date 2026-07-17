@@ -26,6 +26,7 @@ WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo ./
 COPY agents.yaml /app/agents.yaml
+ENV AGENTS_CONFIG=/app/agents.yaml
 COPY --from=infisical /usr/local/bin/infisical /usr/local/bin/infisical
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 WORKDIR /repo/apps/agent-bridge
