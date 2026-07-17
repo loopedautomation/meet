@@ -85,6 +85,24 @@ export async function runRealtimeAgent(opts: {
     }
   }
 
+  // captureFrame is async and chunks internally — concurrent calls interleave
+  // their chunks and play back as scrambled speech. Serialize all writes, and
+  // use a generation counter so frames queued behind an interrupt are dropped
+  // instead of resuming the cancelled reply.
+  let writeChain: Promise<void> = Promise.resolve()
+  let generation = 0
+  const enqueueAudio = (samples: Int16Array) => {
+    const gen = generation
+    writeChain = writeChain
+      .then(() => {
+        if (gen !== generation) return
+        return source.captureFrame(
+          new AudioFrame(samples, REALTIME_SAMPLE_RATE, 1, samples.length),
+        )
+      })
+      .catch(() => undefined)
+  }
+
   const session = new RealtimeSession({
     model: realtime.model,
     voice: realtime.voice,
@@ -93,12 +111,12 @@ export async function runRealtimeAgent(opts: {
     delegate,
     onAudio: (pcm) => {
       if (state.muted) return
-      const samples = new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2)
-      void source.captureFrame(
-        new AudioFrame(samples, REALTIME_SAMPLE_RATE, 1, samples.length),
-      )
+      enqueueAudio(new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2))
     },
-    onInterrupt: () => source.clearQueue(),
+    onInterrupt: () => {
+      generation++
+      source.clearQueue()
+    },
     onSpeaking: () => {
       if (!state.muted) callbacks.setState("speaking")
     },
@@ -155,8 +173,10 @@ export async function runRealtimeAgent(opts: {
     // Half-duplex: while the model is speaking, drop room audio instead of
     // feeding it in. Participants on open speakers echo the agent's own voice
     // into their mics, and the model ends up in a conversation with itself.
-    // (Trade-off: barge-in by voice is disabled while the agent talks.)
-    if (session.responding) {
+    // Generation finishes well before playback does (deltas stream faster
+    // than realtime), so the gate stays closed until the speaker queue has
+    // actually drained. (Trade-off: no voice barge-in while the agent talks.)
+    if (session.responding || source.queuedDuration > 0.05) {
       for (const fifo of fifos.values()) fifo.length = 0
       return
     }

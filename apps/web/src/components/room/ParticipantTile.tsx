@@ -10,6 +10,7 @@ import {
 import { parseParticipantMeta } from "@meet/shared"
 import { Track } from "livekit-client"
 import { MicOff } from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import { AgentBadge } from "@/components/room/AgentBadge"
 
 type ParticipantTileProps = {
@@ -29,12 +30,28 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   const name = participant.name || participant.identity
   const hasVideo = isTrackReference(trackRef) && !trackRef.publication.isMuted
   // A phone in portrait publishes a taller-than-wide track; cropping it into
-  // a landscape card cuts heads off. Adapt the card (compact) or letterbox
-  // within the grid cell instead.
-  const dims = isTrackReference(trackRef)
-    ? trackRef.publication.dimensions
-    : undefined
-  const portrait = !!dims && dims.height > dims.width
+  // a landscape card cuts heads off. Measure the actual video element (the
+  // publication's static dimensions are unreliable, and the element fires
+  // `resize` when the phone rotates mid-call) and adapt the card (compact)
+  // or letterbox within the grid cell.
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [portrait, setPortrait] = useState(false)
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    const update = () => {
+      if (el.videoWidth && el.videoHeight) {
+        setPortrait(el.videoHeight > el.videoWidth)
+      }
+    }
+    update()
+    el.addEventListener("resize", update)
+    el.addEventListener("loadedmetadata", update)
+    return () => {
+      el.removeEventListener("resize", update)
+      el.removeEventListener("loadedmetadata", update)
+    }
+  }, [hasVideo])
 
   return (
     <div
@@ -50,6 +67,7 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
     >
       {hasVideo ? (
         <VideoTrack
+          ref={videoRef}
           trackRef={trackRef}
           className={`size-full ${portrait && !compact ? "object-contain" : "object-cover"} ${
             participant.isLocal ? "scale-x-[-1]" : ""
