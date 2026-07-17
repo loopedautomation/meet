@@ -28,6 +28,13 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   const isAgent = meta?.kind === "agent"
   const name = participant.name || participant.identity
   const hasVideo = isTrackReference(trackRef) && !trackRef.publication.isMuted
+  // A phone in portrait publishes a taller-than-wide track; cropping it into
+  // a landscape card cuts heads off. Adapt the card (compact) or letterbox
+  // within the grid cell instead.
+  const dims = isTrackReference(trackRef)
+    ? trackRef.publication.dimensions
+    : undefined
+  const portrait = !!dims && dims.height > dims.width
 
   return (
     <div
@@ -36,13 +43,15 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
           ? "bg-[color-mix(in_oklch,var(--color-primary)_20%,var(--color-base-300))] ring-1 ring-primary/40"
           : "bg-base-300"
       } ${speaking ? "ring-2 ring-primary" : ""} ${
-        compact ? "aspect-video shrink-0" : "size-full min-h-0"
+        compact
+          ? `${portrait ? "aspect-[9/16]" : "aspect-video"} shrink-0`
+          : "size-full min-h-0"
       }`}
     >
       {hasVideo ? (
         <VideoTrack
           trackRef={trackRef}
-          className={`size-full object-cover ${
+          className={`size-full ${portrait && !compact ? "object-contain" : "object-cover"} ${
             participant.isLocal ? "scale-x-[-1]" : ""
           }`}
         />

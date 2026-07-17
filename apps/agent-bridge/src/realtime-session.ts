@@ -37,7 +37,13 @@ function toBase64(bytes: Uint8Array): string {
 }
 
 function fromBase64(base64: string): Uint8Array {
-  return new Uint8Array(Buffer.from(base64, "base64"))
+  // Copy out of Node's shared Buffer pool: downstream consumers (the audio
+  // source queue) hold these bytes async, and a pooled view gets overwritten
+  // by later allocations — which plays back as garbled, overlapping speech.
+  const pooled = Buffer.from(base64, "base64")
+  const owned = new Uint8Array(pooled.length)
+  owned.set(pooled)
+  return owned
 }
 
 /**
