@@ -1,12 +1,16 @@
 {
-  "name": "looped-standups",
+  "name": "looped-meet",
   "private": true,
   "version": "0.1.0",
   "description": "Open-source, self-hostable meeting rooms with first-class AI agent participants",
   "license": "MIT",
   "packageManager": "pnpm@10.12.1",
   "scripts": {
-    "dev": "pnpm --parallel -r dev",
+    "dev": "docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml up -d --build && echo \"\\n  \u279c http://localhost:3000  (management password: dev-password)\\n\"",
+    "dev:logs": "docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml logs -f agent-bridge web",
+    "dev:restart": "docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml up -d --build",
+    "dev:down": "docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml down",
+    "dev:apps": "pnpm --parallel -r dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "test": "pnpm -r test",

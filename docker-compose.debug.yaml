@@ -1,0 +1,7 @@
+# Local debug override: pull the published images but bind-mount the local
+# agents.yaml over the baked one, so agent config changes need no rebuild.
+#   docker compose -f docker-compose.yaml -f docker-compose.debug.yaml up -d
+services:
+  agent-bridge:
+    volumes:
+      - ./agents.yaml:/app/agents.yaml:ro
