@@ -225,7 +225,9 @@ export default defineAgent({
             JSON.parse(new TextDecoder().decode(payload)),
           )
           if (control.agentId !== entry.id) return
-          if (control.type === "mute" && !sessionState.muted) {
+          if (control.type === "interrupt") {
+            session.interrupt()
+          } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
             sessionState.notifiedMuted = false
             session.interrupt()

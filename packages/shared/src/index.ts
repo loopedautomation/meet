@@ -61,7 +61,7 @@ export function isServiceParticipant(metadata: string | undefined): boolean {
 
 /** Control messages published by participants on the `agent-control` topic. */
 export const agentControlSchema = z.object({
-  type: z.enum(["mute", "unmute", "deafen", "undeafen"]),
+  type: z.enum(["mute", "unmute", "deafen", "undeafen", "interrupt"]),
   agentId: z.string(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>

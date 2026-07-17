@@ -3,15 +3,16 @@
 import {
   isTrackReference,
   type TrackReferenceOrPlaceholder,
+  useDataChannel,
   useIsMuted,
   useIsSpeaking,
   VideoTrack,
 } from "@livekit/components-react"
-import { parseParticipantMeta } from "@meet/shared"
+import { DataTopic, parseParticipantMeta } from "@meet/shared"
 import { Track } from "livekit-client"
-import { MicOff } from "lucide-react"
+import { Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { AgentBadge } from "@/components/room/AgentBadge"
+import { AgentBadge, useAgentState } from "@/components/room/AgentBadge"
 
 type ParticipantTileProps = {
   trackRef: TrackReferenceOrPlaceholder
@@ -27,6 +28,8 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   })
   const meta = parseParticipantMeta(participant.metadata)
   const isAgent = meta?.kind === "agent"
+  const agentState = useAgentState(participant)
+  const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
   const name = participant.name || participant.identity
   const hasVideo = isTrackReference(trackRef) && !trackRef.publication.isMuted
   // A phone in portrait publishes a taller-than-wide track; cropping it into
@@ -85,6 +88,25 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
             {name.charAt(0).toUpperCase()}
           </div>
         </div>
+      )}
+
+      {/* Tap to interrupt: cuts the agent off mid-sentence. */}
+      {isAgent && meta?.agentId && agentState === "speaking" && (
+        <button
+          type="button"
+          className="btn btn-warning btn-xs absolute top-2 right-2 z-10 gap-1"
+          onClick={() =>
+            sendControl(
+              new TextEncoder().encode(
+                JSON.stringify({ type: "interrupt", agentId: meta.agentId }),
+              ),
+              { topic: DataTopic.AgentControl, reliable: true },
+            )
+          }
+        >
+          <Hand className="size-3" />
+          Interrupt
+        </button>
       )}
 
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">

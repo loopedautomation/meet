@@ -208,6 +208,13 @@ export class RealtimeSession {
     this.#send({ type: "response.create" })
   }
 
+  /** Cancel the in-progress response (tap-to-interrupt / hard mute). */
+  cancelResponse() {
+    if (!this.#responding) return
+    this.#responding = false
+    this.#send({ type: "response.cancel" })
+  }
+
   /** Ask the model to say something specific (e.g. the join greeting). */
   say(text: string) {
     // Creating a response while one is active is an API error; skip instead.

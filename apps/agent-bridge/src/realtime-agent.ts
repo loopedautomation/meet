@@ -9,7 +9,11 @@ import {
   TrackPublishOptions,
   TrackSource,
 } from "@livekit/rtc-node"
-import type { AgentActivityEvent } from "@meet/shared"
+import {
+  type AgentActivityEvent,
+  agentControlSchema,
+  DataTopic,
+} from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
@@ -195,6 +199,35 @@ export async function runRealtimeAgent(opts: {
     if (!any) return
     session.appendAudio(new Uint8Array(mixed.buffer, 0, SAMPLES_PER_MIX * 2))
   }, MIX_INTERVAL_MS)
+
+  // Hard-stop whatever is playing: cancel the model's response, drop frames
+  // queued behind the cut, and silence the speaker queue immediately. Used by
+  // tap-to-interrupt and by mute.
+  const hardCut = () => {
+    generation++
+    session.cancelResponse()
+    source.clearQueue()
+  }
+
+  ctx.room.on("dataReceived", (payload, _p, _k, topic) => {
+    if (topic !== DataTopic.AgentControl) return
+    try {
+      const control = agentControlSchema.parse(
+        JSON.parse(new TextDecoder().decode(payload)),
+      )
+      if (control.agentId !== entry.id) return
+      if (control.type === "interrupt") {
+        hardCut()
+        callbacks.setState(state.muted ? "muted" : "listening")
+      } else if (control.type === "mute") {
+        // The worker's control handler flips the muted flag; this one makes
+        // mute take effect audibly by cutting playback mid-word.
+        state.muted = true
+        hardCut()
+        callbacks.setState("muted")
+      }
+    } catch {}
+  })
 
   ctx.addShutdownCallback(async () => {
     clearInterval(pump)
