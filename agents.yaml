@@ -22,3 +22,21 @@ agents:
       provider: openai
       model: gpt-4o-mini-tts
       voice: alloy
+
+  # Pipeline-mode demo: STT -> looped-af brain -> ElevenLabs TTS. No realtime
+  # block, so this agent only spends tokens when addressed — the cheap mode.
+  - id: echo
+    name: Echo
+    description: Pipeline-mode twin of Scout — same brain, ElevenLabs voice, pay-per-turn.
+    greeting: "Hi, I'm Echo. Same brain as Scout, cheaper habits."
+    brain:
+      kind: tty
+      url: ws://demo-agent:8300/tty
+      token_env: SCOUT_TTY_TOKEN
+    stt:
+      provider: openai
+      model: gpt-4o-mini-transcribe
+    tts:
+      provider: elevenlabs
+      model: eleven_turbo_v2_5
+      voice: 21m00Tcm4TlvDq8ikWAM # "Rachel"

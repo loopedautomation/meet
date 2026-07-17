@@ -5,6 +5,7 @@ import {
   type JobRequest,
   voice,
 } from "@livekit/agents"
+import * as elevenlabs from "@livekit/agents-plugin-elevenlabs"
 import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
@@ -199,10 +200,16 @@ export default defineAgent({
       // transcription panel later shows the text.
       turnHandling: { endpointing: { minDelay: 2 } },
       stt: new openai.STT({ model: entry.stt.model }),
-      tts: new openai.TTS({
-        model: entry.tts.model,
-        voice: entry.tts.voice as openai.TTSVoices,
-      }),
+      tts:
+        entry.tts.provider === "elevenlabs"
+          ? new elevenlabs.TTS({
+              model: entry.tts.model,
+              voiceId: entry.tts.voice,
+            })
+          : new openai.TTS({
+              model: entry.tts.model,
+              voice: entry.tts.voice as openai.TTSVoices,
+            }),
     })
 
     // Mirror the pipeline's state onto a participant attribute for the UI.

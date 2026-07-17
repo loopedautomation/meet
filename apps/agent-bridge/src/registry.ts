@@ -39,7 +39,9 @@ const agentEntrySchema = z.object({
     .default({ provider: "openai", model: "gpt-4o-mini-transcribe" }),
   tts: z
     .object({
-      provider: z.enum(["openai"]).default("openai"),
+      // For elevenlabs, `voice` is the ElevenLabs voice id and `model` an
+      // ElevenLabs model (e.g. eleven_turbo_v2_5). Needs ELEVENLABS_API_KEY.
+      provider: z.enum(["openai", "elevenlabs"]).default("openai"),
       model: z.string().default("gpt-4o-mini-tts"),
       voice: z.string().default("alloy"),
     })
