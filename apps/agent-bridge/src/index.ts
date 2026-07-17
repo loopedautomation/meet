@@ -2,7 +2,13 @@ import { serve } from "@hono/node-server"
 import { AgentServer, initializeLogger, ServerOptions } from "@livekit/agents"
 import { Hono } from "hono"
 import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk"
+import {
+  type DynamicAgentSpec,
+  probeAgent,
+  registerDynamicAgent,
+} from "./dynamic.js"
 import { loadRegistry } from "./registry.js"
+import { acceptTranscriberRequest } from "./transcriber-worker.js"
 import { acceptRequest } from "./worker.js"
 
 const PORT = Number(process.env.PORT ?? 8090)
@@ -59,6 +65,35 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   return c.json({ ok: true })
 })
 
+// Ad-hoc invite: paste any looped agent's TTY URL (+ token) and it joins the
+// room — no agents.yaml registration. The spec lives in the bridge's memory
+// for the room's lifetime; dispatch metadata carries only the generated id.
+app.post("/rooms/:room/agents", async (c) => {
+  const { room } = c.req.param()
+  let body: { url?: string; token?: string; name?: string; voice?: string }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "invalid body" }, 400)
+  }
+  if (!body.url) return c.json({ error: "url required" }, 400)
+
+  const probe = await probeAgent(body.url, body.token ?? "")
+  if ("error" in probe) return c.json({ error: probe.error }, 422)
+
+  const spec: DynamicAgentSpec = {
+    url: body.url,
+    token: body.token ?? "",
+    name: body.name?.trim() || probe.name,
+    voice: body.voice,
+  }
+  const id = registerDynamicAgent(spec)
+  await dispatch.createDispatch(room, "looped-bridge", {
+    metadata: JSON.stringify({ agentId: id }),
+  })
+  return c.json({ ok: true, id, name: spec.name })
+})
+
 app.delete("/rooms/:room/agents/:id", async (c) => {
   const { room, id } = c.req.param()
   await rooms.removeParticipant(room, `agent-${id}`).catch(() => undefined)
@@ -88,3 +123,23 @@ server.run().catch((err) => {
   console.error("agent worker failed", err)
   process.exit(1)
 })
+
+// The platform transcriber: no agentName means automatic dispatch — it joins
+// every room and live-transcribes all human mics with a local model.
+if (process.env.TRANSCRIBER_ENABLED !== "false") {
+  const transcriber = new AgentServer(
+    new ServerOptions({
+      agent: new URL("./transcriber-worker.js", import.meta.url).pathname,
+      requestFunc: acceptTranscriberRequest,
+      wsURL: LIVEKIT_URL,
+      apiKey: process.env.LIVEKIT_API_KEY,
+      apiSecret: process.env.LIVEKIT_API_SECRET,
+      port: Number(process.env.TRANSCRIBER_HTTP_PORT ?? 8092),
+      production: true,
+    }),
+  )
+  transcriber.run().catch((err) => {
+    console.error("transcriber worker failed", err)
+    // transcription is best-effort; the bridge keeps running without it
+  })
+}

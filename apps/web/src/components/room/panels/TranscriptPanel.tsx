@@ -11,18 +11,28 @@ export function TranscriptPanel() {
     return p?.name || identity
   }
 
-  if (transcriptions.length === 0) {
+  // Interim updates arrive as separate text streams sharing a segment id;
+  // keep only the latest text per segment so a growing utterance updates in
+  // place instead of stacking rows.
+  const segments = new Map<string, (typeof transcriptions)[number]>()
+  for (const t of transcriptions) {
+    const key = t.streamInfo.attributes?.["lk.segment_id"] ?? t.streamInfo.id
+    segments.set(key, t)
+  }
+  const entries = [...segments.entries()]
+
+  if (entries.length === 0) {
     return (
       <p className="p-4 text-base-content/50 text-sm">
-        Live transcript appears here once an agent is in the meeting.
+        The live transcript appears here as people speak.
       </p>
     )
   }
 
   return (
     <ul className="space-y-2 p-4">
-      {transcriptions.map((t) => (
-        <li key={t.streamInfo.id} className="text-sm">
+      {entries.map(([key, t]) => (
+        <li key={key} className="text-sm">
           <span className="font-medium">
             {displayName(t.participantInfo?.identity)}
           </span>

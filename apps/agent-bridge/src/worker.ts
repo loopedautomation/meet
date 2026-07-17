@@ -18,6 +18,7 @@ import {
   type ParticipantMeta,
 } from "@meet/shared"
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
+import { getDynamicAgent } from "./dynamic.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
@@ -26,8 +27,28 @@ import { ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = { agentId: string }
 
-function entryFromMetadata(metadata: string): AgentEntry {
+/** A registry entry plus, for dynamic (URL-invited) agents, its token. */
+type ResolvedEntry = AgentEntry & { directToken?: string }
+
+function entryFromMetadata(metadata: string): ResolvedEntry {
   const { agentId } = JSON.parse(metadata) as DispatchMeta
+  if (agentId.startsWith("dyn-")) {
+    const spec = getDynamicAgent(agentId)
+    if (!spec) throw new Error(`unknown dynamic agent: ${agentId}`)
+    return {
+      id: agentId,
+      name: spec.name,
+      greeting: `Hi, I'm ${spec.name}.`,
+      brain: { kind: "tty", url: spec.url, token_env: "" },
+      realtime: {
+        model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
+        voice: spec.voice ?? "marin",
+      },
+      stt: { provider: "openai", model: "gpt-4o-mini-transcribe" },
+      tts: { provider: "openai", model: "gpt-4o-mini-tts", voice: "alloy" },
+      directToken: spec.token,
+    }
+  }
   const entry = loadRegistry().find((a) => a.id === agentId)
   if (!entry) throw new Error(`unknown agent: ${agentId}`)
   return entry
@@ -52,7 +73,7 @@ export default defineAgent({
 
     const brainOpts = {
       url: entry.brain.url,
-      token: brainToken(entry),
+      token: entry.directToken ?? brainToken(entry),
       conversationId: `${roomName}-${entry.id}`,
     }
     const brain: Brain =

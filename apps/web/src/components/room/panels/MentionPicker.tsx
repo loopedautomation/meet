@@ -14,6 +14,7 @@ export function useMentionables(): Mentionable[] {
   const participants = useParticipants()
   return participants
     .filter((p) => !p.isLocal && (p.name || p.identity))
+    .filter((p) => parseParticipantMeta(p.metadata)?.kind !== "service")
     .map((p) => ({
       name: p.name || p.identity,
       isAgent: parseParticipantMeta(p.metadata)?.kind === "agent",

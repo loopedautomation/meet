@@ -19,6 +19,7 @@ import {
   UserX,
   Wrench,
 } from "lucide-react"
+import { useState } from "react"
 import { useAgentState } from "@/components/room/AgentBadge"
 import { useAgentInvite } from "@/hooks/mutations/useAgentInvite"
 import { useAgents } from "@/hooks/queries/useAgents"
@@ -97,11 +98,73 @@ export function AgentsPanel({ slug }: { slug: string }) {
         })}
       </ul>
 
+      <InviteByUrl slug={slug} />
+
       <div className="border-base-300 border-t px-4 py-2 font-medium text-base-content/60 text-xs uppercase tracking-wide">
         Activity
       </div>
       <ActivityFeed activity={activity} />
     </div>
+  )
+}
+
+/** Bring any looped agent into the call by its TTY URL — no registration. */
+function InviteByUrl({ slug }: { slug: string }) {
+  const [url, setUrl] = useState("")
+  const [token, setToken] = useState("")
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!url.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/rooms/${slug}/agents`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url: url.trim(), token: token.trim() }),
+      })
+      const data = (await res.json()) as { error?: string }
+      if (!res.ok) throw new Error(data.error ?? "invite failed")
+      setUrl("")
+      setToken("")
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="space-y-2 border-base-300 border-t p-4">
+      <p className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
+        Invite by URL
+      </p>
+      <input
+        className="input input-sm w-full"
+        placeholder="wss://my-agent.example.com/tty"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+      />
+      <input
+        className="input input-sm w-full"
+        placeholder="Access token"
+        type="password"
+        value={token}
+        onChange={(e) => setToken(e.target.value)}
+      />
+      {error && <p className="text-error text-xs">{error}</p>}
+      <button
+        type="submit"
+        className="btn btn-primary btn-sm w-full"
+        disabled={busy || !url.trim()}
+      >
+        {busy && <span className="loading loading-spinner loading-xs" />}
+        Invite agent
+      </button>
+    </form>
   )
 }
 

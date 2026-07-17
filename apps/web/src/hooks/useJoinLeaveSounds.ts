@@ -1,7 +1,8 @@
 "use client"
 
 import { useRoomContext } from "@livekit/components-react"
-import { RoomEvent } from "livekit-client"
+import { isServiceParticipant } from "@meet/shared"
+import { type RemoteParticipant, RoomEvent } from "livekit-client"
 import { useEffect, useRef } from "react"
 
 /**
@@ -39,8 +40,12 @@ export function useJoinLeaveSounds() {
       }
     }
 
-    const onJoin = () => chime("join")
-    const onLeave = () => chime("leave")
+    const onJoin = (p: RemoteParticipant) => {
+      if (!isServiceParticipant(p.metadata)) chime("join")
+    }
+    const onLeave = (p: RemoteParticipant) => {
+      if (!isServiceParticipant(p.metadata)) chime("leave")
+    }
     room.on(RoomEvent.ParticipantConnected, onJoin)
     room.on(RoomEvent.ParticipantDisconnected, onLeave)
     return () => {

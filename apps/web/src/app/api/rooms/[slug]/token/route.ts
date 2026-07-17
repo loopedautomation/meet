@@ -1,5 +1,5 @@
 import type { ParticipantMeta } from "@meet/shared"
-import { tokenRequestSchema } from "@meet/shared"
+import { parseParticipantMeta, tokenRequestSchema } from "@meet/shared"
 import { AccessToken } from "livekit-server-sdk"
 import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
@@ -20,9 +20,15 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   // First joiner becomes host (roomAdmin) — enables lock/remove controls.
+  // Only humans count: a lingering transcriber or agent must never claim
+  // host, and joining "alone with the transcriber" should still unmute.
   let participantCount = 0
   try {
-    participantCount = (await roomService().listParticipants(slug)).length
+    participantCount = (await roomService().listParticipants(slug)).filter(
+      (p) =>
+        parseParticipantMeta(p.metadata)?.kind !== "service" &&
+        parseParticipantMeta(p.metadata)?.kind !== "agent",
+    ).length
   } catch {
     participantCount = 0
   }

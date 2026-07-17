@@ -5,6 +5,7 @@ import {
   useConnectionState,
   useTracks,
 } from "@livekit/components-react"
+import { isServiceParticipant } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionState, Track } from "livekit-client"
 import { motion } from "motion/react"
@@ -29,7 +30,11 @@ export function MeetingView({ slug }: { slug: string }) {
   const focused = screenTracks[0]
 
   const localTrack = cameraTracks.find((t) => t.participant.isLocal)
-  const remoteTracks = cameraTracks.filter((t) => !t.participant.isLocal)
+  // Service participants (e.g. the platform transcriber) never get a tile.
+  const remoteTracks = cameraTracks.filter(
+    (t) =>
+      !t.participant.isLocal && !isServiceParticipant(t.participant.metadata),
+  )
   const alone = remoteTracks.length === 0
   const stageRef = useRef<HTMLDivElement>(null)
   const connectionState = useConnectionState()

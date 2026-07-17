@@ -21,6 +21,21 @@ COPY packages/shared packages/shared
 COPY apps/agent-bridge apps/agent-bridge
 RUN cd apps/agent-bridge && pnpm build
 
+# Streaming ASR model for the platform transcriber (sherpa-onnx streaming
+# zipformer, English, 16 kHz). Only the int8 encoder/joiner + decoder +
+# tokens are kept — roughly 150 MB in-image.
+FROM alpine:3 AS asrmodel
+RUN apk add --no-cache curl tar bzip2 \
+ && curl -fsSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-streaming-zipformer-en-2023-06-26.tar.bz2" \
+    | tar -xj -C /opt \
+ && cd /opt/sherpa-onnx-streaming-zipformer-en-2023-06-26 \
+ && find . -maxdepth 1 -type f \
+      ! -name 'encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx' \
+      ! -name 'decoder-epoch-99-avg-1-chunk-16-left-128.onnx' \
+      ! -name 'joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx' \
+      ! -name 'tokens.txt' -delete \
+ && rm -rf test_wavs
+
 FROM base AS runner
 # CA roots for the Infisical CLI (Go) — bookworm-slim ships without a usable
 # CA store, so TLS to the Infisical API fails with "unknown authority".
@@ -30,6 +45,14 @@ RUN apt-get update \
 WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo ./
+COPY --from=asrmodel /opt/sherpa-onnx-streaming-zipformer-en-2023-06-26 /opt/asr-model
+ENV TRANSCRIBER_MODEL_DIR=/opt/asr-model
+# The sherpa-onnx native addon dlopens its shared libraries from the
+# platform package's directory; expose it via a stable symlink (the package
+# lives under pnpm's store path, which embeds a version hash).
+RUN libdir="$(find /repo/node_modules/.pnpm -maxdepth 3 -type d -path '*sherpa-onnx-linux-*/node_modules/sherpa-onnx-linux-*' | head -1)" \
+ && test -n "$libdir" && ln -s "$libdir" /opt/sherpa-libs
+ENV LD_LIBRARY_PATH=/opt/sherpa-libs
 COPY agents.yaml /app/agents.yaml
 ENV AGENTS_CONFIG=/app/agents.yaml
 COPY --from=infisical /usr/local/bin/infisical /usr/local/bin/infisical

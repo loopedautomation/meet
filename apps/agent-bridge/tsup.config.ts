@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup"
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/worker.ts"],
+  entry: ["src/index.ts", "src/worker.ts", "src/transcriber-worker.ts"],
   format: ["esm"],
   target: "node22",
   platform: "node",

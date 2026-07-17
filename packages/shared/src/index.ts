@@ -23,8 +23,11 @@ export const agentStateSchema = z.enum([
 export type AgentState = z.infer<typeof agentStateSchema>
 
 export const participantMetaSchema = z.object({
-  kind: z.enum(["human", "agent"]),
+  // "service" participants (e.g. the platform transcriber) are invisible
+  // infrastructure: no tile, no chimes, no mention picker entry.
+  kind: z.enum(["human", "agent", "service"]),
   agentId: z.string().optional(),
+  service: z.string().optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
 
@@ -37,6 +40,11 @@ export function parseParticipantMeta(
   } catch {
     return null
   }
+}
+
+/** True for infrastructure participants that the UI should not render. */
+export function isServiceParticipant(metadata: string | undefined): boolean {
+  return parseParticipantMeta(metadata)?.kind === "service"
 }
 
 /** Control messages published by participants on the `agent-control` topic. */

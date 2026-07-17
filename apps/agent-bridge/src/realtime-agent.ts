@@ -11,11 +11,11 @@ import {
 } from "@livekit/rtc-node"
 import type { AgentActivityEvent } from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
-import type { Brain } from "./looped-webhook.js"
-import type { AgentEntry } from "./registry.js"
-import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
-import type { ScreenCapture } from "./screen-capture.js"
 import type { TtyServerFrame } from "./looped-tty.js"
+import type { Brain } from "./looped-webhook.js"
+import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
+import type { AgentEntry } from "./registry.js"
+import type { ScreenCapture } from "./screen-capture.js"
 
 /** How much mixed room audio each push into the session carries. */
 const MIX_INTERVAL_MS = 50
@@ -140,7 +140,8 @@ export async function runRealtimeAgent(opts: {
   }
 
   ctx.room.on("trackSubscribed", (track, _pub, participant) => {
-    if (track.kind === TrackKind.KIND_AUDIO) consume(track, participant.identity)
+    if (track.kind === TrackKind.KIND_AUDIO)
+      consume(track, participant.identity)
   })
   for (const participant of ctx.room.remoteParticipants.values()) {
     for (const pub of participant.trackPublications.values()) {
@@ -172,9 +173,7 @@ export async function runRealtimeAgent(opts: {
       fifo.splice(0, n)
     }
     if (!any) return
-    session.appendAudio(
-      new Uint8Array(mixed.buffer, 0, SAMPLES_PER_MIX * 2),
-    )
+    session.appendAudio(new Uint8Array(mixed.buffer, 0, SAMPLES_PER_MIX * 2))
   }, MIX_INTERVAL_MS)
 
   ctx.addShutdownCallback(async () => {
