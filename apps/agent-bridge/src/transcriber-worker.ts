@@ -15,7 +15,13 @@ import {
   parseParticipantMeta,
   TRANSCRIPTION_TOPIC,
 } from "@meet/shared"
-import { loadSttEngine, STT_SAMPLE_RATE, type SttEngine } from "./stt.js"
+import {
+  type Denoiser,
+  loadDenoiserFactory,
+  loadSttEngine,
+  STT_SAMPLE_RATE,
+  type SttEngine,
+} from "./stt.js"
 
 // The platform transcriber: a hidden service participant that joins every
 // room, runs local streaming STT (sherpa-onnx) over every human mic, and
@@ -35,6 +41,7 @@ export async function acceptTranscriberRequest(
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
     proc.userData.stt = await loadSttEngine()
+    proc.userData.denoiser = await loadDenoiserFactory()
   },
   entry: async (ctx: JobContext) => {
     const engine = ctx.proc.userData.stt as
@@ -45,6 +52,11 @@ export default defineAgent({
       console.error(`transcriber disabled: ${engine?.error ?? "no engine"}`)
       return
     }
+
+    const makeDenoiser = ctx.proc.userData.denoiser as
+      | (() => Denoiser)
+      | null
+      | undefined
 
     await ctx.connect()
     const local = ctx.room.localParticipant
@@ -62,6 +74,9 @@ export default defineAgent({
         numChannels: 1,
       })
       const stt = engine.createStream()
+      // Per-speaker streaming noise suppression ahead of recognition, when
+      // the GTCRN model is present.
+      const denoiser = makeDenoiser?.() ?? null
 
       const publish = async (
         text: string,
@@ -94,10 +109,14 @@ export default defineAgent({
           while (true) {
             const { value: frame, done } = await reader.read()
             if (done) break
-            const samples = new Float32Array(frame.data.length)
+            let samples: Float32Array<ArrayBufferLike> = new Float32Array(
+              frame.data.length,
+            )
             for (let i = 0; i < frame.data.length; i++) {
               samples[i] = frame.data[i] / 32768
             }
+            if (denoiser) samples = denoiser.process(samples)
+            if (samples.length === 0) continue
             stt.accept(samples)
 
             const text = stt.text()

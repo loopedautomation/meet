@@ -34,7 +34,9 @@ RUN apk add --no-cache curl tar bzip2 \
       ! -name 'decoder-epoch-99-avg-1-chunk-16-left-128.onnx' \
       ! -name 'joiner-epoch-99-avg-1-chunk-16-left-128.int8.onnx' \
       ! -name 'tokens.txt' -delete \
- && rm -rf test_wavs
+ && rm -rf test_wavs \
+ && curl -fsSL -o /opt/gtcrn_simple.onnx \
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/speech-enhancement-models/gtcrn_simple.onnx"
 
 FROM base AS runner
 # CA roots for the Infisical CLI (Go) — bookworm-slim ships without a usable
@@ -46,7 +48,10 @@ WORKDIR /repo
 ENV NODE_ENV=production
 COPY --from=build /repo ./
 COPY --from=asrmodel /opt/sherpa-onnx-streaming-zipformer-en-2023-06-26 /opt/asr-model
+COPY --from=asrmodel /opt/gtcrn_simple.onnx /opt/asr-model/gtcrn_simple.onnx
 ENV TRANSCRIBER_MODEL_DIR=/opt/asr-model
+# Streaming noise suppression (GTCRN, ~0.5 MB) applied per speaker before STT.
+ENV DENOISER_MODEL=/opt/asr-model/gtcrn_simple.onnx
 # The sherpa-onnx native addon dlopens its shared libraries from the
 # platform package's directory; expose it via a stable symlink (the package
 # lives under pnpm's store path, which embeds a version hash).

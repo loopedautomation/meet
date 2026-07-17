@@ -8,6 +8,27 @@ declare module "sherpa-onnx-node" {
     free?(): void
   }
 
+  export class OnlineSpeechDenoiser {
+    constructor(config: {
+      model: {
+        gtcrn: { model: string }
+        numThreads?: number
+        provider?: string
+      }
+    })
+    sampleRate: number
+    frameShiftInSamples: number
+    run(input: {
+      samples: Float32Array
+      sampleRate: number
+    }): { samples: Float32Array; sampleRate: number }
+    flush(enableExternalBuffer?: boolean): {
+      samples: Float32Array
+      sampleRate: number
+    }
+    reset(): void
+  }
+
   export class OnlineRecognizer {
     constructor(config: {
       featConfig: { sampleRate: number; featureDim: number }

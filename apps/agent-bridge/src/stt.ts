@@ -47,6 +47,39 @@ const files = (dir: string) => {
   }
 }
 
+export type Denoiser = {
+  /** Denoise 16 kHz mono samples; output lags by the model's frame shift. */
+  process(samples: Float32Array): Float32Array
+}
+
+/**
+ * Per-speaker streaming noise suppression (GTCRN via sherpa-onnx, 16 kHz).
+ * Returns a factory, or null when the model isn't present — transcription
+ * simply runs on raw audio then.
+ */
+export async function loadDenoiserFactory(
+  modelPath = process.env.DENOISER_MODEL ?? "",
+): Promise<(() => Denoiser) | null> {
+  if (!modelPath || !existsSync(modelPath)) return null
+  let sherpa: typeof import("sherpa-onnx-node")
+  try {
+    sherpa = await import("sherpa-onnx-node")
+  } catch {
+    return null
+  }
+  return () => {
+    const d = new sherpa.OnlineSpeechDenoiser({
+      model: { gtcrn: { model: modelPath }, numThreads: 1, provider: "cpu" },
+    })
+    return {
+      process(samples) {
+        const out = d.run({ samples, sampleRate: STT_SAMPLE_RATE })
+        return out.samples
+      },
+    }
+  }
+}
+
 /**
  * Load the local STT engine, or explain why it can't be loaded. Call once per
  * process; streams share the model weights.
