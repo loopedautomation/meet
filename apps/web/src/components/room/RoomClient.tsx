@@ -104,6 +104,12 @@ export function RoomClient({ slug }: { slug: string }) {
         }
       }
       onDisconnected={handleLeave}
+      onError={(err) => {
+        setError(
+          `Could not connect to the meeting server (${err.message}). ` +
+            "Check that the LiveKit server is running and reachable.",
+        )
+      }}
       className="h-dvh"
     >
       <QueryClientProvider client={queryClient}>

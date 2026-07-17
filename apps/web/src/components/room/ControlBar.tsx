@@ -30,8 +30,17 @@ export function ControlBar({ slug }: { slug: string }) {
   const [mediaError, setMediaError] = useState<string | null>(null)
   const openPanel = useStore($openPanel)
 
-  const toggle = (action: () => Promise<unknown>, what: string) => {
+  const toggle = (
+    action: () => Promise<unknown>,
+    what: string,
+    persist?: { key: string; value: boolean },
+  ) => {
     setMediaError(null)
+    if (persist) {
+      try {
+        localStorage.setItem(persist.key, String(persist.value))
+      } catch {}
+    }
     action().catch((err: unknown) => {
       const detail =
         err instanceof Error && err.name === "NotAllowedError"
@@ -75,6 +84,7 @@ export function ControlBar({ slug }: { slug: string }) {
             toggle(
               () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled),
               "microphone",
+              { key: "audioEnabled", value: !isMicrophoneEnabled },
             )
           }
           aria-label="Toggle microphone"
@@ -92,6 +102,7 @@ export function ControlBar({ slug }: { slug: string }) {
             toggle(
               () => localParticipant.setCameraEnabled(!isCameraEnabled),
               "camera",
+              { key: "videoEnabled", value: !isCameraEnabled },
             )
           }
           aria-label="Toggle camera"

@@ -1,12 +1,39 @@
 name: looped-standups
 
+# Shared Infisical config injected into every service (same pattern as the
+# monorepo). In production only the bootstrap creds (INFISICAL_CLIENT_ID /
+# INFISICAL_CLIENT_SECRET) need to be set on the host — each container pulls
+# its own secrets at start via docker-entrypoint.sh. Locally, leave them
+# unset and everything runs off the root .env instead (per-service env_file).
+x-infisical: &infisical
+  INFISICAL_API_URL: ${INFISICAL_API_URL:-https://infisical.looped.co.za/api}
+  INFISICAL_ENV: ${INFISICAL_ENV:-prod}
+  INFISICAL_PROJECT_ID: ${INFISICAL_PROJECT_ID:-396f8208-593a-4966-8943-97621affc25a}
+  INFISICAL_CLIENT_ID: ${INFISICAL_CLIENT_ID:-}
+  INFISICAL_CLIENT_SECRET: ${INFISICAL_CLIENT_SECRET:-}
+
+# Local-dev fallback: without Infisical creds, secrets come from the root
+# .env. Compose only warns if the file is missing.
+x-local-env: &local-env
+  env_file:
+    - path: .env
+      required: false
+
 services:
   livekit:
-    image: livekit/livekit-server:v1.8
+    build:
+      context: .
+      dockerfile: docker/livekit.Dockerfile
+    <<: *local-env
     # Config is templated from .env — no separate livekit.yaml to keep in sync.
     # Local (defaults): advertises 127.0.0.1 so browsers on this machine work.
     # Production: set LIVEKIT_USE_EXTERNAL_IP=true and unset LIVEKIT_NODE_IP.
+    # In production the keys below interpolate empty — livekit-server instead
+    # reads LIVEKIT_KEYS ("<key>: <secret>") pulled from Infisical, which
+    # takes precedence over the config's keys section.
     environment:
+      <<: *infisical
+      INFISICAL_SECRETS_PATH: "/apps/livekit /shared"
       LIVEKIT_CONFIG: |
         port: 7880
         rtc:
@@ -19,7 +46,7 @@ services:
           # TCP-only media is rock solid for local dev. Set false in production.
           force_tcp: ${LIVEKIT_FORCE_TCP:-false}
         keys:
-          ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+          ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-}
         logging:
           level: info
     ports:
@@ -42,13 +69,16 @@ services:
         NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
     ports:
       - "3000:3000"
+    <<: *local-env
+    # Secrets (LIVEKIT_API_KEY/SECRET, BRIDGE_TOKEN) come from Infisical in
+    # production, or from the root .env locally — never set them here, or
+    # they'd shadow the injected values.
     environment:
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      <<: *infisical
+      INFISICAL_SECRETS_PATH: "/apps/web /shared"
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
       NEXT_PUBLIC_LIVEKIT_URL: ${NEXT_PUBLIC_LIVEKIT_URL:-ws://localhost:7880}
       BRIDGE_URL: ${BRIDGE_URL:-http://agent-bridge:8090}
-      BRIDGE_TOKEN: ${BRIDGE_TOKEN}
     depends_on:
       livekit:
         condition: service_healthy
@@ -71,15 +101,15 @@ services:
       dockerfile: apps/agent-bridge/Dockerfile
     ports:
       - "8090:8090"
+    <<: *local-env
+    # Secrets (LIVEKIT_API_KEY/SECRET, BRIDGE_TOKEN, OPENAI_API_KEY,
+    # ELEVENLABS_API_KEY, SCOUT_TTY_TOKEN) come from Infisical in production,
+    # or from the root .env locally.
     environment:
-      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
-      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      <<: *infisical
+      INFISICAL_SECRETS_PATH: "/apps/agent-bridge /shared"
       LIVEKIT_URL: ${LIVEKIT_URL:-ws://livekit:7880}
-      BRIDGE_TOKEN: ${BRIDGE_TOKEN:?set BRIDGE_TOKEN in .env}
       AGENTS_CONFIG: /app/agents.yaml
-      OPENAI_API_KEY: ${OPENAI_API_KEY}
-      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
-      SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN}
     depends_on:
       livekit:
         condition: service_healthy
@@ -99,12 +129,16 @@ services:
   demo-agent:
     # Requires agent-framework >= 0.9 (tty trigger)
     build:
-      context: examples/demo-agent
+      context: .
+      dockerfile: examples/demo-agent/Dockerfile
     volumes:
       - demo-agent-data:/data
+    <<: *local-env
+    # Secrets (ANTHROPIC_API_KEY, SCOUT_TTY_TOKEN) come from Infisical in
+    # production, or from the root .env locally.
     environment:
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:?set ANTHROPIC_API_KEY in .env}
-      SCOUT_TTY_TOKEN: ${SCOUT_TTY_TOKEN:?set SCOUT_TTY_TOKEN in .env}
+      <<: *infisical
+      INFISICAL_SECRETS_PATH: "/apps/demo-agent /shared"
     expose:
       - "8300"
     restart: unless-stopped

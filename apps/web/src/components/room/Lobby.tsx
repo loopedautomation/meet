@@ -1,11 +1,29 @@
 "use client"
 
 import { Mic, MicOff, Video as VideoIcon, VideoOff } from "lucide-react"
-import { useRef, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import type { JoinPreferences } from "@/components/room/RoomClient"
 import { useMediaPreview } from "@/hooks/useMediaPreview"
+
+function readStoredString(key: string): string {
+  if (typeof window === "undefined") return ""
+  try {
+    return localStorage.getItem(key) ?? ""
+  } catch {
+    return ""
+  }
+}
+
+function readStoredToggle(key: string): boolean {
+  if (typeof window === "undefined") return true
+  try {
+    return localStorage.getItem(key) !== "false"
+  } catch {
+    return true
+  }
+}
 
 type LobbyProps = {
   slug: string
@@ -15,16 +33,21 @@ type LobbyProps = {
 
 export function Lobby({ slug, onJoin, error }: LobbyProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [displayName, setDisplayName] = useState(() => {
-    if (typeof window === "undefined") return ""
+  const [displayName, setDisplayName] = useState(() =>
+    readStoredString("displayName"),
+  )
+  const [audioEnabled, setAudioEnabled] = useState(() =>
+    readStoredToggle("audioEnabled"),
+  )
+  const [videoEnabled, setVideoEnabled] = useState(() =>
+    readStoredToggle("videoEnabled"),
+  )
+  useEffect(() => {
     try {
-      return localStorage.getItem("displayName") ?? ""
-    } catch {
-      return ""
-    }
-  })
-  const [audioEnabled, setAudioEnabled] = useState(true)
-  const [videoEnabled, setVideoEnabled] = useState(true)
+      localStorage.setItem("audioEnabled", String(audioEnabled))
+      localStorage.setItem("videoEnabled", String(videoEnabled))
+    } catch {}
+  }, [audioEnabled, videoEnabled])
   const [audioDeviceId, setAudioDeviceId] = useState<string>()
   const [videoDeviceId, setVideoDeviceId] = useState<string>()
   const [joining, setJoining] = useState(false)

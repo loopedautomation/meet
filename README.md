@@ -77,6 +77,28 @@ LIVEKIT_NODE_IP=            # empty — auto-detect public IP
 LIVEKIT_API_SECRET=<strong secret>
 ```
 
+### Secrets via Infisical
+
+In production, secrets don't need to live on the host at all. Each image ships
+an entrypoint (`docker-entrypoint.sh`) that wraps its command in
+`infisical run` when Infisical machine-identity credentials are present — so
+the only env vars to set on the host (e.g. Coolify's environment tab) are:
+
+```sh
+INFISICAL_CLIENT_ID=<machine identity client id>
+INFISICAL_CLIENT_SECRET=<machine identity client secret>
+NEXT_PUBLIC_LIVEKIT_URL=wss://lk.example.com   # build-time, can't come from Infisical
+LIVEKIT_USE_EXTERNAL_IP=true
+```
+
+The project id, API URL, and per-service secret folder paths are defaulted in
+`docker-compose.yaml`. The secret layout (documented in `.env.example`): common
+secrets live in `/shared`, service-specific ones under `/apps/<service>` —
+including `LIVEKIT_KEYS` (`"<key>: <secret>"`) under `/apps/livekit`, which
+livekit-server reads in place of the compose-templated keys. Without Infisical
+credentials the entrypoints are a no-op and everything runs off `.env` as
+before.
+
 - WebRTC media does NOT go through the proxy: expose `7881/tcp` and `51000-51100/udp` directly on the host.
 - All LiveKit config is templated from `.env` inside the compose file — there is no separate LiveKit yaml.
 - The web image bakes `NEXT_PUBLIC_LIVEKIT_URL` in at build time — rebuild if the domain changes.
