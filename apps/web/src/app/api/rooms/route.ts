@@ -1,8 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
-import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
 import { roomService } from "@/lib/server/livekit"
-import { generateRoomSlug } from "@/lib/server/slug"
+import { deriveHostKey, generateRoomSlug } from "@/lib/server/slug"
 
 /**
  * Meeting creation is gated by a management password when
@@ -30,7 +29,8 @@ export async function POST(request: Request) {
   // The meeting starts when its creator arrives: the hostKey goes back to
   // the creator's browser, and the token route holds everyone else at
   // "hasn't started yet" until a request presents it (see [slug]/token).
-  const hostKey = nanoid(24)
+  // Derived from the slug so it survives room garbage collection.
+  const hostKey = deriveHostKey(slug)
   await roomService().createRoom({
     name: slug,
     emptyTimeout: 300,

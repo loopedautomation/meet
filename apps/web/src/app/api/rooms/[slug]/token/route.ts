@@ -4,7 +4,11 @@ import { AccessToken, TokenVerifier } from "livekit-server-sdk"
 import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
-import { isValidRoomSlug } from "@/lib/server/slug"
+import {
+  deriveHostKey,
+  isSignedRoomSlug,
+  isValidRoomSlug,
+} from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
 
@@ -19,16 +23,38 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "displayName required" }, { status: 400 })
   }
 
-  // The room must exist: links to ended meetings 404 instead of silently
-  // recreating the room, which would bypass the creation gate.
-  const existing = await roomService()
+  // Signed slugs are durable: LiveKit garbage-collects empty rooms after a
+  // few minutes, so a valid link recreates its room on demand (back in the
+  // not-started state — the host's arrival reopens it). Unsigned slugs
+  // cannot resurrect rooms; that would bypass the creation gate.
+  let existing = await roomService()
     .listRooms([slug])
     .catch(() => [])
   if (existing.length === 0) {
-    return NextResponse.json(
-      { error: "meeting not found or has ended" },
-      { status: 404 },
-    )
+    if (!isSignedRoomSlug(slug)) {
+      return NextResponse.json(
+        { error: "meeting not found or has ended" },
+        { status: 404 },
+      )
+    }
+    const recreated = await roomService()
+      .createRoom({
+        name: slug,
+        emptyTimeout: 300,
+        departureTimeout: 60,
+        metadata: JSON.stringify({
+          hostKey: deriveHostKey(slug),
+          started: false,
+        }),
+      })
+      .catch(() => null)
+    if (!recreated) {
+      return NextResponse.json(
+        { error: "meeting not found or has ended" },
+        { status: 404 },
+      )
+    }
+    existing = [recreated]
   }
 
   // The meeting starts when its creator arrives. Room metadata carries the
