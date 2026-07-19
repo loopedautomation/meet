@@ -28,7 +28,9 @@ export function writeLocalSttPref(enabled: boolean) {
 }
 
 const INTERIM_INTERVAL_MS = 300
-const INIT_TIMEOUT_MS = 20_000
+// First load pulls ~200 MB of model into the browser cache; the server
+// transcribes meanwhile, so a long deadline costs nothing.
+const INIT_TIMEOUT_MS = 180_000
 const WATCHDOG_MS = 5_000
 
 /**
@@ -181,6 +183,8 @@ export function useLocalTranscription(enabled: boolean) {
 
       try {
         audioCtx = new AudioContext()
+        // Autoplay policy can start the context suspended even post-join.
+        if (audioCtx.state === "suspended") await audioCtx.resume()
         await audioCtx.audioWorklet.addModule("/stt/pcm-worklet.js")
         if (cancelled) return teardown()
         const source = audioCtx.createMediaStreamSource(

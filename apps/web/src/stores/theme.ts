@@ -10,11 +10,14 @@ export function initTheme() {
   if (current) $theme.set(current)
 }
 
-export function toggleTheme() {
-  const next = $theme.get() === "looped-dark" ? "looped-light" : "looped-dark"
-  $theme.set(next)
-  document.documentElement.dataset.theme = next
+export function setTheme(theme: Theme) {
+  $theme.set(theme)
+  document.documentElement.dataset.theme = theme
   try {
-    localStorage.setItem("theme", next)
+    localStorage.setItem("theme", theme)
   } catch {}
+}
+
+export function toggleTheme() {
+  setTheme($theme.get() === "looped-dark" ? "looped-light" : "looped-dark")
 }

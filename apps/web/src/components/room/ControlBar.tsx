@@ -21,6 +21,7 @@ import {
   MicOff,
   MonitorUp,
   ScrollText,
+  Settings,
   Sparkles,
   Users,
   Video,
@@ -28,11 +29,8 @@ import {
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import {
-  readBlurPref,
-  useBackgroundBlur,
-  writeBlurPref,
-} from "@/hooks/useBackgroundBlur"
+import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
+import { $blur, setBlur } from "@/stores/blur"
 import { $openPanel, togglePanel } from "@/stores/panels"
 
 export function ControlBar({
@@ -58,7 +56,7 @@ export function ControlBar({
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
   ).length
 
-  const [blur, setBlur] = useState(readBlurPref)
+  const blur = useStore($blur)
   useBackgroundBlur(blur)
 
   // Warn once per dip when this participant's own connection degrades.
@@ -149,19 +147,20 @@ export function ControlBar({
   return (
     <div className="flex items-center justify-between gap-2 border-base-300 border-b bg-base-100 px-4 py-3">
       <div className="hidden items-center gap-2 sm:flex">
-        <span className="font-mono text-base-content/60 text-sm">{slug}</span>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm"
-          onClick={copyLink}
-        >
-          {copied ? (
-            <Check className="size-4 text-success" />
-          ) : (
-            <LinkIcon className="size-4" />
-          )}
-          {copied ? "Copied" : "Copy link"}
-        </button>
+        <div className="tooltip tooltip-bottom" data-tip="Copy meeting link">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm font-mono"
+            onClick={copyLink}
+          >
+            {copied ? (
+              <Check className="size-4 text-success" />
+            ) : (
+              <LinkIcon className="size-4" />
+            )}
+            {copied ? "Copied" : slug}
+          </button>
+        </div>
         {startedAt ? <CallTimer startedAt={startedAt} /> : null}
       </div>
 
@@ -212,14 +211,7 @@ export function ControlBar({
           </div>
           <DeviceMenu kind="videoinput" persistKey="videoDeviceId">
             <li>
-              <button
-                type="button"
-                onClick={() => {
-                  const next = !blur
-                  setBlur(next)
-                  writeBlurPref(next)
-                }}
-              >
+              <button type="button" onClick={() => setBlur(!blur)}>
                 <Sparkles className="size-4" />
                 {blur ? "Disable background blur" : "Blur background"}
                 {blur && <Check className="size-4 text-success" />}
@@ -294,7 +286,7 @@ export function ControlBar({
             <ScrollText className="size-5" />
           </button>
         </div>
-        <div className="tooltip tooltip-left" data-tip="Chat">
+        <div className="tooltip tooltip-bottom" data-tip="Chat">
           <button
             type="button"
             className={`btn btn-circle ${openPanel === "chat" ? "btn-primary" : "btn-ghost"}`}
@@ -302,6 +294,16 @@ export function ControlBar({
             aria-label="Chat"
           >
             <MessageSquare className="size-5" />
+          </button>
+        </div>
+        <div className="tooltip tooltip-left" data-tip="Settings">
+          <button
+            type="button"
+            className={`btn btn-circle ${openPanel === "settings" ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => togglePanel("settings")}
+            aria-label="Settings"
+          >
+            <Settings className="size-5" />
           </button>
         </div>
       </div>

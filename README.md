@@ -156,7 +156,8 @@ included), offloading the server transcriber. To enable, install the WASM ASR
 bundle into `apps/web/public/stt/`:
 
 ```bash
-STT_WASM_URL=<sherpa-onnx wasm asr tar.bz2> apps/web/scripts/fetch-stt-model.sh
+STT_WASM_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-wasm-simd-v1.13.4-en-asr-zipformer.tar.bz2 \
+  apps/web/scripts/fetch-stt-model.sh
 ```
 
 Without the bundle nothing changes — clients probe `/stt/`, find nothing, and
