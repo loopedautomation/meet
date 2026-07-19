@@ -19,6 +19,7 @@ import {
   Plus,
   UserX,
   Wrench,
+  Zap,
 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
@@ -246,6 +247,14 @@ function InRoomControls({
 
   return (
     <div className="flex items-center gap-1">
+      <button
+        type="button"
+        className="btn btn-ghost btn-circle btn-sm"
+        aria-label="Poke agent (listens and responds for a minute)"
+        onClick={() => sendControl({ type: "poke", agentId })}
+      >
+        <Zap className="size-4" />
+      </button>
       <button
         type="button"
         className={`btn btn-circle btn-sm ${muted ? "btn-warning" : "btn-ghost"}`}

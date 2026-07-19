@@ -151,8 +151,10 @@ Repo layout:
 ### In-browser transcription (optional)
 
 Participants' browsers can transcribe their own mics locally (sherpa-onnx
-WASM, single-threaded — works without cross-origin isolation, Safari
-included), offloading the server transcriber. To enable, install the WASM ASR
+WASM), offloading the server transcriber. The official WASM bundles are
+pthread builds, so the web app serves COOP/COEP headers (cross-origin
+isolation) — fine for this self-contained app, but note it if you embed
+cross-origin resources. To enable, install the WASM ASR
 bundle into `apps/web/public/stt/`:
 
 ```bash

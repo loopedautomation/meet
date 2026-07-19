@@ -177,7 +177,15 @@ export default defineAgent({
           else if (control.type === "unmute") sessionState.muted = false
           else if (control.type === "deafen") sessionState.deafened = true
           else if (control.type === "undeafen") sessionState.deafened = false
-          setState(sessionState.muted ? "muted" : "listening")
+          // The state attribute must reflect deafened too, or the UI's
+          // deafen button never flips and appears broken.
+          setState(
+            sessionState.deafened
+              ? "deafened"
+              : sessionState.muted
+                ? "muted"
+                : "listening",
+          )
         } catch {}
       })
       await runRealtimeAgent({
@@ -306,6 +314,15 @@ export default defineAgent({
             } catch {
               sessionState.callOnPending = false
             }
+          } else if (control.type === "poke") {
+            // Wake the agent: unmuted and answering every turn for a minute,
+            // then back to its usual policy.
+            sessionState.muted = false
+            sessionState.pokedUntil = Date.now() + 60_000
+            setState("listening")
+            publishChat(
+              "(You poked me — I'm listening and will chime in for the next minute.)",
+            )
           } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
             sessionState.notifiedMuted = false

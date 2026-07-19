@@ -45,6 +45,8 @@ export type RealtimeSessionOptions = {
   gate?: {
     mention: RegExp
     onHandRaise: () => void
+    /** Observability: every gate decision, with the transcript that drove it. */
+    onDecision?: (transcript: string, decision: "speak" | "deliberate") => void
   }
 }
 
@@ -229,10 +231,12 @@ export class RealtimeSession {
         // Otherwise run a silent deliberation; a RAISE_HAND answer surfaces
         // as the hand-raised badge for a human to act on.
         const gate = this.#opts.gate
-        if (!gate) break
+        if (!gate || this.#gateOpen) break
         const transcript = String(event.transcript ?? "")
         if (!transcript.trim()) break
-        if (gate.mention.test(transcript)) {
+        const mentioned = gate.mention.test(transcript)
+        gate.onDecision?.(transcript, mentioned ? "speak" : "deliberate")
+        if (mentioned) {
           if (!this.#responding) this.#send({ type: "response.create" })
         } else if (!this.#responding) {
           this.#send({
@@ -318,6 +322,32 @@ export class RealtimeSession {
         type: "message",
         role: "user",
         content: [{ type: "input_text", text: line }],
+      },
+    })
+  }
+
+  #gateOpen = false
+
+  /**
+   * Temporarily lift the gate (poke): the model auto-responds like an
+   * ungated session until the gate is restored.
+   */
+  setGateOpen(open: boolean) {
+    if (!this.#opts.gate || this.#gateOpen === open) return
+    this.#gateOpen = open
+    this.#send({
+      type: "session.update",
+      session: {
+        type: "realtime",
+        audio: {
+          input: {
+            turn_detection: {
+              type: "server_vad",
+              create_response: open,
+              interrupt_response: true,
+            },
+          },
+        },
       },
     })
   }

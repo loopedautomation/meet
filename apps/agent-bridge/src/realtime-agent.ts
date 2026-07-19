@@ -23,6 +23,9 @@ import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
 import type { AgentEntry } from "./registry.js"
 import type { ScreenCapture } from "./screen-capture.js"
 
+/** How long a poked agent stays fully awake before re-gating/muting. */
+const POKE_WINDOW_MS = 60_000
+
 /** How much mixed room audio each push into the session carries. */
 const MIX_INTERVAL_MS = 50
 const SAMPLES_PER_MIX = (REALTIME_SAMPLE_RATE / 1000) * MIX_INTERVAL_MS
@@ -160,6 +163,7 @@ export async function runRealtimeAgent(opts: {
   // silent deliberation must not clear it).
   const gated = entry.turn_policy === "on-mention"
   let handRaised = false
+  let pokeTimer: ReturnType<typeof setTimeout> | null = null
 
   const session = new RealtimeSession({
     model: realtime.model,
@@ -170,10 +174,25 @@ export async function runRealtimeAgent(opts: {
     sendChat: callbacks.publishChat,
     gate: gated
       ? {
-          mention: new RegExp(`\\b${entry.name}\\b`, "i"),
+          // Substring, not word-boundary: STT often renders the name with
+          // possessives or punctuation attached ("Scout's", "scout?").
+          mention: new RegExp(entry.name.replace(/[^a-z0-9]/gi, ""), "i"),
           onHandRaise: () => {
             handRaised = true
             if (!state.muted) callbacks.setState("hand-raised")
+          },
+          // Every decision lands in the room's debug log so a too-quiet
+          // agent can be diagnosed: was the turn even transcribed, and what
+          // did the transcript say?
+          onDecision: (transcript, decision) => {
+            if (ctx.room.name) {
+              postDebugEvent(
+                ctx.room.name,
+                `agent:${entry.id}`,
+                "info",
+                `gate ${decision}: "${transcript.slice(0, 200)}"`,
+              )
+            }
           },
         }
       : undefined,
@@ -310,6 +329,30 @@ export async function runRealtimeAgent(opts: {
       } else if (control.type === "call-on") {
         handRaised = false
         session.callOn()
+      } else if (control.type === "poke") {
+        // Wake the agent: gate lifted (or unmuted) for a minute, then back
+        // to normal. A fresh poke extends the window.
+        handRaised = false
+        state.muted = false
+        session.setGateOpen(true)
+        callbacks.setState("listening")
+        if (pokeTimer) clearTimeout(pokeTimer)
+        pokeTimer = setTimeout(() => {
+          pokeTimer = null
+          if (gated) {
+            session.setGateOpen(false)
+          } else {
+            // Open-policy agents have no gate to fall back to — mute them.
+            state.muted = true
+            hardCut()
+            callbacks.setState("muted")
+            return
+          }
+          callbacks.setState(state.muted ? "muted" : "listening")
+        }, POKE_WINDOW_MS)
+        session.say(
+          "Acknowledge in a few words that you're now listening in for a bit.",
+        )
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
         // mute take effect audibly by cutting playback mid-word.
@@ -322,6 +365,7 @@ export async function runRealtimeAgent(opts: {
 
   ctx.addShutdownCallback(async () => {
     clearInterval(pump)
+    if (pokeTimer) clearTimeout(pokeTimer)
     session.close()
   })
 

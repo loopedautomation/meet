@@ -4,16 +4,18 @@ import {
   useConnectionQualityIndicator,
   useLocalParticipant,
   useMediaDeviceSelect,
+  useParticipantAttributes,
   useParticipants,
   useRoomContext,
 } from "@livekit/components-react"
-import { parseParticipantMeta } from "@meet/shared"
+import { HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionQuality } from "livekit-client"
 import {
   Bot,
   Check,
   ChevronDown,
+  Hand,
   Link as LinkIcon,
   LogOut,
   MessageSquare,
@@ -58,6 +60,16 @@ export function ControlBar({
 
   const blur = useStore($blur)
   useBackgroundBlur(blur)
+
+  const { attributes } = useParticipantAttributes({
+    participant: localParticipant,
+  })
+  const handRaised = attributes?.[HAND_ATTRIBUTE] === "1"
+  const toggleHand = () => {
+    void localParticipant
+      .setAttributes({ [HAND_ATTRIBUTE]: handRaised ? "" : "1" })
+      .catch(() => undefined)
+  }
 
   // Warn once per dip when this participant's own connection degrades.
   const { quality } = useConnectionQualityIndicator({
@@ -236,6 +248,19 @@ export function ControlBar({
             aria-label="Toggle screen share"
           >
             <MonitorUp className="size-5" />
+          </button>
+        </div>
+        <div
+          className="tooltip tooltip-bottom"
+          data-tip={handRaised ? "Lower hand" : "Raise hand"}
+        >
+          <button
+            type="button"
+            className={`btn btn-circle ${handRaised ? "btn-warning" : "btn-neutral"}`}
+            onClick={toggleHand}
+            aria-label={handRaised ? "Lower hand" : "Raise hand"}
+          >
+            <Hand className="size-5" />
           </button>
         </div>
         <div className="tooltip tooltip-bottom" data-tip="Leave meeting">

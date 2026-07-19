@@ -13,6 +13,9 @@ export const TRANSCRIPTION_TOPIC = "lk.transcription"
 /** Participant attribute key holding an agent's conversational state. */
 export const AGENT_STATE_ATTRIBUTE = "agent.state"
 
+/** Participant attribute set to "1" while a human has their hand raised. */
+export const HAND_ATTRIBUTE = "hand"
+
 /**
  * Participant attribute a client sets (value "active") once its in-browser
  * WASM transcriber is loaded, warmed, and proven real-time. The server
@@ -82,6 +85,10 @@ export const agentControlSchema = z.object({
     "interrupt",
     // Lets a hand-raised agent take its turn (see the agent turn policy).
     "call-on",
+    // Wakes an agent up: it listens and responds freely for a short window,
+    // then returns to its usual policy (gated agents re-gate, open agents
+    // are muted).
+    "poke",
   ]),
   agentId: z.string(),
 })

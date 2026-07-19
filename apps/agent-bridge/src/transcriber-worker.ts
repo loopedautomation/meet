@@ -76,19 +76,6 @@ export default defineAgent({
       | (() => Denoiser)
       | null
       | undefined
-    // Kick off the heavyweight finalizer load now that this process serves a
-    // real room; interim text flows immediately and finals upgrade once the
-    // model is ready (streaming text is used until then).
-    if (!ctx.proc.userData.finalizerLoading) {
-      ctx.proc.userData.finalizerLoading = loadFinalizer()
-    }
-    let finalizer: Finalizer | null = null
-    void (ctx.proc.userData.finalizerLoading as Promise<Finalizer | null>).then(
-      (f) => {
-        finalizer = f
-      },
-    )
-
     try {
       await ctx.connect()
     } catch (err) {
@@ -110,6 +97,21 @@ export default defineAgent({
     }
     const local = ctx.room.localParticipant
     if (!local) throw new Error("no local participant")
+
+    // Load the heavyweight finalizer only once the room is connected. Its
+    // construction is a blocking native call that stalls the event loop for
+    // seconds; starting it before connect starves the FFI handshake and
+    // fails the join ("handle not found"). Interim text flows immediately
+    // and finals upgrade once the model is ready.
+    if (!ctx.proc.userData.finalizerLoading) {
+      ctx.proc.userData.finalizerLoading = loadFinalizer()
+    }
+    let finalizer: Finalizer | null = null
+    void (ctx.proc.userData.finalizerLoading as Promise<Finalizer | null>).then(
+      (f) => {
+        finalizer = f
+      },
+    )
 
     let nextSegment = 0
 

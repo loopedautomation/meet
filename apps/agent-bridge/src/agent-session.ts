@@ -23,6 +23,8 @@ export class SessionState {
   notifyUndeafened = false
   /** on-mention policy: a participant called on the agent; answer next turn. */
   callOnPending = false
+  /** Poked: the agent responds freely until this epoch-ms deadline. */
+  pokedUntil = 0
 }
 
 /** Room facts fed to the brain alongside each turn. */
@@ -84,7 +86,8 @@ export class LoopedVoiceAgent extends voice.Agent {
     // participant called on the agent — raise a hand instead of speaking, so
     // agents don't jump into every human exchange.
     if (entry.turn_policy === "on-mention") {
-      const addressed = new RegExp(`\\b${entry.name}\\b`, "i").test(input)
+      const addressed =
+        new RegExp(entry.name, "i").test(input) || Date.now() < state.pokedUntil
       if (!addressed && !state.callOnPending) {
         if (!state.muted && !state.deafened) callbacks.setState("hand-raised")
         return null

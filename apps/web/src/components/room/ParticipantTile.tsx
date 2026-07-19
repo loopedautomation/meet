@@ -10,7 +10,7 @@ import {
   useParticipantAttributes,
   VideoTrack,
 } from "@livekit/components-react"
-import { DataTopic, parseParticipantMeta } from "@meet/shared"
+import { DataTopic, HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
 import { ConnectionQuality, Track } from "livekit-client"
 import { Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -33,6 +33,7 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   const { quality } = useConnectionQualityIndicator({ participant })
   const { attributes } = useParticipantAttributes({ participant })
   const isAway = attributes?.away === "1"
+  const handUp = attributes?.[HAND_ATTRIBUTE] === "1"
   const agentState = useAgentState(participant)
   const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
   const name = participant.name || participant.identity
@@ -131,6 +132,13 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
           <Hand className="size-3" />
           Interrupt
         </button>
+      )}
+
+      {handUp && (
+        <span className="badge badge-warning badge-sm absolute top-2 left-2 z-10 gap-1">
+          <Hand className="size-3" />
+          Hand raised
+        </span>
       )}
 
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
