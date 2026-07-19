@@ -25,6 +25,22 @@ export const HAND_ATTRIBUTE = "hand"
 export const SELF_TRANSCRIBE_ATTRIBUTE = "stt.local"
 export const SELF_TRANSCRIBE_ACTIVE = "active"
 
+/**
+ * Streaming ASR models trained on GigaSpeech emit ALL-CAPS text with no
+ * punctuation, while finalized utterances are properly cased — so captions
+ * visibly "flip" at utterance end. Sentence-case shouty text so interims and
+ * finals read alike; anything already mixed-case passes through untouched.
+ */
+export function tidyShoutyTranscript(text: string): string {
+  const letters = text.replace(/[^a-zA-Z]/g, "")
+  if (!letters || letters !== letters.toUpperCase()) return text
+  return text
+    .toLowerCase()
+    .replace(/(^|[.!?]\s+)([a-z])/g, (m, pre, c) => pre + c.toUpperCase())
+    .replace(/\bi\b/g, "I")
+    .replace(/\bi'/g, "I'")
+}
+
 export const agentStateSchema = z.enum([
   "listening",
   "thinking",

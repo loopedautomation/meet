@@ -16,6 +16,7 @@ import {
   SELF_TRANSCRIBE_ACTIVE,
   SELF_TRANSCRIBE_ATTRIBUTE,
   TRANSCRIPTION_TOPIC,
+  tidyShoutyTranscript,
 } from "@meet/shared"
 import { postDebugEvent, postTranscriptSegment } from "./meeting-context.js"
 import {
@@ -147,10 +148,13 @@ export default defineAgent({
       }
 
       const publish = async (
-        text: string,
+        rawText: string,
         segmentId: string,
         final: boolean,
       ) => {
+        // Streaming zipformer text is ALL CAPS; Parakeet finals are mixed
+        // case and pass through untouched.
+        const text = tidyShoutyTranscript(rawText)
         try {
           const writer = await local.streamText({
             topic: TRANSCRIPTION_TOPIC,

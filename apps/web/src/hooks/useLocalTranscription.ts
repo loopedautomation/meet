@@ -5,6 +5,7 @@ import {
   SELF_TRANSCRIBE_ACTIVE,
   SELF_TRANSCRIBE_ATTRIBUTE,
   TRANSCRIPTION_TOPIC,
+  tidyShoutyTranscript,
 } from "@meet/shared"
 import { Track } from "livekit-client"
 import { useEffect } from "react"
@@ -168,20 +169,21 @@ export function useLocalTranscription(enabled: boolean) {
           return
         }
         if (msg.type === "segment" && msg.text) {
+          const text = tidyShoutyTranscript(msg.text)
           if (msg.final) {
-            void publish(msg.text, true)
+            void publish(text, true)
             newSegmentId()
             lastInterimText = ""
             return
           }
           const now = Date.now()
           if (
-            msg.text !== lastInterimText &&
+            text !== lastInterimText &&
             now - lastInterimAt > INTERIM_INTERVAL_MS
           ) {
             lastInterimAt = now
-            lastInterimText = msg.text
-            void publish(msg.text, false)
+            lastInterimText = text
+            void publish(text, false)
           }
         }
       }
