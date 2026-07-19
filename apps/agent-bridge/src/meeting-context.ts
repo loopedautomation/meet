@@ -75,10 +75,17 @@ export function formatTranscript(
  * realtime model's ask_agent delegation. Brains are stateful conversations,
  * so once is enough.
  */
-export function withMeetingContext(brain: Brain, context: string): Brain {
+export function withMeetingContext(
+  brain: Brain,
+  context: string,
+  /** Drained on each turn — e.g. chat messages since the brain last ran. */
+  pending?: () => string,
+): Brain {
   let sent = false
   return {
     runTurn(input, images) {
+      const extra = pending?.()
+      if (extra) input = `${extra}\n${input}`
       if (!sent && context) {
         sent = true
         input = `[Meeting context]\n${context}\n\n${input}`

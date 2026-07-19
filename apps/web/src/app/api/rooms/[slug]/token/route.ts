@@ -31,10 +31,30 @@ export async function POST(request: Request, { params }: Params) {
     )
   }
 
-  // Waiting room: the first human into an empty room enters directly (the
-  // creator arriving); everyone after knocks — they join with a restricted
-  // token (no publish/subscribe/data) and "waiting" metadata until someone
-  // inside admits them (see ../admit/route.ts).
+  // The meeting starts when its creator arrives. Room metadata carries the
+  // hostKey minted at creation plus a started flag; only a request presenting
+  // the key flips it. Everyone earlier gets 425 and the client polls.
+  // (Rooms without metadata predate this gate — treat them as started.)
+  const room = existing[0]
+  let roomMeta: { hostKey?: string; started?: boolean } = {}
+  try {
+    roomMeta = JSON.parse(room.metadata || "{}")
+  } catch {}
+  const isCreator = !!roomMeta.hostKey && body.data.hostKey === roomMeta.hostKey
+  const started = roomMeta.started !== false
+  if (!started && !isCreator) {
+    return NextResponse.json({ notStarted: true }, { status: 425 })
+  }
+  if (!started && isCreator) {
+    await roomService()
+      .updateRoomMetadata(slug, JSON.stringify({ ...roomMeta, started: true }))
+      .catch(() => undefined)
+  }
+
+  // Waiting room: the creator (or, in legacy/open rooms, the first human
+  // into an empty room) enters directly; everyone after knocks — they join
+  // with a restricted token (no publish/subscribe/data) and "waiting"
+  // metadata until someone inside admits them (see ../admit/route.ts).
   // Only humans count: a lingering transcriber or agent must never claim
   // host, and joining "alone with the transcriber" should still unmute.
   let participantCount = 0
@@ -45,7 +65,7 @@ export async function POST(request: Request, { params }: Params) {
   } catch {
     participantCount = 0
   }
-  const isHost = participantCount === 0
+  const isHost = isCreator || participantCount === 0
   let waiting = !isHost
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()
@@ -106,7 +126,6 @@ export async function POST(request: Request, { params }: Params) {
     canPublishData: !waiting,
   })
 
-  const room = existing[0]
   const roomStartedAt =
     Number(room.creationTimeMs ?? 0) || Number(room.creationTime ?? 0) * 1000
 

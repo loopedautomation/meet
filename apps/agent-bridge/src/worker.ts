@@ -140,7 +140,15 @@ export default defineAgent({
     ]
       .filter(Boolean)
       .join("\n\n")
-    const brain = withMeetingContext(rawBrain, meetingContext)
+    // Chat messages the brain hasn't seen yet; drained into its next turn so
+    // pipeline agents follow the room's text chat, not just @mentions.
+    const chatSince: string[] = []
+    const brain = withMeetingContext(rawBrain, meetingContext, () => {
+      const lines = chatSince.splice(0)
+      return lines.length
+        ? `[Meeting chat since your last turn:]\n${lines.join("\n")}`
+        : ""
+    })
 
     postDebugEvent(
       roomName,
@@ -155,55 +163,22 @@ export default defineAgent({
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
-      const replyInChatRealtime = async (message: ChatMessage) => {
-        setState(sessionState.muted ? "muted" : "thinking")
-        try {
-          let reply = ""
-          for await (const frame of brain.runTurn(
-            `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
-          )) {
-            if (frame.type === "assistant") {
-              reply += (reply ? "\n" : "") + frame.content
-            } else if (frame.type === "error") {
-              throw new Error(frame.error)
-            }
-          }
-          if (reply) publishChat(reply)
-        } catch (err) {
-          const busy = err instanceof Error && /in progress/.test(err.message)
-          publishChat(
-            busy
-              ? "(I'm mid-task right now — ask me again in a moment.)"
-              : "(Sorry, I couldn't process that.)",
-          )
-        } finally {
-          setState(sessionState.muted ? "muted" : "listening")
-        }
-      }
+      // Chat handling lives with the realtime session: every room chat
+      // message is surfaced to the model as context, and it posts replies
+      // itself via the send_chat_message tool (see realtime-agent.ts).
       ctx.room.on("dataReceived", (payload: Uint8Array, _p, _k, topic) => {
-        if (topic === DataTopic.AgentControl) {
-          try {
-            const control = agentControlSchema.parse(
-              JSON.parse(new TextDecoder().decode(payload)),
-            )
-            if (control.agentId !== entry.id) return
-            if (control.type === "mute") sessionState.muted = true
-            else if (control.type === "unmute") sessionState.muted = false
-            else if (control.type === "deafen") sessionState.deafened = true
-            else if (control.type === "undeafen") sessionState.deafened = false
-            setState(sessionState.muted ? "muted" : "listening")
-          } catch {}
-        } else if (topic === DataTopic.Chat) {
-          try {
-            const message = chatMessageSchema.parse(
-              JSON.parse(new TextDecoder().decode(payload)),
-            )
-            if (message.from.startsWith("agent-")) return
-            if (!new RegExp(`@${entry.name}\\b`, "i").test(message.text)) return
-            console.log(`[${entry.id}] chat mention from ${message.fromName}`)
-            void replyInChatRealtime(message)
-          } catch {}
-        }
+        if (topic !== DataTopic.AgentControl) return
+        try {
+          const control = agentControlSchema.parse(
+            JSON.parse(new TextDecoder().decode(payload)),
+          )
+          if (control.agentId !== entry.id) return
+          if (control.type === "mute") sessionState.muted = true
+          else if (control.type === "unmute") sessionState.muted = false
+          else if (control.type === "deafen") sessionState.deafened = true
+          else if (control.type === "undeafen") sessionState.deafened = false
+          setState(sessionState.muted ? "muted" : "listening")
+        } catch {}
       })
       await runRealtimeAgent({
         ctx,
@@ -362,7 +337,11 @@ export default defineAgent({
           )
           if (message.from.startsWith("agent-")) return
           const mention = new RegExp(`@${entry.name}\\b`, "i")
-          if (!mention.test(message.text)) return
+          if (!mention.test(message.text)) {
+            // Not for us directly — queue as context for the next turn.
+            chatSince.push(`${message.fromName}: ${message.text}`)
+            return
+          }
           console.log(`[${entry.id}] chat mention from ${message.fromName}`)
           void replyInChat(message)
         } catch {

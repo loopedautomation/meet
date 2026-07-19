@@ -38,15 +38,28 @@ export function RoomClient({
   } | null>(null)
   const [rejoining, setRejoining] = useState(false)
   const [admitted, setAdmitted] = useState(false)
+  // Set when the meeting's creator hasn't arrived yet; holds the join
+  // preferences so we can retry the same join until the meeting starts.
+  const [awaitingStart, setAwaitingStart] = useState<JoinPreferences | null>(
+    null,
+  )
 
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
       setAdmitted(false)
+      let hostKey: string | undefined
+      try {
+        hostKey = localStorage.getItem(`hostKey:${slug}`) ?? undefined
+      } catch {}
       try {
         const res = await fetch(`/api/rooms/${slug}/token`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({ displayName: prefs.displayName, rejoinToken }),
+          body: JSON.stringify({
+            displayName: prefs.displayName,
+            rejoinToken,
+            hostKey,
+          }),
         })
         if (res.status === 404) {
           toast.error(
@@ -54,8 +67,14 @@ export function RoomClient({
           )
           return
         }
+        if (res.status === 425) {
+          // The creator hasn't arrived; wait and keep retrying.
+          setAwaitingStart(prefs)
+          return
+        }
         if (!res.ok) throw new Error(`token request failed (${res.status})`)
         const token = (await res.json()) as TokenResponse
+        setAwaitingStart(null)
         try {
           sessionStorage.setItem(
             `rejoin:${slug}`,
@@ -131,6 +150,26 @@ export function RoomClient({
     } catch {}
     setSession(null)
   }, [slug])
+
+  // Poll while the meeting hasn't started; the successful join clears this.
+  useEffect(() => {
+    if (!awaitingStart || session) return
+    const timer = setInterval(() => void handleJoin(awaitingStart), 5000)
+    return () => clearInterval(timer)
+  }, [awaitingStart, session, handleJoin])
+
+  if (awaitingStart && !session) {
+    return (
+      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+        <p className="animate-pulse font-medium text-lg">
+          This meeting hasn't started yet
+        </p>
+        <p className="text-base-content/60 text-sm">
+          You'll join automatically once the host arrives.
+        </p>
+      </main>
+    )
+  }
 
   if (rejoining) {
     return (

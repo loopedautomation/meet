@@ -12,6 +12,9 @@ export const REALTIME_SAMPLE_RATE = 24_000
 /** The tool the realtime model calls to put the agent to work. */
 export const DELEGATE_TOOL = "ask_agent"
 
+/** The tool the realtime model calls to post into the meeting chat. */
+export const CHAT_TOOL = "send_chat_message"
+
 const DEFAULT_HOST = "wss://api.openai.com/v1/realtime"
 
 export type RealtimeSessionOptions = {
@@ -22,6 +25,8 @@ export type RealtimeSessionOptions = {
   instructions: string
   /** Runs the prompt through the looped agent and resolves with the reply. */
   delegate: (request: string) => Promise<string>
+  /** Post a message into the meeting chat on the agent's behalf. */
+  sendChat?: (text: string) => void
   /** Speak these 24 kHz mono PCM16 bytes into the room. */
   onAudio: (pcm: Uint8Array) => void
   /** The human started talking over us — cut off whatever is still playing. */
@@ -136,6 +141,24 @@ export class RealtimeSession {
                 required: ["request"],
               },
             },
+            {
+              type: "function",
+              name: CHAT_TOOL,
+              description:
+                "Post a message into the meeting's text chat. Use it for links, " +
+                "asides, or anything useful that doesn't warrant speaking out " +
+                "loud and interrupting the conversation.",
+              parameters: {
+                type: "object",
+                properties: {
+                  text: {
+                    type: "string",
+                    description: "The chat message to post.",
+                  },
+                },
+                required: ["text"],
+              },
+            },
           ],
         },
       })
@@ -177,10 +200,17 @@ export class RealtimeSession {
         this.#opts.onInterrupt()
         break
       case "response.function_call_arguments.done":
-        void this.#delegate({
-          call_id: String(event.call_id),
-          arguments: String(event.arguments),
-        })
+        if (event.name === CHAT_TOOL) {
+          this.#sendChatMessage({
+            call_id: String(event.call_id),
+            arguments: String(event.arguments),
+          })
+        } else {
+          void this.#delegate({
+            call_id: String(event.call_id),
+            arguments: String(event.arguments),
+          })
+        }
         break
       case "error":
         this.#opts.onError?.(JSON.stringify(event.error))
@@ -206,6 +236,38 @@ export class RealtimeSession {
       item: { type: "function_call_output", call_id: call.call_id, output },
     })
     this.#send({ type: "response.create" })
+  }
+
+  /** The model posted to the meeting chat; ack the call without forcing speech. */
+  #sendChatMessage(call: { call_id: string; arguments: string }) {
+    let output = "sent"
+    try {
+      const { text } = JSON.parse(call.arguments) as { text: string }
+      if (text) this.#opts.sendChat?.(text)
+      else output = "empty message, nothing sent"
+    } catch (err) {
+      output = `could not send: ${(err as Error).message}`
+    }
+    this.#send({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: call.call_id, output },
+    })
+    // No response.create: posting to chat should not make the model speak.
+  }
+
+  /**
+   * Surface a meeting chat message to the model as context, without
+   * triggering a response — it can bring it up if relevant, or ignore it.
+   */
+  notifyChat(line: string) {
+    this.#send({
+      type: "conversation.item.create",
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: line }],
+      },
+    })
   }
 
   /** Cancel the in-progress response (tap-to-interrupt / hard mute). */

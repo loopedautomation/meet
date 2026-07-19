@@ -278,9 +278,12 @@ if (process.env.TRANSCRIBER_ENABLED !== "false") {
     new ServerOptions({
       agent: new URL("./transcriber-worker.js", import.meta.url).pathname,
       requestFunc: acceptTranscriberRequest,
-      // Transcriber processes are heavy (streaming ASR models); keep a
-      // single warm spare. The finalizer loads lazily per active room.
-      numIdleProcesses: 1,
+      // No warm spare: a prewarmed process that idles for hours can end up
+      // with stale rtc-node FFI state ("handle not found" on connect), which
+      // silently kills transcription for the room it's dispatched to. A cold
+      // start costs a few seconds of transcript at the top of a meeting and
+      // saves ~1 GB of idle memory.
+      numIdleProcesses: 0,
       wsURL: LIVEKIT_URL,
       apiKey: process.env.LIVEKIT_API_KEY,
       apiSecret: process.env.LIVEKIT_API_SECRET,

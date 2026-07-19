@@ -134,6 +134,12 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>
 export const createRoomResponseSchema = z.object({
   slug: z.string(),
   url: z.string(),
+  /**
+   * Proof of being the meeting's creator. The creator's browser stores it
+   * and presents it with the token request: the meeting only starts once
+   * they arrive — everyone earlier sees "hasn't started yet".
+   */
+  hostKey: z.string().optional(),
 })
 export type CreateRoomResponse = z.infer<typeof createRoomResponseSchema>
 
@@ -144,6 +150,8 @@ export const tokenRequestSchema = z.object({
    * page refresh re-enters directly instead of knocking again.
    */
   rejoinToken: z.string().optional(),
+  /** The creator's key from room creation — starts the meeting on arrival. */
+  hostKey: z.string().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 

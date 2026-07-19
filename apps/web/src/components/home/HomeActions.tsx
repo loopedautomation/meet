@@ -43,6 +43,13 @@ export function HomeActions() {
         } catch {}
       }
       const data = (await res.json()) as CreateRoomResponse
+      // The creator's proof: presenting it with the token request is what
+      // starts the meeting; everyone arriving earlier waits on this.
+      if (data.hostKey) {
+        try {
+          localStorage.setItem(`hostKey:${data.slug}`, data.hostKey)
+        } catch {}
+      }
       router.push(`/r/${data.slug}`)
     } catch {
       toast.error("Could not create a meeting. Is the server configured?")

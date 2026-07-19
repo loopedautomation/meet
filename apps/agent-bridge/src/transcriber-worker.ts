@@ -87,7 +87,25 @@ export default defineAgent({
       },
     )
 
-    await ctx.connect()
+    try {
+      await ctx.connect()
+    } catch (err) {
+      // A failed connect leaves the job process wedged with the full model
+      // stack resident (seen in prod: stale FFI "handle not found"). Report
+      // and exit so the memory comes back; the next room gets a fresh process.
+      const message = (err as Error).message
+      console.error(`transcriber connect failed: ${message}`)
+      if (ctx.job.room?.name) {
+        postDebugEvent(
+          ctx.job.room.name,
+          "transcriber",
+          "error",
+          `connect failed: ${message}`,
+        )
+      }
+      setTimeout(() => process.exit(1), 1000)
+      return
+    }
     const local = ctx.room.localParticipant
     if (!local) throw new Error("no local participant")
 

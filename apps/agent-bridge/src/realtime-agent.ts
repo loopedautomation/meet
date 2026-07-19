@@ -12,6 +12,7 @@ import {
 import {
   type AgentActivityEvent,
   agentControlSchema,
+  chatMessageSchema,
   DataTopic,
 } from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
@@ -28,10 +29,18 @@ const SAMPLES_PER_MIX = (REALTIME_SAMPLE_RATE / 1000) * MIX_INTERVAL_MS
 
 const instructions = (entry: AgentEntry, context?: string) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting ` +
-  "with several people. Keep spoken replies concise and conversational — a " +
-  "sentence or two unless asked for more. Answer questions yourself whenever " +
-  "you can; reach for the ask_agent tool only when you need its tools, its " +
-  "memory, or to take an action." +
+  "with several people. You are a guest, not the host: most of the " +
+  "conversation is between the humans and is not for you. Stay silent unless " +
+  "you are addressed by name, asked a direct question, or you have something " +
+  "genuinely important to contribute — never comment on, summarize, or " +
+  "acknowledge what people say to each other. When unsure whether to speak, " +
+  "don't; if you have a useful aside or link, post it with " +
+  "send_chat_message instead of talking. Keep spoken replies concise and " +
+  "conversational — a sentence or two unless asked for more. Answer " +
+  "questions yourself whenever you can; reach for the ask_agent tool only " +
+  "when you need its tools, its memory, or to take an action. Messages " +
+  "prefixed [meeting chat] are the room's text chat: read them for context " +
+  "and reply in chat (or aloud only if addressed there)." +
   (context ? `\n\n${context}` : "")
 
 /**
@@ -142,6 +151,7 @@ export async function runRealtimeAgent(opts: {
     apiKey,
     instructions: instructions(entry, opts.context),
     delegate,
+    sendChat: callbacks.publishChat,
     onAudio: (pcm) => {
       if (state.muted) return
       enqueueAudio(new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2))
@@ -244,6 +254,21 @@ export async function runRealtimeAgent(opts: {
   }
 
   ctx.room.on("dataReceived", (payload, _p, _k, topic) => {
+    if (topic === DataTopic.Chat) {
+      // Surface the room's text chat to the model as passive context; the
+      // instructions tell it to reply in chat (or ignore it) rather than
+      // narrate. Its own messages are excluded.
+      try {
+        const message = chatMessageSchema.parse(
+          JSON.parse(new TextDecoder().decode(payload)),
+        )
+        if (message.from === `agent-${entry.id}`) return
+        session.notifyChat(
+          `[meeting chat] ${message.fromName}: ${message.text}`,
+        )
+      } catch {}
+      return
+    }
     if (topic !== DataTopic.AgentControl) return
     try {
       const control = agentControlSchema.parse(
