@@ -49,7 +49,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
         )}
         {!isLoading && agents.length === 0 && (
           <li className="text-base-content/50 text-sm">
-            No agents registered. Add them to agents.yaml.
+            No agents registered. Add them to agent-registry.yaml.
           </li>
         )}
         {agents.map((agent) => {

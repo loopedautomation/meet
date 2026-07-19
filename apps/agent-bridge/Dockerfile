@@ -66,8 +66,8 @@ ENV FINALIZER_MODEL_DIR=/opt/finalizer-model
 RUN libdir="$(find /repo/node_modules/.pnpm -maxdepth 3 -type d -path '*sherpa-onnx-linux-*/node_modules/sherpa-onnx-linux-*' | head -1)" \
  && test -n "$libdir" && ln -s "$libdir" /opt/sherpa-libs
 ENV LD_LIBRARY_PATH=/opt/sherpa-libs
-COPY agents.yaml /app/agents.yaml
-ENV AGENTS_CONFIG=/app/agents.yaml
+COPY agent-registry.yaml /app/agent-registry.yaml
+ENV AGENTS_CONFIG=/app/agent-registry.yaml
 COPY --from=infisical /usr/local/bin/infisical /usr/local/bin/infisical
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 WORKDIR /repo/apps/agent-bridge

@@ -67,7 +67,7 @@ app.post("/rooms/:room/agents/:id", async (c) => {
 })
 
 // Ad-hoc invite: paste any looped agent's TTY URL (+ token) and it joins the
-// room — no agents.yaml registration. The spec lives in the bridge's memory
+// room — no agent-registry.yaml registration. The spec lives in the bridge's memory
 // for the room's lifetime; dispatch metadata carries only the generated id.
 app.post("/rooms/:room/agents", async (c) => {
   const { room } = c.req.param()

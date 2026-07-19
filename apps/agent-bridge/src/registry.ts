@@ -60,7 +60,7 @@ const registrySchema = z.object({
 export type AgentEntry = z.infer<typeof agentEntrySchema>
 
 export function loadRegistry(
-  path = process.env.AGENTS_CONFIG ?? "agents.yaml",
+  path = process.env.AGENTS_CONFIG ?? "agent-registry.yaml",
 ): AgentEntry[] {
   const raw = parse(readFileSync(path, "utf8"))
   return registrySchema.parse(raw).agents

@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto"
 import { readFileSync, writeFileSync } from "node:fs"
 
-// Ad-hoc agents invited by URL (no agents.yaml entry). Specs are persisted to
+// Ad-hoc agents invited by URL (no agent-registry.yaml entry). Specs are persisted to
 // a file rather than process memory because the control API (index.ts) and
 // the LiveKit job processes (worker.ts) are separate processes in the same
 // container — dispatch metadata carries only the generated id, never the

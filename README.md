@@ -54,7 +54,7 @@ Open http://localhost:3000, create a meeting, then open the **Agents** panel and
 
 ### Registering your own agents
 
-Agents are declared in [`agents.yaml`](./agents.yaml). Point `brain.url` at any running looped-af agent with a [`tty` trigger](https://github.com/loopedautomation/agent-framework) (streaming + tool feed) or a `webhook` trigger (simple request/reply):
+Agents are declared in [`agent-registry.yaml`](./agent-registry.yaml). Point `brain.url` at any running looped-af agent with a [`tty` trigger](https://github.com/loopedautomation/agent-framework) (streaming + tool feed) or a `webhook` trigger (simple request/reply):
 
 ```yaml
 agents:
