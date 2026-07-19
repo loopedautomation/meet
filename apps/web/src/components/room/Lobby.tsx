@@ -33,21 +33,24 @@ type LobbyProps = {
 
 export function Lobby({ slug, onJoin }: LobbyProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [displayName, setDisplayName] = useState(() =>
-    readStoredString("displayName"),
-  )
-  const [audioEnabled, setAudioEnabled] = useState(() =>
-    readStoredToggle("audioEnabled"),
-  )
-  const [videoEnabled, setVideoEnabled] = useState(() =>
-    readStoredToggle("videoEnabled"),
-  )
+  const [displayName, setDisplayName] = useState("")
+  const [audioEnabled, setAudioEnabled] = useState(true)
+  const [videoEnabled, setVideoEnabled] = useState(true)
+  // Stored prefs are read after mount so SSR and first client render agree.
+  const [restored, setRestored] = useState(false)
   useEffect(() => {
+    setDisplayName(readStoredString("displayName"))
+    setAudioEnabled(readStoredToggle("audioEnabled"))
+    setVideoEnabled(readStoredToggle("videoEnabled"))
+    setRestored(true)
+  }, [])
+  useEffect(() => {
+    if (!restored) return
     try {
       localStorage.setItem("audioEnabled", String(audioEnabled))
       localStorage.setItem("videoEnabled", String(videoEnabled))
     } catch {}
-  }, [audioEnabled, videoEnabled])
+  }, [restored, audioEnabled, videoEnabled])
   const [audioDeviceId, setAudioDeviceId] = useState<string>()
   const [videoDeviceId, setVideoDeviceId] = useState<string>()
   const [joining, setJoining] = useState(false)
