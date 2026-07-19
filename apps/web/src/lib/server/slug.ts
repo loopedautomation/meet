@@ -1,7 +1,9 @@
-import { createHmac, timingSafeEqual } from "node:crypto"
+import { createHmac } from "node:crypto"
 import { customAlphabet } from "nanoid"
 
 // Digits only: e.g. 4821035799.
+// 10 digits ≈ 10^10 combinations; codes are shareable as-is and durable —
+// see isRecreatableRoomSlug for why recreation doesn't need a signature.
 const digits = customAlphabet("0123456789", 10)
 
 function secret(): string {
@@ -10,28 +12,20 @@ function secret(): string {
   return s
 }
 
-function sign(code: string): string {
-  return createHmac("sha256", secret()).update(code).digest("hex").slice(0, 8)
+export function generateRoomSlug(): string {
+  return digits()
 }
 
 /**
- * Meeting slugs are `<10 digits>-<8 hex hmac>`. The signature is what makes
- * links durable: a room that LiveKit has garbage-collected (5-min empty
- * timeout) is recreated on demand for a validly signed slug, while unsigned
- * guesses still cannot resurrect rooms and bypass the creation gate.
+ * Whether a missing room may be recreated on demand for this slug (links
+ * stay rejoinable after LiveKit's 5-min empty-room garbage collection).
+ * Any well-formed meeting code qualifies: a recreated room starts in the
+ * not-started state, so without the creator's derived host key nobody can
+ * obtain a token for it — a guessed code yields only an empty room that
+ * the GC sweeps back up. The management-password creation gate stays intact.
  */
-export function generateRoomSlug(): string {
-  const code = digits()
-  return `${code}-${sign(code)}`
-}
-
-/** True when the slug carries a valid signature — safe to (re)create. */
-export function isSignedRoomSlug(slug: string): boolean {
-  const match = /^(\d{10})-([0-9a-f]{8})$/.exec(slug)
-  if (!match) return false
-  const given = Buffer.from(match[2])
-  const expected = Buffer.from(sign(match[1]))
-  return given.length === expected.length && timingSafeEqual(given, expected)
+export function isRecreatableRoomSlug(slug: string): boolean {
+  return /^\d{10}$/.test(slug)
 }
 
 /**

@@ -73,9 +73,7 @@ export function HomeActions() {
 
   // Light up the Join button once the input looks like a meeting code or a
   // link containing one (generated codes are 10 digits).
-  const codeLooksValid = /^\d{10}(-[0-9a-f]{8})?$/.test(
-    code.trim().split("/").pop() ?? "",
-  )
+  const codeLooksValid = /^\d{10}$/.test(code.trim().split("/").pop() ?? "")
 
   return (
     <div className="flex flex-col items-center gap-4">

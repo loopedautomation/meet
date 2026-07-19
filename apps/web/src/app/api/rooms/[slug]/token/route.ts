@@ -6,7 +6,7 @@ import { NextResponse } from "next/server"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
 import {
   deriveHostKey,
-  isSignedRoomSlug,
+  isRecreatableRoomSlug,
   isValidRoomSlug,
 } from "@/lib/server/slug"
 
@@ -23,15 +23,15 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "displayName required" }, { status: 400 })
   }
 
-  // Signed slugs are durable: LiveKit garbage-collects empty rooms after a
-  // few minutes, so a valid link recreates its room on demand (back in the
-  // not-started state — the host's arrival reopens it). Unsigned slugs
-  // cannot resurrect rooms; that would bypass the creation gate.
+  // Meeting codes are durable: LiveKit garbage-collects empty rooms after a
+  // few minutes, so a link recreates its room on demand — in the not-started
+  // state, where only the creator's derived host key opens it. A guessed
+  // code therefore yields nothing but an empty room the GC sweeps back up.
   let existing = await roomService()
     .listRooms([slug])
     .catch(() => [])
   if (existing.length === 0) {
-    if (!isSignedRoomSlug(slug)) {
+    if (!isRecreatableRoomSlug(slug)) {
       return NextResponse.json(
         { error: "meeting not found or has ended" },
         { status: 404 },

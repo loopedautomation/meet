@@ -1,9 +1,12 @@
 "use client"
 
 import { useParticipants, useTranscriptions } from "@livekit/components-react"
+import { useStore } from "@nanostores/react"
+import { $localSegments } from "@/stores/localTranscript"
 
 export function TranscriptPanel() {
   const transcriptions = useTranscriptions()
+  const localSegments = useStore($localSegments)
   const participants = useParticipants()
   const displayName = (identity?: string) => {
     if (!identity) return "unknown"
@@ -14,10 +17,18 @@ export function TranscriptPanel() {
   // Interim updates arrive as separate text streams sharing a segment id;
   // keep only the latest text per segment so a growing utterance updates in
   // place instead of stacking rows.
-  const segments = new Map<string, (typeof transcriptions)[number]>()
+  const segments = new Map<string, { identity?: string; text: string }>()
   for (const t of transcriptions) {
     const key = t.streamInfo.attributes?.["lk.segment_id"] ?? t.streamInfo.id
-    segments.set(key, t)
+    segments.set(key, {
+      identity: t.participantInfo?.identity,
+      text: t.text,
+    })
+  }
+  // Our own in-browser transcription never loops back through LiveKit;
+  // merge the locally mirrored segments so the speaker sees themselves.
+  for (const seg of Object.values(localSegments)) {
+    segments.set(seg.id, { identity: seg.identity, text: seg.text })
   }
   const entries = [...segments.entries()]
 
@@ -38,9 +49,7 @@ export function TranscriptPanel() {
       <ul className="space-y-2 p-4">
         {entries.map(([key, t]) => (
           <li key={key} className="text-sm">
-            <span className="font-medium">
-              {displayName(t.participantInfo?.identity)}
-            </span>
+            <span className="font-medium">{displayName(t.identity)}</span>
             <p className="text-base-content/80">{t.text}</p>
           </li>
         ))}

@@ -8,6 +8,7 @@ import {
 } from "@meet/shared"
 import { Track } from "livekit-client"
 import { useEffect } from "react"
+import { upsertLocalSegment } from "@/stores/localTranscript"
 
 export const LOCAL_STT_PREF_KEY = "localStt"
 
@@ -79,6 +80,15 @@ export function useLocalTranscription(enabled: boolean) {
     }
 
     const publish = async (text: string, final: boolean) => {
+      // Text streams don't loop back to the sender — mirror our own segments
+      // into the local store so our transcript panel shows them too.
+      upsertLocalSegment({
+        id: segmentId,
+        identity: localParticipant.identity,
+        text,
+        final,
+        at: Date.now(),
+      })
       try {
         const writer = await localParticipant.streamText({
           topic: TRANSCRIPTION_TOPIC,
