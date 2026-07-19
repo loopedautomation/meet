@@ -64,15 +64,14 @@ export function WaitingRoom({
           You weren't admitted to this meeting.
         </p>
       ) : (
-        <>
-          <span className="loading loading-dots loading-lg text-primary" />
-          <div className="text-center">
-            <p className="font-medium text-lg">Asking to be let in…</p>
-            <p className="text-base-content/60 text-sm">
-              Someone in the meeting needs to admit you.
-            </p>
-          </div>
-        </>
+        <div className="text-center">
+          <p className="animate-pulse font-medium text-lg">
+            Asking to be let in…
+          </p>
+          <p className="text-base-content/60 text-sm">
+            Someone in the meeting needs to admit you.
+          </p>
+        </div>
       )}
     </main>
   )

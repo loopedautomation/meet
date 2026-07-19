@@ -15,17 +15,23 @@ import { ParticipantTile } from "@/components/room/ParticipantTile"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
+import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
+import { useKnockAlerts } from "@/hooks/useKnockAlerts"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
   slug,
   shareBase,
+  startedAt,
 }: {
   slug: string
   shareBase?: string
+  startedAt?: number
 }) {
   useJoinLeaveSounds()
+  useKnockAlerts(slug)
+  useAwayOnHidden()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
@@ -52,7 +58,7 @@ export function MeetingView({
     <div className="flex h-dvh flex-col bg-base-200">
       <RoomAudioRenderer />
       <RoomDataListener />
-      <ControlBar slug={slug} shareBase={shareBase} />
+      <ControlBar slug={slug} shareBase={shareBase} startedAt={startedAt} />
 
       {connectionState !== ConnectionState.Connected && (
         <div className="alert alert-warning fixed bottom-6 left-1/2 z-50 w-auto -translate-x-1/2 shadow-lg">

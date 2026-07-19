@@ -22,6 +22,11 @@ import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { getDynamicAgent } from "./dynamic.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
+import {
+  describeRoster,
+  fetchTranscript,
+  formatTranscript,
+} from "./meeting-context.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
 import { ScreenCapture } from "./screen-capture.js"
@@ -40,6 +45,7 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
       id: agentId,
       name: spec.name,
       greeting: `Hi, I'm ${spec.name}.`,
+      turn_policy: "open",
       brain: { kind: "tty", url: spec.url, token_env: "" },
       realtime: {
         model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
@@ -119,6 +125,10 @@ export default defineAgent({
 
     const screen = new ScreenCapture(ctx.room)
 
+    // Meeting context: what was said before the agent joined (from the
+    // control API's transcript store) plus a live view of who's in the room.
+    const priorTranscript = formatTranscript(await fetchTranscript(roomName))
+
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
@@ -180,6 +190,14 @@ export default defineAgent({
         state: sessionState,
         callbacks: { publishActivity, publishChat, setState },
         screen,
+        context: [
+          `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
+          priorTranscript
+            ? `Transcript of the meeting before you joined:\n${priorTranscript}`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
       })
       return
     }
@@ -190,6 +208,7 @@ export default defineAgent({
       sessionState,
       { publishActivity, publishChat, setState },
       screen,
+      { roster: () => describeRoster(ctx.room), priorTranscript },
     )
 
     const session = new voice.AgentSession({
@@ -286,6 +305,16 @@ export default defineAgent({
           if (control.agentId !== entry.id) return
           if (control.type === "interrupt") {
             session.interrupt()
+          } else if (control.type === "call-on") {
+            // Someone called on a hand-raised agent: answer the last thing
+            // heard. generateReply re-runs llmNode over the accumulated chat
+            // context with the pending flag letting the turn through.
+            sessionState.callOnPending = true
+            try {
+              session.generateReply()
+            } catch {
+              sessionState.callOnPending = false
+            }
           } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
             sessionState.notifiedMuted = false

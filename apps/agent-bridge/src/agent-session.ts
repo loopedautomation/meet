@@ -21,6 +21,16 @@ export class SessionState {
   deafened = false
   /** Set when undeafened so the brain learns it missed part of the meeting. */
   notifyUndeafened = false
+  /** on-mention policy: a participant called on the agent; answer next turn. */
+  callOnPending = false
+}
+
+/** Room facts fed to the brain: roster now, transcript so far. */
+export type MeetingContext = {
+  /** Current visible participants, re-read every turn. */
+  roster: () => string
+  /** What was said before the agent joined; consumed on the first turn. */
+  priorTranscript: string
 }
 
 const instructions = (entry: AgentEntry) =>
@@ -39,6 +49,9 @@ export class LoopedVoiceAgent extends voice.Agent {
   #callbacks: BridgeCallbacks
   #state: SessionState
   #screen: ScreenCapture | null
+  #meeting: MeetingContext | null
+  #lastRoster = ""
+  #priorTranscriptSent = false
 
   constructor(
     entry: AgentEntry,
@@ -46,6 +59,7 @@ export class LoopedVoiceAgent extends voice.Agent {
     state: SessionState,
     callbacks: BridgeCallbacks,
     screen: ScreenCapture | null = null,
+    meeting: MeetingContext | null = null,
   ) {
     super({ instructions: instructions(entry) })
     this.#entry = entry
@@ -53,6 +67,7 @@ export class LoopedVoiceAgent extends voice.Agent {
     this.#state = state
     this.#callbacks = callbacks
     this.#screen = screen
+    this.#meeting = meeting
   }
 
   override async llmNode(
@@ -68,7 +83,33 @@ export class LoopedVoiceAgent extends voice.Agent {
     const callbacks = this.#callbacks
     const brain = this.#brain
 
+    // Turn policy "on-mention": stay quiet unless addressed by name or a
+    // participant called on the agent — raise a hand instead of speaking, so
+    // agents don't jump into every human exchange.
+    if (entry.turn_policy === "on-mention") {
+      const addressed = new RegExp(`\\b${entry.name}\\b`, "i").test(input)
+      if (!addressed && !state.callOnPending) {
+        if (!state.muted && !state.deafened) callbacks.setState("hand-raised")
+        return null
+      }
+      state.callOnPending = false
+      callbacks.setState(state.muted ? "muted" : "thinking")
+    }
+
     let text = input
+    if (this.#meeting) {
+      if (!this.#priorTranscriptSent) {
+        this.#priorTranscriptSent = true
+        if (this.#meeting.priorTranscript) {
+          text = `[Transcript of the meeting before you joined:\n${this.#meeting.priorTranscript}]\n${text}`
+        }
+      }
+      const roster = this.#meeting.roster()
+      if (roster && roster !== this.#lastRoster) {
+        this.#lastRoster = roster
+        text = `[Participants currently in the meeting: ${roster}]\n${text}`
+      }
+    }
     if (state.notifyUndeafened) {
       text = `[You were deafened for a while and missed part of the meeting; you can hear again now.]\n${text}`
       state.notifyUndeafened = false
