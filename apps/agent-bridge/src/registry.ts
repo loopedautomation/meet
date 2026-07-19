@@ -24,8 +24,9 @@ const agentEntrySchema = z.object({
   brain: brainSchema,
   // "open": the agent replies whenever it hears a turn (default).
   // "on-mention": the agent only speaks when addressed by name; otherwise it
-  // raises its hand and waits for someone to call on it. Pipeline agents
-  // only — realtime models own their own turn-taking.
+  // raises its hand and waits for someone to call on it. For realtime
+  // agents this is a hard gate — auto-response is off and audio can only be
+  // triggered by a name mention or a call-on.
   turn_policy: z.enum(["open", "on-mention"]).default("open"),
   // When present, the agent runs on a realtime speech-to-speech model (the
   // interaction layer) that delegates tool work to the brain — no STT/TTS

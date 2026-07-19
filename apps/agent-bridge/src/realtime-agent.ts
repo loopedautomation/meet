@@ -41,6 +41,12 @@ const instructions = (entry: AgentEntry, context?: string) =>
   "when you need its tools, its memory, or to take an action. Messages " +
   "prefixed [meeting chat] are the room's text chat: read them for context " +
   "and reply in chat (or aloud only if addressed there)." +
+  (entry.turn_policy === "on-mention"
+    ? " Note: your audio is gated — you are only given the floor when " +
+      "someone addresses you by name or calls on you after you raise your " +
+      "hand. Between turns you may be asked silently whether you want the " +
+      "floor; answer those checks honestly and sparingly."
+    : "") +
   (context ? `\n\n${context}` : "")
 
 /**
@@ -80,7 +86,10 @@ export async function runRealtimeAgent(opts: {
       "speech-to-speech": `openai/${realtime.model}`,
       voice: realtime.voice,
       brain: "looped-af (tty, via ask_agent)",
-      "turn detection": "server vad",
+      "turn detection":
+        entry.turn_policy === "on-mention"
+          ? "server vad, gated (speaks on mention/call-on)"
+          : "server vad",
       "echo control": "half-duplex",
       "noise suppression": "room transcriber (gtcrn)",
     } as Record<string, string>,
@@ -145,6 +154,13 @@ export async function runRealtimeAgent(opts: {
       .catch(() => undefined)
   }
 
+  // Deterministic turn gate (turn_policy: on-mention): the model can only
+  // make sound when we create a response — on a name mention or a call-on.
+  // handRaised keeps the badge up until a human acts (idle events after the
+  // silent deliberation must not clear it).
+  const gated = entry.turn_policy === "on-mention"
+  let handRaised = false
+
   const session = new RealtimeSession({
     model: realtime.model,
     voice: realtime.voice,
@@ -152,6 +168,15 @@ export async function runRealtimeAgent(opts: {
     instructions: instructions(entry, opts.context),
     delegate,
     sendChat: callbacks.publishChat,
+    gate: gated
+      ? {
+          mention: new RegExp(`\\b${entry.name}\\b`, "i"),
+          onHandRaise: () => {
+            handRaised = true
+            if (!state.muted) callbacks.setState("hand-raised")
+          },
+        }
+      : undefined,
     onAudio: (pcm) => {
       if (state.muted) return
       enqueueAudio(new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2))
@@ -161,9 +186,13 @@ export async function runRealtimeAgent(opts: {
       source.clearQueue()
     },
     onSpeaking: () => {
+      handRaised = false
       if (!state.muted) callbacks.setState("speaking")
     },
-    onIdle: () => callbacks.setState(state.muted ? "muted" : "listening"),
+    onIdle: () => {
+      if (handRaised && !state.muted) return
+      callbacks.setState(state.muted ? "muted" : "listening")
+    },
     onError: (msg) => {
       console.error(`[${entry.id}] realtime: ${msg}`)
       if (ctx.room.name) {
@@ -278,6 +307,9 @@ export async function runRealtimeAgent(opts: {
       if (control.type === "interrupt") {
         hardCut()
         callbacks.setState(state.muted ? "muted" : "listening")
+      } else if (control.type === "call-on") {
+        handRaised = false
+        session.callOn()
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
         // mute take effect audibly by cutting playback mid-word.

@@ -13,6 +13,15 @@ export const TRANSCRIPTION_TOPIC = "lk.transcription"
 /** Participant attribute key holding an agent's conversational state. */
 export const AGENT_STATE_ATTRIBUTE = "agent.state"
 
+/**
+ * Participant attribute a client sets (value "active") once its in-browser
+ * WASM transcriber is loaded, warmed, and proven real-time. The server
+ * transcriber skips mics whose owner advertises this and resumes them the
+ * moment the attribute clears — local STT can never block transcription.
+ */
+export const SELF_TRANSCRIBE_ATTRIBUTE = "stt.local"
+export const SELF_TRANSCRIBE_ACTIVE = "active"
+
 export const agentStateSchema = z.enum([
   "listening",
   "thinking",

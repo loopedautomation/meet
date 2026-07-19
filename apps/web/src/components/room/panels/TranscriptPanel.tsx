@@ -32,8 +32,8 @@ export function TranscriptPanel() {
   return (
     <div>
       <p className="px-4 pt-3 text-base-content/40 text-xs">
-        Transcribed locally with noise suppression — audio never leaves the
-        server.
+        Transcribed on your device when supported, otherwise on the server —
+        audio never leaves your deployment.
       </p>
       <ul className="space-y-2 p-4">
         {entries.map(([key, t]) => (

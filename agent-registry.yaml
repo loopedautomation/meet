@@ -6,6 +6,9 @@ agents:
     name: Scout
     description: A general-purpose research assistant that can look things up mid-meeting.
     greeting: "Hi, I'm Scout. Let me know if you need anything."
+    # Hard turn gate: Scout only speaks when addressed by name or called on;
+    # otherwise she raises her hand (or drops a note in chat).
+    turn_policy: on-mention
     brain:
       kind: tty
       url: ws://demo-agent:8300/tty
