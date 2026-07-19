@@ -223,9 +223,13 @@ export function ControlBar({
           </div>
           <DeviceMenu kind="videoinput" persistKey="videoDeviceId">
             <li>
-              <button type="button" onClick={() => setBlur(!blur)}>
+              <button
+                type="button"
+                className="whitespace-nowrap"
+                onClick={() => setBlur(!blur)}
+              >
                 <Sparkles className="size-4" />
-                {blur ? "Disable background blur" : "Blur background"}
+                Blur background
                 {blur && <Check className="size-4 text-success" />}
               </button>
             </li>
