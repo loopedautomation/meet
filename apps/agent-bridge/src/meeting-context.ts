@@ -1,5 +1,6 @@
 import type { Room } from "@livekit/rtc-node"
 import { parseParticipantMeta } from "@meet/shared"
+import type { Brain } from "./looped-webhook.js"
 
 // Meeting context shared with agent brains: who is in the room, and what has
 // been said so far. Transcript segments live in the control API process (the
@@ -66,6 +67,59 @@ export function formatTranscript(
     lines.unshift(line)
   }
   return lines.join("\n")
+}
+
+/**
+ * Injects meeting context (roster, prior transcript) into the brain's first
+ * turn, whichever path triggers it — a voice turn, a chat mention, or a
+ * realtime model's ask_agent delegation. Brains are stateful conversations,
+ * so once is enough.
+ */
+export function withMeetingContext(brain: Brain, context: string): Brain {
+  let sent = false
+  return {
+    runTurn(input, images) {
+      if (!sent && context) {
+        sent = true
+        input = `[Meeting context]\n${context}\n\n${input}`
+      }
+      return brain.runTurn(input, images)
+    },
+    close: () => brain.close(),
+  }
+}
+
+// ---- debug events ----------------------------------------------------------
+// Workers report lifecycle and error events to a per-room ring buffer on the
+// control API, so an observer (a person, or Claude debugging a deployment)
+// can read what the bridge did without shelling into the box for logs.
+
+export type DebugEvent = {
+  at: number
+  /** Which component emitted it, e.g. "agent:scout", "transcriber". */
+  source: string
+  level: "info" | "error"
+  message: string
+}
+
+/** Fire-and-forget: record a bridge event for the room's debug log. */
+export function postDebugEvent(
+  room: string,
+  source: string,
+  level: DebugEvent["level"],
+  message: string,
+): void {
+  void fetch(
+    `${CONTROL_URL}/internal/rooms/${encodeURIComponent(room)}/debug`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}`,
+      },
+      body: JSON.stringify({ at: Date.now(), source, level, message }),
+    },
+  ).catch(() => undefined)
 }
 
 /** One line per visible participant: name plus whether human or agent. */

@@ -25,12 +25,10 @@ export class SessionState {
   callOnPending = false
 }
 
-/** Room facts fed to the brain: roster now, transcript so far. */
+/** Room facts fed to the brain alongside each turn. */
 export type MeetingContext = {
   /** Current visible participants, re-read every turn. */
   roster: () => string
-  /** What was said before the agent joined; consumed on the first turn. */
-  priorTranscript: string
 }
 
 const instructions = (entry: AgentEntry) =>
@@ -51,7 +49,6 @@ export class LoopedVoiceAgent extends voice.Agent {
   #screen: ScreenCapture | null
   #meeting: MeetingContext | null
   #lastRoster = ""
-  #priorTranscriptSent = false
 
   constructor(
     entry: AgentEntry,
@@ -98,12 +95,6 @@ export class LoopedVoiceAgent extends voice.Agent {
 
     let text = input
     if (this.#meeting) {
-      if (!this.#priorTranscriptSent) {
-        this.#priorTranscriptSent = true
-        if (this.#meeting.priorTranscript) {
-          text = `[Transcript of the meeting before you joined:\n${this.#meeting.priorTranscript}]\n${text}`
-        }
-      }
       const roster = this.#meeting.roster()
       if (roster && roster !== this.#lastRoster) {
         this.#lastRoster = roster

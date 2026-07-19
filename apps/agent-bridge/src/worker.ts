@@ -26,6 +26,8 @@ import {
   describeRoster,
   fetchTranscript,
   formatTranscript,
+  postDebugEvent,
+  withMeetingContext,
 } from "./meeting-context.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
@@ -83,7 +85,7 @@ export default defineAgent({
       token: entry.directToken ?? brainToken(entry),
       conversationId: `${roomName}-${entry.id}`,
     }
-    const brain: Brain =
+    const rawBrain: Brain =
       entry.brain.kind === "tty"
         ? new LoopedTtyClient(brainOpts)
         : new LoopedWebhookClient(brainOpts)
@@ -126,8 +128,29 @@ export default defineAgent({
     const screen = new ScreenCapture(ctx.room)
 
     // Meeting context: what was said before the agent joined (from the
-    // control API's transcript store) plus a live view of who's in the room.
+    // control API's transcript store) plus who's in the room. Wrapping the
+    // brain injects it into the first turn on every path — voice, chat
+    // mention, or realtime ask_agent delegation.
     const priorTranscript = formatTranscript(await fetchTranscript(roomName))
+    const meetingContext = [
+      `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
+      priorTranscript
+        ? `Transcript of the meeting before you joined:\n${priorTranscript}`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+    const brain = withMeetingContext(rawBrain, meetingContext)
+
+    postDebugEvent(
+      roomName,
+      `agent:${entry.id}`,
+      "info",
+      `joined (${entry.realtime ? "realtime" : "pipeline"}, brain: ${entry.brain.url})`,
+    )
+    ctx.addShutdownCallback(async () => {
+      postDebugEvent(roomName, `agent:${entry.id}`, "info", "left the room")
+    })
 
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
@@ -190,14 +213,7 @@ export default defineAgent({
         state: sessionState,
         callbacks: { publishActivity, publishChat, setState },
         screen,
-        context: [
-          `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
-          priorTranscript
-            ? `Transcript of the meeting before you joined:\n${priorTranscript}`
-            : "",
-        ]
-          .filter(Boolean)
-          .join("\n\n"),
+        context: meetingContext,
       })
       return
     }
@@ -208,7 +224,7 @@ export default defineAgent({
       sessionState,
       { publishActivity, publishChat, setState },
       screen,
-      { roster: () => describeRoster(ctx.room), priorTranscript },
+      { roster: () => describeRoster(ctx.room) },
     )
 
     const session = new voice.AgentSession({

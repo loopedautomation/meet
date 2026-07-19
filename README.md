@@ -148,6 +148,26 @@ Repo layout:
 - `packages/shared` — zod schemas for data topics, participant metadata, DTOs
 - `examples/demo-agent` — the Scout demo agent
 
+### Debugging a running deployment
+
+The agent-bridge control API exposes debug endpoints (authenticated with
+`BRIDGE_TOKEN`) so a person — or an AI assistant — can inspect a live meeting
+without shelling into the box:
+
+```sh
+# List active rooms
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" http://localhost:8090/debug/rooms
+
+# Everything about one room: participants (metadata + agent states), the
+# transcript so far, and a ring buffer of bridge events (agent joins,
+# realtime/transcriber errors)
+curl -H "Authorization: Bearer $BRIDGE_TOKEN" http://localhost:8090/debug/rooms/<room>
+```
+
+The compose file publishes the control port (8090) on the host; in production
+reach it from the box itself or over an SSH tunnel. Container logs remain the
+deepest source: `docker compose logs -f agent-bridge livekit`.
+
 ## Theming / whitelabel
 
 The looped look lives in `apps/web/src/styles/` as DaisyUI themes (`themes.css`, OKLCH tokens). Swap the two theme blocks for your own brand colors and the whole app follows — no component changes needed.

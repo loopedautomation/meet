@@ -17,6 +17,7 @@ import {
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
+import { postDebugEvent } from "./meeting-context.js"
 import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
 import type { AgentEntry } from "./registry.js"
 import type { ScreenCapture } from "./screen-capture.js"
@@ -153,7 +154,12 @@ export async function runRealtimeAgent(opts: {
       if (!state.muted) callbacks.setState("speaking")
     },
     onIdle: () => callbacks.setState(state.muted ? "muted" : "listening"),
-    onError: (msg) => console.error(`[${entry.id}] realtime: ${msg}`),
+    onError: (msg) => {
+      console.error(`[${entry.id}] realtime: ${msg}`)
+      if (ctx.room.name) {
+        postDebugEvent(ctx.room.name, `agent:${entry.id}`, "error", msg)
+      }
+    },
   })
   await session.open()
   if (!session.live) throw new Error("realtime session failed to open")

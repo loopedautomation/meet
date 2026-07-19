@@ -154,6 +154,90 @@ app.get("/internal/rooms/:room/transcript", (c) => {
   return c.json({ segments: transcripts.get(room)?.segments ?? [] })
 })
 
+// ---- debug access ----------------------------------------------------------
+// First-class observability for anyone holding the BRIDGE_TOKEN (a person
+// with curl, or Claude debugging a deployment): live room state and a
+// per-room ring buffer of bridge events, without shelling into the box.
+type DebugEvent = {
+  at: number
+  source: string
+  level: "info" | "error"
+  message: string
+}
+const MAX_DEBUG_EVENTS_PER_ROOM = 500
+const debugEvents = new Map<
+  string,
+  { updatedAt: number; events: DebugEvent[] }
+>()
+
+setInterval(
+  () => {
+    const cutoff = Date.now() - TRANSCRIPT_TTL_MS
+    for (const [room, entry] of debugEvents) {
+      if (entry.updatedAt < cutoff) debugEvents.delete(room)
+    }
+  },
+  60 * 60 * 1000,
+).unref()
+
+app.post("/internal/rooms/:room/debug", async (c) => {
+  const { room } = c.req.param()
+  let event: DebugEvent
+  try {
+    const body = (await c.req.json()) as Partial<DebugEvent>
+    if (typeof body.source !== "string" || typeof body.message !== "string") {
+      return c.json({ error: "invalid event" }, 400)
+    }
+    event = {
+      at: body.at ?? Date.now(),
+      source: body.source,
+      level: body.level === "error" ? "error" : "info",
+      message: body.message,
+    }
+  } catch {
+    return c.json({ error: "invalid body" }, 400)
+  }
+  let entry = debugEvents.get(room)
+  if (!entry) {
+    entry = { updatedAt: 0, events: [] }
+    debugEvents.set(room, entry)
+  }
+  entry.updatedAt = Date.now()
+  entry.events.push(event)
+  if (entry.events.length > MAX_DEBUG_EVENTS_PER_ROOM) {
+    entry.events.splice(0, entry.events.length - MAX_DEBUG_EVENTS_PER_ROOM)
+  }
+  return c.json({ ok: true })
+})
+
+app.get("/debug/rooms", async (c) => {
+  const list = await rooms.listRooms().catch(() => [])
+  return c.json({
+    rooms: list.map((r) => ({
+      name: r.name,
+      numParticipants: r.numParticipants,
+      createdAt: Number(r.creationTime) * 1000,
+    })),
+  })
+})
+
+app.get("/debug/rooms/:room", async (c) => {
+  const { room } = c.req.param()
+  const participants = await rooms.listParticipants(room).catch(() => [])
+  return c.json({
+    room,
+    participants: participants.map((p) => ({
+      identity: p.identity,
+      name: p.name,
+      metadata: p.metadata,
+      attributes: p.attributes,
+      joinedAt: Number(p.joinedAt) * 1000,
+    })),
+    transcript: transcripts.get(room)?.segments ?? [],
+    events: debugEvents.get(room)?.events ?? [],
+  })
+})
+
 app.delete("/rooms/:room/agents/:id", async (c) => {
   const { room, id } = c.req.param()
   await rooms.removeParticipant(room, `agent-${id}`).catch(() => undefined)

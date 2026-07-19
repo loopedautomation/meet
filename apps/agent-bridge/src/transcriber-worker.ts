@@ -15,7 +15,7 @@ import {
   parseParticipantMeta,
   TRANSCRIPTION_TOPIC,
 } from "@meet/shared"
-import { postTranscriptSegment } from "./meeting-context.js"
+import { postDebugEvent, postTranscriptSegment } from "./meeting-context.js"
 import {
   type Denoiser,
   type Finalizer,
@@ -57,7 +57,16 @@ export default defineAgent({
       | { error: string }
       | undefined
     if (!engine || "error" in engine) {
-      console.error(`transcriber disabled: ${engine?.error ?? "no engine"}`)
+      const reason = engine?.error ?? "no engine"
+      console.error(`transcriber disabled: ${reason}`)
+      if (ctx.job.room?.name) {
+        postDebugEvent(
+          ctx.job.room.name,
+          "transcriber",
+          "error",
+          `disabled: ${reason}`,
+        )
+      }
       return
     }
 
