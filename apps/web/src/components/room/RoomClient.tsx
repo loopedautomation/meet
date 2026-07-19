@@ -194,7 +194,11 @@ export function RoomClient({
         {inWaitingRoom ? (
           <WaitingRoom prefs={session.prefs} onAdmitted={handleAdmitted} />
         ) : (
-          <MeetingView slug={slug} shareBase={shareBase} />
+          <MeetingView
+            slug={slug}
+            shareBase={shareBase}
+            startedAt={session.token.roomStartedAt}
+          />
         )}
       </QueryClientProvider>
     </LiveKitRoom>

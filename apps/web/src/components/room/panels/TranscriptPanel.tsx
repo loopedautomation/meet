@@ -30,15 +30,21 @@ export function TranscriptPanel() {
   }
 
   return (
-    <ul className="space-y-2 p-4">
-      {entries.map(([key, t]) => (
-        <li key={key} className="text-sm">
-          <span className="font-medium">
-            {displayName(t.participantInfo?.identity)}
-          </span>
-          <p className="text-base-content/80">{t.text}</p>
-        </li>
-      ))}
-    </ul>
+    <div>
+      <p className="px-4 pt-3 text-base-content/40 text-xs">
+        Transcribed locally with noise suppression — audio never leaves the
+        server.
+      </p>
+      <ul className="space-y-2 p-4">
+        {entries.map(([key, t]) => (
+          <li key={key} className="text-sm">
+            <span className="font-medium">
+              {displayName(t.participantInfo?.identity)}
+            </span>
+            <p className="text-base-content/80">{t.text}</p>
+          </li>
+        ))}
+      </ul>
+    </div>
   )
 }

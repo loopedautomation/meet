@@ -3,13 +3,15 @@
 import {
   isTrackReference,
   type TrackReferenceOrPlaceholder,
+  useConnectionQualityIndicator,
   useDataChannel,
   useIsMuted,
   useIsSpeaking,
+  useParticipantAttributes,
   VideoTrack,
 } from "@livekit/components-react"
 import { DataTopic, parseParticipantMeta } from "@meet/shared"
-import { Track } from "livekit-client"
+import { ConnectionQuality, Track } from "livekit-client"
 import { Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { AgentBadge, useAgentState } from "@/components/room/AgentBadge"
@@ -28,6 +30,9 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   })
   const meta = parseParticipantMeta(participant.metadata)
   const isAgent = meta?.kind === "agent"
+  const { quality } = useConnectionQualityIndicator({ participant })
+  const { attributes } = useParticipantAttributes({ participant })
+  const isAway = attributes?.away === "1"
   const agentState = useAgentState(participant)
   const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
   const name = participant.name || participant.identity
@@ -90,6 +95,25 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
         </div>
       )}
 
+      {/* Call on: lets a hand-raised (on-mention policy) agent take a turn. */}
+      {isAgent && meta?.agentId && agentState === "hand-raised" && (
+        <button
+          type="button"
+          className="btn btn-primary btn-xs absolute top-2 right-2 z-10 gap-1"
+          onClick={() =>
+            sendControl(
+              new TextEncoder().encode(
+                JSON.stringify({ type: "call-on", agentId: meta.agentId }),
+              ),
+              { topic: DataTopic.AgentControl, reliable: true },
+            )
+          }
+        >
+          <Hand className="size-3" />
+          Call on
+        </button>
+      )}
+
       {/* Tap to interrupt: cuts the agent off mid-sentence. */}
       {isAgent && meta?.agentId && agentState === "speaking" && (
         <button
@@ -113,9 +137,40 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
         <span className="badge badge-neutral badge-sm gap-1 bg-base-100/80 text-base-content backdrop-blur">
           {micMuted && <MicOff className="size-3 text-error" />}
           {participant.isLocal ? `${name} (you)` : name}
+          {isAway && <span className="text-base-content/60">· away</span>}
         </span>
+        <QualityBars quality={quality} />
         {isAgent && meta?.agentId && <AgentBadge participant={participant} />}
       </div>
     </div>
+  )
+}
+
+/** Three signal bars colored by LiveKit's per-participant connection quality. */
+function QualityBars({ quality }: { quality: ConnectionQuality }) {
+  if (quality === ConnectionQuality.Unknown) return null
+  const level =
+    quality === ConnectionQuality.Excellent
+      ? 3
+      : quality === ConnectionQuality.Good
+        ? 2
+        : quality === ConnectionQuality.Poor
+          ? 1
+          : 0
+  const color =
+    level >= 3 ? "bg-success" : level === 2 ? "bg-warning" : "bg-error"
+  return (
+    <span
+      className="flex items-end gap-px rounded-sm bg-base-100/80 p-1 backdrop-blur"
+      title={`Connection: ${quality}`}
+    >
+      {[1, 2, 3].map((bar) => (
+        <span
+          key={bar}
+          className={`w-0.5 rounded-sm ${bar <= Math.max(level, 1) && level > 0 ? color : "bg-base-content/20"}`}
+          style={{ height: `${3 + bar * 2}px` }}
+        />
+      ))}
+    </span>
   )
 }

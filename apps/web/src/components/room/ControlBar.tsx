@@ -1,15 +1,19 @@
 "use client"
 
 import {
+  useConnectionQualityIndicator,
   useLocalParticipant,
+  useMediaDeviceSelect,
   useParticipants,
   useRoomContext,
 } from "@livekit/components-react"
 import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
+import { ConnectionQuality } from "livekit-client"
 import {
   Bot,
   Check,
+  ChevronDown,
   Link as LinkIcon,
   LogOut,
   MessageSquare,
@@ -17,20 +21,28 @@ import {
   MicOff,
   MonitorUp,
   ScrollText,
+  Sparkles,
   Users,
   Video,
   VideoOff,
 } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import {
+  readBlurPref,
+  useBackgroundBlur,
+  writeBlurPref,
+} from "@/hooks/useBackgroundBlur"
 import { $openPanel, togglePanel } from "@/stores/panels"
 
 export function ControlBar({
   slug,
   shareBase,
+  startedAt,
 }: {
   slug: string
   shareBase?: string
+  startedAt?: number
 }) {
   const room = useRoomContext()
   const {
@@ -45,6 +57,24 @@ export function ControlBar({
   const waitingCount = participants.filter(
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
   ).length
+
+  const [blur, setBlur] = useState(readBlurPref)
+  useBackgroundBlur(blur)
+
+  // Warn once per dip when this participant's own connection degrades.
+  const { quality } = useConnectionQualityIndicator({
+    participant: localParticipant,
+  })
+  const lastQuality = useRef(quality)
+  useEffect(() => {
+    if (
+      quality !== lastQuality.current &&
+      (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost)
+    ) {
+      toast.warning("Your connection is unstable — call quality may suffer.")
+    }
+    lastQuality.current = quality
+  }, [quality])
 
   const toggle = (
     action: () => Promise<unknown>,
@@ -66,6 +96,46 @@ export function ControlBar({
       toast.error(`Could not toggle ${what}: ${detail}`)
     })
   }
+
+  const toggleMic = () =>
+    toggle(
+      () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled),
+      "microphone",
+      { key: "audioEnabled", value: !isMicrophoneEnabled },
+    )
+  const toggleCamera = () =>
+    toggle(
+      () => localParticipant.setCameraEnabled(!isCameraEnabled),
+      "camera",
+      { key: "videoEnabled", value: !isCameraEnabled },
+    )
+
+  // Keyboard shortcuts (Meet's conventions): ⌘/Ctrl+D mic, ⌘/Ctrl+E camera.
+  const shortcutRefs = useRef({ toggleMic, toggleCamera })
+  shortcutRefs.current = { toggleMic, toggleCamera }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return
+      const target = e.target as HTMLElement | null
+      if (
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable)
+      ) {
+        return
+      }
+      if (e.key === "d") {
+        e.preventDefault()
+        shortcutRefs.current.toggleMic()
+      } else if (e.key === "e") {
+        e.preventDefault()
+        shortcutRefs.current.toggleCamera()
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [])
 
   const copyLink = async () => {
     // Prefer the short-link format when the deployment configures one.
@@ -92,57 +162,70 @@ export function ControlBar({
           )}
           {copied ? "Copied" : "Copy link"}
         </button>
+        {startedAt ? <CallTimer startedAt={startedAt} /> : null}
       </div>
 
       <div className="flex items-center gap-2">
-        <div
-          className="tooltip tooltip-bottom"
-          data-tip={
-            isMicrophoneEnabled ? "Mute microphone" : "Unmute microphone"
-          }
-        >
-          <button
-            type="button"
-            className={`btn btn-circle ${isMicrophoneEnabled ? "btn-neutral" : "btn-soft"}`}
-            onClick={() =>
-              toggle(
-                () =>
-                  localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled),
-                "microphone",
-                { key: "audioEnabled", value: !isMicrophoneEnabled },
-              )
+        <div className="join">
+          <div
+            className="tooltip tooltip-bottom"
+            data-tip={
+              isMicrophoneEnabled
+                ? "Mute microphone ⌘D"
+                : "Unmute microphone ⌘D"
             }
-            aria-label="Toggle microphone"
           >
-            {isMicrophoneEnabled ? (
-              <Mic className="size-5" />
-            ) : (
-              <MicOff className="size-5" />
-            )}
-          </button>
+            <button
+              type="button"
+              className={`btn btn-circle join-item ${isMicrophoneEnabled ? "btn-neutral" : "btn-error"}`}
+              onClick={toggleMic}
+              aria-label="Toggle microphone"
+            >
+              {isMicrophoneEnabled ? (
+                <Mic className="size-5" />
+              ) : (
+                <MicOff className="size-5" />
+              )}
+            </button>
+          </div>
+          <DeviceMenu kind="audioinput" persistKey="audioDeviceId" />
         </div>
-        <div
-          className="tooltip tooltip-bottom"
-          data-tip={isCameraEnabled ? "Turn off camera" : "Turn on camera"}
-        >
-          <button
-            type="button"
-            className={`btn btn-circle ${isCameraEnabled ? "btn-neutral" : "btn-soft"}`}
-            onClick={() =>
-              toggle(
-                () => localParticipant.setCameraEnabled(!isCameraEnabled),
-                "camera",
-                { key: "videoEnabled", value: !isCameraEnabled },
-              )
+        <div className="join">
+          <div
+            className="tooltip tooltip-bottom"
+            data-tip={
+              isCameraEnabled ? "Turn off camera ⌘E" : "Turn on camera ⌘E"
             }
-            aria-label="Toggle camera"
           >
-            {isCameraEnabled ? (
-              <Video className="size-5" />
-            ) : (
-              <VideoOff className="size-5" />
-            )}
-          </button>
+            <button
+              type="button"
+              className={`btn btn-circle join-item ${isCameraEnabled ? "btn-neutral" : "btn-error"}`}
+              onClick={toggleCamera}
+              aria-label="Toggle camera"
+            >
+              {isCameraEnabled ? (
+                <Video className="size-5" />
+              ) : (
+                <VideoOff className="size-5" />
+              )}
+            </button>
+          </div>
+          <DeviceMenu kind="videoinput" persistKey="videoDeviceId">
+            <li>
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !blur
+                  setBlur(next)
+                  writeBlurPref(next)
+                }}
+              >
+                <Sparkles className="size-4" />
+                {blur ? "Disable background blur" : "Blur background"}
+                {blur && <Check className="size-4 text-success" />}
+              </button>
+            </li>
+          </DeviceMenu>
         </div>
         <div
           className="tooltip tooltip-bottom"
@@ -222,6 +305,77 @@ export function ControlBar({
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+/** Elapsed time since the room was created — shared anchor for everyone. */
+function CallTimer({ startedAt }: { startedAt: number }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const total = Math.max(0, Math.floor((now - startedAt) / 1000))
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return (
+    <span className="font-mono text-base-content/60 text-sm tabular-nums">
+      {h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`}
+    </span>
+  )
+}
+
+/**
+ * Chevron dropdown next to a media toggle listing input devices; switching
+ * takes effect live and is remembered for the next lobby visit. Extra menu
+ * items (e.g. background blur) render below the device list.
+ */
+function DeviceMenu({
+  kind,
+  persistKey,
+  children,
+}: {
+  kind: "audioinput" | "videoinput"
+  persistKey: string
+  children?: React.ReactNode
+}) {
+  const { devices, activeDeviceId, setActiveMediaDevice } =
+    useMediaDeviceSelect({ kind })
+
+  return (
+    <div className="dropdown dropdown-bottom">
+      <button
+        type="button"
+        tabIndex={0}
+        className="btn btn-circle join-item btn-neutral w-6"
+        aria-label={`Select ${kind === "audioinput" ? "microphone" : "camera"}`}
+      >
+        <ChevronDown className="size-3" />
+      </button>
+      <ul className="menu dropdown-content z-30 mt-1 w-64 rounded-box bg-base-100 p-2 shadow-lg ring-1 ring-base-300">
+        {devices.map((d) => (
+          <li key={d.deviceId}>
+            <button
+              type="button"
+              className={d.deviceId === activeDeviceId ? "active" : ""}
+              onClick={() => {
+                void setActiveMediaDevice(d.deviceId)
+                try {
+                  localStorage.setItem(persistKey, d.deviceId)
+                } catch {}
+              }}
+            >
+              <span className="truncate">
+                {d.label || (kind === "audioinput" ? "Microphone" : "Camera")}
+              </span>
+            </button>
+          </li>
+        ))}
+        {children}
+      </ul>
     </div>
   )
 }

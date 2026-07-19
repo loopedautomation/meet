@@ -7,7 +7,6 @@ import { join } from "node:path"
 
 export const STT_SAMPLE_RATE = 16_000
 
-
 /**
  * sherpa-onnx-node is CJS; under dynamic import only some names get
  * synthesized as named exports (OnlineRecognizer yes, OfflineRecognizer and
@@ -83,7 +82,7 @@ export async function loadFinalizer(
     return null
   }
   let recognizer: InstanceType<
-    (typeof import("sherpa-onnx-node"))["OfflineRecognizer"]
+    typeof import("sherpa-onnx-node")["OfflineRecognizer"]
   >
   try {
     recognizer = new sherpa.OfflineRecognizer({

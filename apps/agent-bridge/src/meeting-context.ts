@@ -1,0 +1,83 @@
+import type { Room } from "@livekit/rtc-node"
+import { parseParticipantMeta } from "@meet/shared"
+
+// Meeting context shared with agent brains: who is in the room, and what has
+// been said so far. Transcript segments live in the control API process (the
+// transcriber posts finals there over localhost), so agent workers — which
+// run as separate job processes — can fetch them over HTTP.
+
+const CONTROL_URL = process.env.CONTROL_URL ?? "http://localhost:8090"
+
+export type TranscriptSegment = {
+  at: number
+  speaker: string
+  text: string
+}
+
+/** Fire-and-forget: record a finalized utterance for the room. */
+export function postTranscriptSegment(
+  room: string,
+  segment: TranscriptSegment,
+): void {
+  void fetch(
+    `${CONTROL_URL}/internal/rooms/${encodeURIComponent(room)}/transcript`,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}`,
+      },
+      body: JSON.stringify(segment),
+    },
+  ).catch(() => undefined)
+}
+
+/** The meeting transcript so far, oldest first. Empty on any failure. */
+export async function fetchTranscript(
+  room: string,
+): Promise<TranscriptSegment[]> {
+  try {
+    const res = await fetch(
+      `${CONTROL_URL}/internal/rooms/${encodeURIComponent(room)}/transcript`,
+      {
+        headers: { authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}` },
+      },
+    )
+    if (!res.ok) return []
+    const body = (await res.json()) as { segments?: TranscriptSegment[] }
+    return body.segments ?? []
+  } catch {
+    return []
+  }
+}
+
+/** Render a transcript as brain-readable context, bounded by character count. */
+export function formatTranscript(
+  segments: TranscriptSegment[],
+  maxChars = 6000,
+): string {
+  const lines: string[] = []
+  let total = 0
+  // Walk backwards so the budget keeps the most recent discussion.
+  for (let i = segments.length - 1; i >= 0; i--) {
+    const line = `${segments[i].speaker}: ${segments[i].text}`
+    total += line.length + 1
+    if (total > maxChars) break
+    lines.unshift(line)
+  }
+  return lines.join("\n")
+}
+
+/** One line per visible participant: name plus whether human or agent. */
+export function describeRoster(room: Room): string {
+  const entries: string[] = []
+  const local = room.localParticipant
+  if (local) entries.push(`${local.name || local.identity} (you, AI agent)`)
+  for (const p of room.remoteParticipants.values()) {
+    const meta = parseParticipantMeta(p.metadata)
+    if (meta?.kind === "service" || meta?.kind === "waiting") continue
+    const label = meta?.kind === "agent" ? "AI agent" : "human"
+    entries.push(`${p.name || p.identity} (${label})`)
+  }
+  return entries.join(", ")
+}

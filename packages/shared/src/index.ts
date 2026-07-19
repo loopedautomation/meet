@@ -19,6 +19,9 @@ export const agentStateSchema = z.enum([
   "speaking",
   "muted",
   "deafened",
+  // The agent has something to contribute but its turn policy keeps it
+  // quiet until a participant calls on it.
+  "hand-raised",
 ])
 export type AgentState = z.infer<typeof agentStateSchema>
 
@@ -62,7 +65,15 @@ export function isServiceParticipant(metadata: string | undefined): boolean {
 
 /** Control messages published by participants on the `agent-control` topic. */
 export const agentControlSchema = z.object({
-  type: z.enum(["mute", "unmute", "deafen", "undeafen", "interrupt"]),
+  type: z.enum([
+    "mute",
+    "unmute",
+    "deafen",
+    "undeafen",
+    "interrupt",
+    // Lets a hand-raised agent take its turn (see the agent turn policy).
+    "call-on",
+  ]),
   agentId: z.string(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>
@@ -144,6 +155,8 @@ export const tokenResponseSchema = z.object({
   participantCount: z.number().int().min(0).default(0),
   /** True when the joiner enters the waiting room pending admission. */
   waiting: z.boolean().default(false),
+  /** Epoch ms when the room was created — anchors the call duration timer. */
+  roomStartedAt: z.number().default(0),
 })
 export type TokenResponse = z.infer<typeof tokenResponseSchema>
 

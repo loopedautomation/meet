@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@livekit/components-react": "catalog:",
+    "@livekit/track-processors": "^0.7.2",
     "@meet/shared": "workspace:*",
     "@nanostores/react": "catalog:",
     "@tanstack/react-query": "catalog:",

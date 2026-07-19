@@ -106,11 +106,16 @@ export async function POST(request: Request, { params }: Params) {
     canPublishData: !waiting,
   })
 
+  const room = existing[0]
+  const roomStartedAt =
+    Number(room.creationTimeMs ?? 0) || Number(room.creationTime ?? 0) * 1000
+
   return NextResponse.json({
     token: await token.toJwt(),
     serverUrl: publicUrl,
     identity,
     participantCount,
     waiting,
+    roomStartedAt,
   })
 }

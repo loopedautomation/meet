@@ -15,6 +15,7 @@ import {
   parseParticipantMeta,
   TRANSCRIPTION_TOPIC,
 } from "@meet/shared"
+import { postTranscriptSegment } from "./meeting-context.js"
 import {
   type Denoiser,
   type Finalizer,
@@ -122,6 +123,15 @@ export default defineAgent({
           await writer.close()
         } catch {
           // room is closing or stream failed; nothing to do
+        }
+        // Finals also land in the control API's per-room transcript store,
+        // where agents joining later fetch them for meeting context.
+        if (final && ctx.room.name) {
+          postTranscriptSegment(ctx.room.name, {
+            at: Date.now(),
+            speaker: participant.name || participant.identity,
+            text,
+          })
         }
       }
 

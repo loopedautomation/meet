@@ -25,12 +25,13 @@ import type { ScreenCapture } from "./screen-capture.js"
 const MIX_INTERVAL_MS = 50
 const SAMPLES_PER_MIX = (REALTIME_SAMPLE_RATE / 1000) * MIX_INTERVAL_MS
 
-const instructions = (entry: AgentEntry) =>
+const instructions = (entry: AgentEntry, context?: string) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting ` +
   "with several people. Keep spoken replies concise and conversational — a " +
   "sentence or two unless asked for more. Answer questions yourself whenever " +
   "you can; reach for the ask_agent tool only when you need its tools, its " +
-  "memory, or to take an action."
+  "memory, or to take an action." +
+  (context ? `\n\n${context}` : "")
 
 /**
  * Runs an agent whose interaction layer is a realtime speech-to-speech model:
@@ -46,6 +47,8 @@ export async function runRealtimeAgent(opts: {
   state: SessionState
   callbacks: BridgeCallbacks
   screen: ScreenCapture
+  /** Meeting context (roster, prior transcript) folded into instructions. */
+  context?: string
 }): Promise<void> {
   const { ctx, entry, realtime, brain, state, callbacks, screen } = opts
   const local = ctx.room.localParticipant
@@ -136,7 +139,7 @@ export async function runRealtimeAgent(opts: {
     model: realtime.model,
     voice: realtime.voice,
     apiKey,
-    instructions: instructions(entry),
+    instructions: instructions(entry, opts.context),
     delegate,
     onAudio: (pcm) => {
       if (state.muted) return

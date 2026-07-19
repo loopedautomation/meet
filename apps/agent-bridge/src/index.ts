@@ -98,6 +98,62 @@ app.post("/rooms/:room/agents", async (c) => {
   return c.json({ ok: true, id, name: spec.name })
 })
 
+// ---- transcript store ------------------------------------------------------
+// Every room's finalized utterances, posted by the transcriber worker and
+// read back by agent workers on join so agents get meeting context. Memory
+// only: capped per room and dropped once a room has been quiet for a day.
+type TranscriptSegment = { at: number; speaker: string; text: string }
+const MAX_SEGMENTS_PER_ROOM = 2000
+const TRANSCRIPT_TTL_MS = 24 * 60 * 60 * 1000
+const transcripts = new Map<
+  string,
+  { updatedAt: number; segments: TranscriptSegment[] }
+>()
+
+setInterval(
+  () => {
+    const cutoff = Date.now() - TRANSCRIPT_TTL_MS
+    for (const [room, entry] of transcripts) {
+      if (entry.updatedAt < cutoff) transcripts.delete(room)
+    }
+  },
+  60 * 60 * 1000,
+).unref()
+
+app.post("/internal/rooms/:room/transcript", async (c) => {
+  const { room } = c.req.param()
+  let segment: TranscriptSegment
+  try {
+    const body = (await c.req.json()) as Partial<TranscriptSegment>
+    if (typeof body.speaker !== "string" || typeof body.text !== "string") {
+      return c.json({ error: "invalid segment" }, 400)
+    }
+    segment = {
+      at: body.at ?? Date.now(),
+      speaker: body.speaker,
+      text: body.text,
+    }
+  } catch {
+    return c.json({ error: "invalid body" }, 400)
+  }
+  let entry = transcripts.get(room)
+  if (!entry) {
+    entry = { updatedAt: 0, segments: [] }
+    transcripts.set(room, entry)
+  }
+  entry.updatedAt = Date.now()
+  entry.segments.push(segment)
+  if (entry.segments.length > MAX_SEGMENTS_PER_ROOM) {
+    entry.segments.splice(0, entry.segments.length - MAX_SEGMENTS_PER_ROOM)
+  }
+  return c.json({ ok: true })
+})
+
+app.get("/internal/rooms/:room/transcript", (c) => {
+  const { room } = c.req.param()
+  return c.json({ segments: transcripts.get(room)?.segments ?? [] })
+})
+
 app.delete("/rooms/:room/agents/:id", async (c) => {
   const { room, id } = c.req.param()
   await rooms.removeParticipant(room, `agent-${id}`).catch(() => undefined)
