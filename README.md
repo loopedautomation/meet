@@ -36,7 +36,7 @@ flowchart TB
     bridge -- "TTY WebSocket" --> agent["looped-af agent<br/>(your agent.yaml, unchanged)"]
 ```
 
-**Bring any looped agent-framework agent.** The bridge hosts the voice pipeline ([LiveKit Agents](https://docs.livekit.io/agents/)); the *thinking* happens in a stock [looped-af](https://github.com/loopedautomation/agent-framework) agent over its TTY trigger. No meeting-specific code in the agent: any agent you already run — with its tools, permissions, memory, and audit trail intact — joins a meeting as-is with one entry in the registry. Realtime agents swap the STT/TTS pipeline for a speech-to-speech model that delegates tool work to the same brain.
+**Bring any looped agent-framework agent.** The bridge hosts the voice pipeline ([LiveKit Agents](https://docs.livekit.io/agents/)); the *thinking* happens in a stock [looped-af](https://github.com/loopedautomation/agent-framework) agent over its TTY trigger. No meeting-specific code in the agent: any agent you already run — with its tools, permissions, memory, and audit trail intact — joins a meeting as-is by pasting its TTY URL and token into the agents panel (or add it to the registry for a permanent roster). Realtime agents swap the STT/TTS pipeline for a speech-to-speech model that delegates tool work to the same brain.
 
 ## Quick start
 
@@ -62,7 +62,7 @@ deployment)? See **[selfhost.md](./selfhost.md)**.
 
 ### Registering your own agents
 
-Agents are declared in [`agent-registry.yaml`](./agent-registry.yaml). Point `brain.url` at any running looped-af agent with a [`tty` trigger](https://github.com/loopedautomation/agent-framework) — the recommended kind: streaming, tool feed, and task cancellation. (A `webhook` trigger also works for simple request/reply.)
+The quickest way to bring your own agent is no registration at all: in the meeting's **Agents** panel, paste the agent's TTY URL and token and it joins on the spot. For a permanent roster, declare agents in [`agent-registry.yaml`](./agent-registry.yaml). Point `brain.url` at any running looped-af agent with a [`tty` trigger](https://github.com/loopedautomation/agent-framework) — the recommended kind: streaming, tool feed, and task cancellation. (A `webhook` trigger also works for simple request/reply.)
 
 ```yaml
 agents:
@@ -83,7 +83,7 @@ surface for the same agent: the one you invite into a room is the same
 Discord. Define an agent once and it works everywhere, meetings included.
 
 If Meet interests you, start there — ⭐ the framework repo and build your
-first agent; pointing it at a meeting is one registry entry away.
+first agent; inviting it to a meeting is just pasting its TTY URL and token.
 
 ## Development
 
