@@ -1,6 +1,6 @@
 import { ReadableStream } from "node:stream/web"
 import { type ChatContext, type llm, voice } from "@livekit/agents"
-import type { AgentActivityEvent, AgentState } from "@meet/shared"
+import type { AgentActivityEvent, AgentState, TurnPolicy } from "@meet/shared"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
 import type { AgentEntry } from "./registry.js"
@@ -25,6 +25,11 @@ export class SessionState {
   callOnPending = false
   /** Poked: the agent responds freely until this epoch-ms deadline. */
   pokedUntil = 0
+  /**
+   * Effective turn policy: seeded from the registry, but the meeting's host
+   * can change it mid-call (see the "set-turn-policy" control).
+   */
+  turnPolicy: TurnPolicy = "open"
 }
 
 /** Room facts fed to the brain alongside each turn. */
@@ -85,7 +90,7 @@ export class LoopedVoiceAgent extends voice.Agent {
     // Turn policy "on-mention": stay quiet unless addressed by name or a
     // participant called on the agent — raise a hand instead of speaking, so
     // agents don't jump into every human exchange.
-    if (entry.turn_policy === "on-mention") {
+    if (state.turnPolicy === "on-mention") {
       const addressed =
         new RegExp(entry.name, "i").test(input) || Date.now() < state.pokedUntil
       if (!addressed && !state.callOnPending) {

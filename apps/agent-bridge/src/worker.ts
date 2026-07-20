@@ -9,6 +9,7 @@ import * as elevenlabs from "@livekit/agents-plugin-elevenlabs"
 import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
+  AGENT_POLICY_ATTRIBUTE,
   AGENT_STATE_ATTRIBUTE,
   type AgentActivityEvent,
   type AgentState,
@@ -98,6 +99,7 @@ export default defineAgent({
     if (!local) throw new Error("no local participant after connect")
 
     const sessionState = new SessionState()
+    sessionState.turnPolicy = entry.turn_policy
     let pokeTimer: ReturnType<typeof setTimeout> | null = null
 
     const setState = (state: AgentState) => {
@@ -105,6 +107,13 @@ export default defineAgent({
         .setAttributes({ [AGENT_STATE_ATTRIBUTE]: state })
         .catch(() => undefined)
     }
+    /** Publish the effective turn policy so the host's toggle reflects it. */
+    const publishPolicy = () => {
+      local
+        .setAttributes({ [AGENT_POLICY_ATTRIBUTE]: sessionState.turnPolicy })
+        .catch(() => undefined)
+    }
+    publishPolicy()
     const publishActivity = (event: AgentActivityEvent) => {
       local
         .publishData(new TextEncoder().encode(JSON.stringify(event)), {
@@ -177,6 +186,11 @@ export default defineAgent({
             JSON.parse(new TextDecoder().decode(payload)),
           )
           if (control.agentId !== entry.id) return
+          if (control.type === "set-turn-policy" && control.policy) {
+            sessionState.turnPolicy = control.policy
+            publishPolicy()
+            return
+          }
           if (control.type === "mute") sessionState.muted = true
           else if (control.type === "unmute") sessionState.muted = false
           else if (control.type === "deafen") sessionState.deafened = true
@@ -324,6 +338,9 @@ export default defineAgent({
             } catch {
               sessionState.callOnPending = false
             }
+          } else if (control.type === "set-turn-policy" && control.policy) {
+            sessionState.turnPolicy = control.policy
+            publishPolicy()
           } else if (control.type === "poke") {
             // Wake the agent: unmuted and answering every turn for a minute,
             // then back to its usual policy. "awake" is the visible cue, and

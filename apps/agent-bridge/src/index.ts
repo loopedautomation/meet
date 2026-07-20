@@ -5,6 +5,7 @@ import { Hono } from "hono"
 import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk"
 import {
   type DynamicAgentSpec,
+  normalizeAgentUrl,
   probeAgent,
   registerDynamicAgent,
 } from "./dynamic.js"

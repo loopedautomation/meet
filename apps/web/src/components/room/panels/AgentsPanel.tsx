@@ -1,12 +1,18 @@
 "use client"
 
-import { useDataChannel, useParticipants } from "@livekit/components-react"
 import {
+  useDataChannel,
+  useParticipantAttributes,
+  useParticipants,
+} from "@livekit/components-react"
+import {
+  AGENT_POLICY_ATTRIBUTE,
   AGENT_VOICES,
   type AgentActivityEvent,
   type AgentControl,
   DataTopic,
   parseParticipantMeta,
+  type TurnPolicy,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import type { Participant } from "livekit-client"
@@ -14,6 +20,7 @@ import {
   Bot,
   Ear,
   EarOff,
+  Hand,
   Mic,
   MicOff,
   Plus,
@@ -26,6 +33,7 @@ import { toast } from "react-toastify"
 import { useAgentState } from "@/components/room/AgentBadge"
 import { useAgentInvite } from "@/hooks/mutations/useAgentInvite"
 import { useAgents } from "@/hooks/queries/useAgents"
+import { $isHost } from "@/stores/host"
 import { $agentActivity, $agentStats } from "@/stores/roomData"
 
 export function AgentsPanel({ slug }: { slug: string }) {
@@ -33,6 +41,9 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const participants = useParticipants()
   const invite = useAgentInvite(slug)
   const activity = useStore($agentActivity)
+  // Agents belong to whoever organises the meeting; everyone else sees who
+  // is in the room and what they're doing, but no controls.
+  const isHost = useStore($isHost)
 
   const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
 
@@ -70,20 +81,24 @@ export function AgentsPanel({ slug }: { slug: string }) {
                 )}
               </div>
               {participant ? (
-                <InRoomControls
-                  agentId={agent.id}
-                  participant={participant}
-                  onRemove={() =>
-                    invite.mutate({ agentId: agent.id, action: "remove" })
-                  }
-                  sendControl={(control) =>
-                    sendControl(
-                      new TextEncoder().encode(JSON.stringify(control)),
-                      { topic: DataTopic.AgentControl, reliable: true },
-                    )
-                  }
-                />
-              ) : (
+                isHost ? (
+                  <InRoomControls
+                    agentId={agent.id}
+                    participant={participant}
+                    onRemove={() =>
+                      invite.mutate({ agentId: agent.id, action: "remove" })
+                    }
+                    sendControl={(control) =>
+                      sendControl(
+                        new TextEncoder().encode(JSON.stringify(control)),
+                        { topic: DataTopic.AgentControl, reliable: true },
+                      )
+                    }
+                  />
+                ) : (
+                  <span className="badge badge-ghost badge-sm">in call</span>
+                )
+              ) : isHost ? (
                 <button
                   type="button"
                   className="btn btn-primary btn-sm"
@@ -95,13 +110,19 @@ export function AgentsPanel({ slug }: { slug: string }) {
                   <Plus className="size-4" />
                   Invite
                 </button>
-              )}
+              ) : null}
             </li>
           )
         })}
       </ul>
 
-      <InviteByUrl slug={slug} />
+      {!isHost && (
+        <p className="px-4 pb-2 text-base-content/50 text-xs">
+          The meeting's organiser manages agents.
+        </p>
+      )}
+
+      {isHost && <InviteByUrl slug={slug} />}
 
       <StatsForNerds agents={agents} />
 
@@ -195,7 +216,7 @@ function InviteByUrl({ slug }: { slug: string }) {
       </p>
       <input
         className="input input-sm w-full"
-        placeholder="wss://my-agent.example.com/tty"
+        placeholder="my-agent.example.com"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
       />
@@ -242,9 +263,12 @@ function InRoomControls({
   sendControl: (control: AgentControl) => void
 }) {
   const state = useAgentState(participant)
+  const { attributes } = useParticipantAttributes({ participant })
+  const policy = (attributes?.[AGENT_POLICY_ATTRIBUTE] ?? "open") as TurnPolicy
   const deafened = state === "deafened"
   const muted = state === "muted"
   const awake = state === "awake"
+  const gated = policy === "on-mention"
 
   const pokeTip = awake
     ? "Awake — responding freely for a minute"
@@ -258,6 +282,23 @@ function InRoomControls({
 
   return (
     <div className="flex items-center gap-1">
+      <ControlButton
+        tip={
+          gated
+            ? "Hand-raising on — speaks only when addressed or called on"
+            : "Hand-raising off — speaks whenever it has something to say"
+        }
+        active={gated}
+        onClick={() =>
+          sendControl({
+            type: "set-turn-policy",
+            agentId,
+            policy: gated ? "open" : "on-mention",
+          })
+        }
+      >
+        <Hand className="size-4" />
+      </ControlButton>
       <ControlButton
         tip={pokeTip}
         active={awake}

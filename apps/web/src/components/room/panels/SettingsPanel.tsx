@@ -106,10 +106,12 @@ function DeviceSelect({
   if (devices.length === 0) return null
 
   return (
-    <label className="flex flex-col gap-1">
+    <label className="flex min-w-0 flex-col gap-1">
       <span className="text-base-content/70 text-sm">{label}</span>
+      {/* Device labels are long ("Studio Display Microphone (…)") — keep the
+          select at the panel width and truncate rather than overflow. */}
       <select
-        className="select select-sm w-full"
+        className="select select-sm w-full max-w-full truncate"
         value={activeDeviceId}
         onChange={(e) => {
           void setActiveMediaDevice(e.target.value)

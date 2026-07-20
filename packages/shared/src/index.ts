@@ -16,6 +16,9 @@ export const AGENT_STATE_ATTRIBUTE = "agent.state"
 /** Participant attribute set to "1" while a human has their hand raised. */
 export const HAND_ATTRIBUTE = "hand"
 
+/** Participant attribute holding an agent's effective turn policy. */
+export const AGENT_POLICY_ATTRIBUTE = "agent.policy"
+
 /**
  * Participant attribute a client sets (value "active") once its in-browser
  * WASM transcriber is loaded, warmed, and proven real-time. The server
@@ -88,6 +91,15 @@ export const AGENT_VOICES = [
 ] as const
 export type AgentVoice = (typeof AGENT_VOICES)[number]
 
+/**
+ * How an agent decides when to speak.
+ * - "open": replies whenever it hears a turn.
+ * - "on-mention": stays quiet unless addressed by name or called on, and
+ *   raises its hand when it has something to contribute.
+ */
+export const turnPolicySchema = z.enum(["open", "on-mention"])
+export type TurnPolicy = z.infer<typeof turnPolicySchema>
+
 /** True for infrastructure participants that the UI should not render. */
 export function isServiceParticipant(metadata: string | undefined): boolean {
   return parseParticipantMeta(metadata)?.kind === "service"
@@ -107,8 +119,12 @@ export const agentControlSchema = z.object({
     // then returns to its usual policy (gated agents re-gate, open agents
     // are muted).
     "poke",
+    // Host-only: change how the agent takes turns for the rest of the
+    // meeting, overriding the registry default. Carries `policy`.
+    "set-turn-policy",
   ]),
   agentId: z.string(),
+  policy: turnPolicySchema.optional(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>
 
@@ -197,6 +213,8 @@ export const tokenResponseSchema = z.object({
   participantCount: z.number().int().min(0).default(0),
   /** True when the joiner enters the waiting room pending admission. */
   waiting: z.boolean().default(false),
+  /** True for the meeting's organiser — gates the agent settings UI. */
+  isHost: z.boolean().default(false),
   /** Epoch ms when the room was created — anchors the call duration timer. */
   roomStartedAt: z.number().default(0),
 })

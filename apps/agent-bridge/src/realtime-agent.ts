@@ -44,12 +44,10 @@ const instructions = (entry: AgentEntry, context?: string) =>
   "when you need its tools, its memory, or to take an action. Messages " +
   "prefixed [meeting chat] are the room's text chat: read them for context " +
   "and reply in chat (or aloud only if addressed there)." +
-  (entry.turn_policy === "on-mention"
-    ? " Note: your audio is gated — you are only given the floor when " +
-      "someone addresses you by name or calls on you after you raise your " +
-      "hand. Between turns you may be asked silently whether you want the " +
-      "floor; answer those checks honestly and sparingly."
-    : "") +
+  " Your audio may be gated by the meeting's host: while it is, you are " +
+  "only given the floor when someone addresses you by name or calls on you " +
+  "after you raise your hand, and between turns you may be asked silently " +
+  "whether you want the floor — answer those checks honestly and sparingly." +
   (context ? `\n\n${context}` : "")
 
 /**
@@ -93,6 +91,7 @@ export async function runRealtimeAgent(opts: {
         entry.turn_policy === "on-mention"
           ? "server vad, gated (speaks on mention/call-on)"
           : "server vad",
+      "turn policy": entry.turn_policy,
       "echo control": "half-duplex",
       "noise suppression": "room transcriber (gtcrn)",
     } as Record<string, string>,
@@ -161,7 +160,9 @@ export async function runRealtimeAgent(opts: {
   // make sound when we create a response — on a name mention or a call-on.
   // handRaised keeps the badge up until a human acts (idle events after the
   // silent deliberation must not clear it).
-  const gated = entry.turn_policy === "on-mention"
+  // The gate follows the session's turn policy, which the meeting's host can
+  // flip mid-call; `gate` below is installed once and consults it each turn.
+  const gated = () => state.turnPolicy === "on-mention"
   let handRaised = false
   let pokeTimer: ReturnType<typeof setTimeout> | null = null
   let pokedUntil = 0
@@ -176,30 +177,28 @@ export async function runRealtimeAgent(opts: {
     instructions: instructions(entry, opts.context),
     delegate,
     sendChat: callbacks.publishChat,
-    gate: gated
-      ? {
-          // Substring, not word-boundary: STT often renders the name with
-          // possessives or punctuation attached ("Scout's", "scout?").
-          mention: new RegExp(entry.name.replace(/[^a-z0-9]/gi, ""), "i"),
-          onHandRaise: () => {
-            handRaised = true
-            if (!state.muted) callbacks.setState("hand-raised")
-          },
-          // Every decision lands in the room's debug log so a too-quiet
-          // agent can be diagnosed: was the turn even transcribed, and what
-          // did the transcript say?
-          onDecision: (transcript, decision) => {
-            if (ctx.room.name) {
-              postDebugEvent(
-                ctx.room.name,
-                `agent:${entry.id}`,
-                "info",
-                `gate ${decision}: "${transcript.slice(0, 200)}"`,
-              )
-            }
-          },
+    gate: {
+      // Substring, not word-boundary: STT often renders the name with
+      // possessives or punctuation attached ("Scout's", "scout?").
+      mention: new RegExp(entry.name.replace(/[^a-z0-9]/gi, ""), "i"),
+      onHandRaise: () => {
+        handRaised = true
+        if (!state.muted) callbacks.setState("hand-raised")
+      },
+      // Every decision lands in the room's debug log so a too-quiet agent
+      // can be diagnosed: was the turn even transcribed, and what did the
+      // transcript say?
+      onDecision: (transcript, decision) => {
+        if (ctx.room.name) {
+          postDebugEvent(
+            ctx.room.name,
+            `agent:${entry.id}`,
+            "info",
+            `gate ${decision}: "${transcript.slice(0, 200)}"`,
+          )
         }
-      : undefined,
+      },
+    },
     onAudio: (pcm) => {
       if (state.muted) return
       enqueueAudio(new Int16Array(pcm.buffer, pcm.byteOffset, pcm.length / 2))
@@ -225,6 +224,9 @@ export async function runRealtimeAgent(opts: {
   })
   await session.open()
   if (!session.live) throw new Error("realtime session failed to open")
+  // The gate is always installed; an "open" policy simply leaves it lifted,
+  // so the host can switch policies mid-call without reopening the session.
+  session.setGateOpen(!gated())
 
   // ---- inbound audio: room -> session, mixing all human mics --------------
   // Each subscribed mic gets its own resampled-to-24k stream feeding a FIFO;
@@ -330,6 +332,18 @@ export async function runRealtimeAgent(opts: {
       if (control.type === "interrupt") {
         hardCut()
         callbacks.setState(idleState())
+      } else if (control.type === "set-turn-policy" && control.policy) {
+        // The host changed how this agent takes turns; apply it immediately
+        // (the worker owns state.turnPolicy and the published attribute).
+        handRaised = false
+        session.setGateOpen(control.policy === "open")
+        callbacks.setState(idleState())
+        stats.config["turn detection"] =
+          control.policy === "on-mention"
+            ? "server vad, gated (speaks on mention/call-on)"
+            : "server vad"
+        stats.config["turn policy"] = control.policy
+        publishStats()
       } else if (control.type === "call-on") {
         handRaised = false
         session.callOn()
@@ -346,7 +360,7 @@ export async function runRealtimeAgent(opts: {
         pokeTimer = setTimeout(() => {
           pokeTimer = null
           pokedUntil = 0
-          if (gated) {
+          if (gated()) {
             session.setGateOpen(false)
           } else {
             // Open-policy agents have no gate to fall back to — mute them.

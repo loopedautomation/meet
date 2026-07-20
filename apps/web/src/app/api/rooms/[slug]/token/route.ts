@@ -178,6 +178,9 @@ export async function POST(request: Request, { params }: Params) {
     identity,
     participantCount,
     waiting,
+    // Only the creator organises the meeting's agents. In open deployments
+    // (no host gate) the first human in acts as host, as before.
+    isHost: isCreator || (!roomMeta.hostKey && isHost),
     roomStartedAt,
   })
 }
