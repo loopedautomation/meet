@@ -5,6 +5,7 @@ import { Hono } from "hono"
 import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk"
 import {
   type DynamicAgentSpec,
+  normalizeAgentUrl,
   probeAgent,
   registerDynamicAgent,
 } from "./dynamic.js"
@@ -54,6 +55,12 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   const { room, id } = c.req.param()
   const entry = loadRegistry().find((a) => a.id === id)
   if (!entry) return c.json({ error: "unknown agent" }, 404)
+  // Optional per-invite interaction-mode override (realtime <-> pipeline);
+  // the worker applies it when resolving the dispatch.
+  const body = (await c.req.json().catch(() => ({}))) as { mode?: string }
+  if (body.mode && body.mode !== "realtime" && body.mode !== "pipeline") {
+    return c.json({ error: "unknown mode" }, 400)
+  }
 
   const participants = await rooms.listParticipants(room).catch(() => [])
   if (participants.some((p) => p.identity === `agent-${id}`)) {
@@ -61,7 +68,7 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   }
 
   await dispatch.createDispatch(room, "looped-bridge", {
-    metadata: JSON.stringify({ agentId: id }),
+    metadata: JSON.stringify({ agentId: id, mode: body.mode }),
   })
   return c.json({ ok: true })
 })
@@ -81,12 +88,14 @@ app.post("/rooms/:room/agents", async (c) => {
   if (body.voice && !AGENT_VOICES.includes(body.voice as AgentVoice)) {
     return c.json({ error: "unknown voice" }, 400)
   }
+  const url = normalizeAgentUrl(body.url)
+  if (!url) return c.json({ error: "invalid url" }, 400)
 
-  const probe = await probeAgent(body.url, body.token ?? "")
+  const probe = await probeAgent(url, body.token ?? "")
   if ("error" in probe) return c.json({ error: probe.error }, 422)
 
   const spec: DynamicAgentSpec = {
-    url: body.url,
+    url,
     token: body.token ?? "",
     name: body.name?.trim() || probe.name,
     voice: body.voice,

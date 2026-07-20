@@ -148,6 +148,28 @@ Repo layout:
 - `packages/shared` — zod schemas for data topics, participant metadata, DTOs
 - `examples/demo-agent` — the Scout demo agent
 
+### In-browser transcription (optional)
+
+Participants' browsers can transcribe their own mics locally (sherpa-onnx
+WASM), offloading the server transcriber. The official WASM bundles are
+pthread builds, so the web app serves COOP/COEP headers (cross-origin
+isolation) — fine for this self-contained app, but note it if you embed
+cross-origin resources. To enable, install the WASM ASR
+bundle into `apps/web/public/stt/`:
+
+```bash
+STT_WASM_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.4/sherpa-onnx-wasm-simd-v1.13.4-en-asr-zipformer.tar.bz2 \
+  apps/web/scripts/fetch-stt-model.sh
+```
+
+Without the bundle nothing changes — clients probe `/stt/`, find nothing, and
+the server transcribes everyone. A client advertises the `stt.local`
+participant attribute only once its engine is running; the bridge pauses
+server STT for that mic and resumes it the instant the attribute clears
+(engine crash, stall, tab throttling). Client-published finals are mirrored
+into the transcript store by the bridge, so agent meeting context is
+unaffected. Users can opt out per-device via `localStorage.localStt = "false"`.
+
 ### Debugging a running deployment
 
 The agent-bridge control API exposes debug endpoints (authenticated with

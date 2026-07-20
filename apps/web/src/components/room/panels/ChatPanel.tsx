@@ -9,10 +9,34 @@ import { useEffect, useRef, useState } from "react"
 import {
   completeMention,
   MentionPicker,
+  matchMentions,
   mentionQuery,
   useMentionables,
 } from "@/components/room/panels/MentionPicker"
 import { $chatMessages, addChatMessage } from "@/stores/roomData"
+
+/**
+ * Render message text with URLs as real links. `break-all` on the anchor so
+ * long URLs wrap inside the bubble instead of overflowing it.
+ */
+function linkify(text: string): React.ReactNode[] {
+  return text.split(/(https?:\/\/\S+)/g).map((part, i) =>
+    /^https?:\/\//.test(part) ? (
+      <a
+        // biome-ignore lint/suspicious/noArrayIndexKey: parts are positional
+        key={i}
+        href={part}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="link break-all"
+      >
+        {part}
+      </a>
+    ) : (
+      part
+    ),
+  )
+}
 
 export function ChatPanel() {
   const { localParticipant } = useLocalParticipant()
@@ -21,12 +45,33 @@ export function ChatPanel() {
   const bottomRef = useRef<HTMLDivElement>(null)
   const mentionables = useMentionables()
   const query = mentionQuery(draft)
+  const matches = query !== null ? matchMentions(mentionables, query) : []
+  // Keyboard navigation through the mention picker; reset as the query moves.
+  const [active, setActive] = useState(0)
+  // biome-ignore lint/correctness/useExhaustiveDependencies: query drives the reset
+  useEffect(() => setActive(0), [query])
+
+  const pickerKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (query === null || matches.length === 0) return
+    if (e.key === "ArrowDown") {
+      e.preventDefault()
+      setActive((i) => (i + 1) % matches.length)
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault()
+      setActive((i) => (i - 1 + matches.length) % matches.length)
+    } else if (e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault()
+      setDraft((d) => completeMention(d, matches[active].name))
+    }
+  }
 
   const { send } = useDataChannel(DataTopic.Chat)
 
+  // Follow the conversation: jump on open, glide on each new message.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages drives the scroll
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [])
+  }, [messages])
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -55,23 +100,54 @@ export function ChatPanel() {
             No messages yet. Mention an agent with @Name to ask it in text.
           </li>
         )}
-        {messages.map((m) => (
-          <li key={m.id} className="text-sm">
-            <span className="font-medium">{m.fromName}</span>{" "}
-            <span className="text-base-content/50 text-xs">
-              {new Date(m.at).toLocaleTimeString()}
-            </span>
-            <p className="text-base-content/90">{m.text}</p>
-          </li>
-        ))}
+        {messages.map((m, i) => {
+          const own = m.from === localParticipant.identity
+          // Consecutive messages from the same sender within the same
+          // displayed minute share one header — order stays untouched, only
+          // the repeated name/stamp is dropped.
+          const prev = messages[i - 1]
+          const minute = (at: number) => Math.floor(at / 60_000)
+          const grouped =
+            prev && prev.from === m.from && minute(prev.at) === minute(m.at)
+          return (
+            <li
+              key={m.id}
+              className={`chat ${own ? "chat-end" : "chat-start"} ${grouped ? "!pt-0" : ""}`}
+            >
+              {!grouped && (
+                <div className="chat-header text-base-content/50 text-xs">
+                  {!own && (
+                    <span className="mr-1 font-medium text-base-content">
+                      {m.fromName}
+                    </span>
+                  )}
+                  <time>
+                    {new Date(m.at).toLocaleTimeString([], {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                    })}
+                  </time>
+                </div>
+              )}
+              <div
+                className={`chat-bubble min-w-0 max-w-[85%] whitespace-pre-wrap break-words text-sm ${
+                  own ? "chat-bubble-primary" : ""
+                }`}
+              >
+                {linkify(m.text)}
+              </div>
+            </li>
+          )
+        })}
         <div ref={bottomRef} />
       </ul>
       <form onSubmit={handleSend} className="relative flex gap-2 p-3">
         {query !== null && (
           <MentionPicker
-            query={query}
-            candidates={mentionables}
+            matches={matches}
+            active={active}
             onPick={(name) => setDraft((d) => completeMention(d, name))}
+            onHover={setActive}
           />
         )}
         <input
@@ -79,6 +155,7 @@ export function ChatPanel() {
           placeholder="Send a message — @ to mention"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={pickerKeys}
         />
         <button
           type="submit"

@@ -23,6 +23,8 @@ export function ToastContainer(props: Partial<ToastContainerProps>) {
   return (
     <ReactToastifyContainer
       position="top-center"
+      // Sit below the meeting's control bar instead of covering it.
+      style={{ top: "4.5rem" }}
       hideProgressBar={true}
       closeOnClick={true}
       autoClose={3000}

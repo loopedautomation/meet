@@ -4,16 +4,18 @@ import {
   useConnectionQualityIndicator,
   useLocalParticipant,
   useMediaDeviceSelect,
+  useParticipantAttributes,
   useParticipants,
   useRoomContext,
 } from "@livekit/components-react"
-import { parseParticipantMeta } from "@meet/shared"
+import { HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionQuality } from "livekit-client"
 import {
   Bot,
   Check,
   ChevronDown,
+  Hand,
   Link as LinkIcon,
   LogOut,
   MessageSquare,
@@ -21,6 +23,7 @@ import {
   MicOff,
   MonitorUp,
   ScrollText,
+  Settings,
   Sparkles,
   Users,
   Video,
@@ -28,11 +31,8 @@ import {
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import {
-  readBlurPref,
-  useBackgroundBlur,
-  writeBlurPref,
-} from "@/hooks/useBackgroundBlur"
+import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
+import { $blur, setBlur } from "@/stores/blur"
 import { $openPanel, togglePanel } from "@/stores/panels"
 
 export function ControlBar({
@@ -58,8 +58,18 @@ export function ControlBar({
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
   ).length
 
-  const [blur, setBlur] = useState(readBlurPref)
+  const blur = useStore($blur)
   useBackgroundBlur(blur)
+
+  const { attributes } = useParticipantAttributes({
+    participant: localParticipant,
+  })
+  const handRaised = attributes?.[HAND_ATTRIBUTE] === "1"
+  const toggleHand = () => {
+    void localParticipant
+      .setAttributes({ [HAND_ATTRIBUTE]: handRaised ? "" : "1" })
+      .catch(() => undefined)
+  }
 
   // Warn once per dip when this participant's own connection degrades.
   const { quality } = useConnectionQualityIndicator({
@@ -149,19 +159,20 @@ export function ControlBar({
   return (
     <div className="flex items-center justify-between gap-2 border-base-300 border-b bg-base-100 px-4 py-3">
       <div className="hidden items-center gap-2 sm:flex">
-        <span className="font-mono text-base-content/60 text-sm">{slug}</span>
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm"
-          onClick={copyLink}
-        >
-          {copied ? (
-            <Check className="size-4 text-success" />
-          ) : (
-            <LinkIcon className="size-4" />
-          )}
-          {copied ? "Copied" : "Copy link"}
-        </button>
+        <div className="tooltip tooltip-bottom" data-tip="Copy meeting link">
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm font-mono"
+            onClick={copyLink}
+          >
+            {copied ? (
+              <Check className="size-4 text-success" />
+            ) : (
+              <LinkIcon className="size-4" />
+            )}
+            {copied ? "Copied" : slug}
+          </button>
+        </div>
         {startedAt ? <CallTimer startedAt={startedAt} /> : null}
       </div>
 
@@ -214,14 +225,11 @@ export function ControlBar({
             <li>
               <button
                 type="button"
-                onClick={() => {
-                  const next = !blur
-                  setBlur(next)
-                  writeBlurPref(next)
-                }}
+                className="whitespace-nowrap"
+                onClick={() => setBlur(!blur)}
               >
                 <Sparkles className="size-4" />
-                {blur ? "Disable background blur" : "Blur background"}
+                Blur background
                 {blur && <Check className="size-4 text-success" />}
               </button>
             </li>
@@ -246,6 +254,19 @@ export function ControlBar({
             <MonitorUp className="size-5" />
           </button>
         </div>
+        <div
+          className="tooltip tooltip-bottom"
+          data-tip={handRaised ? "Lower hand" : "Raise hand"}
+        >
+          <button
+            type="button"
+            className={`btn btn-circle ${handRaised ? "btn-success" : "btn-neutral"}`}
+            onClick={toggleHand}
+            aria-label={handRaised ? "Lower hand" : "Raise hand"}
+          >
+            <Hand className="size-5" />
+          </button>
+        </div>
         <div className="tooltip tooltip-bottom" data-tip="Leave meeting">
           <button
             type="button"
@@ -259,6 +280,17 @@ export function ControlBar({
       </div>
 
       <div className="flex items-center gap-1">
+        {/* Agents first — it's the most frequently used panel. */}
+        <div className="tooltip tooltip-bottom" data-tip="Agents">
+          <button
+            type="button"
+            className={`btn btn-circle ${openPanel === "agents" ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => togglePanel("agents")}
+            aria-label="Agents"
+          >
+            <Bot className="size-5" />
+          </button>
+        </div>
         <div className="tooltip tooltip-bottom" data-tip="Participants">
           <button
             type="button"
@@ -274,16 +306,6 @@ export function ControlBar({
             <Users className="size-5" />
           </button>
         </div>
-        <div className="tooltip tooltip-bottom" data-tip="Agents">
-          <button
-            type="button"
-            className={`btn btn-circle ${openPanel === "agents" ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => togglePanel("agents")}
-            aria-label="Agents"
-          >
-            <Bot className="size-5" />
-          </button>
-        </div>
         <div className="tooltip tooltip-bottom" data-tip="Transcript">
           <button
             type="button"
@@ -294,7 +316,7 @@ export function ControlBar({
             <ScrollText className="size-5" />
           </button>
         </div>
-        <div className="tooltip tooltip-left" data-tip="Chat">
+        <div className="tooltip tooltip-bottom" data-tip="Chat">
           <button
             type="button"
             className={`btn btn-circle ${openPanel === "chat" ? "btn-primary" : "btn-ghost"}`}
@@ -302,6 +324,16 @@ export function ControlBar({
             aria-label="Chat"
           >
             <MessageSquare className="size-5" />
+          </button>
+        </div>
+        <div className="tooltip tooltip-bottom" data-tip="Settings">
+          <button
+            type="button"
+            className={`btn btn-circle ${openPanel === "settings" ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => togglePanel("settings")}
+            aria-label="Settings"
+          >
+            <Settings className="size-5" />
           </button>
         </div>
       </div>

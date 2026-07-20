@@ -34,28 +34,41 @@ export function completeMention(draft: string, name: string): string {
   return draft.replace(/@[\w-]*$/, `@${name} `)
 }
 
+/** The visible (capped) match list — shared with the input's key handler so
+ * arrow/enter navigation and the rendered rows never disagree. */
+export function matchMentions(
+  candidates: Mentionable[],
+  query: string,
+): Mentionable[] {
+  return candidates
+    .filter((c) => c.name.toLowerCase().startsWith(query.toLowerCase()))
+    .slice(0, 6)
+}
+
 export function MentionPicker({
-  query,
-  candidates,
+  matches,
+  active,
   onPick,
+  onHover,
 }: {
-  query: string
-  candidates: Mentionable[]
+  matches: Mentionable[]
+  active: number
   onPick: (name: string) => void
+  onHover: (index: number) => void
 }) {
-  const matches = candidates.filter((c) =>
-    c.name.toLowerCase().startsWith(query.toLowerCase()),
-  )
   if (matches.length === 0) return null
 
   return (
     <ul className="absolute bottom-full left-0 z-20 mb-1 w-56 rounded-box bg-base-100 p-1 shadow-lg ring-1 ring-base-300">
-      {matches.slice(0, 6).map((c) => (
+      {matches.map((c, i) => (
         <li key={c.name}>
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-field px-2 py-1.5 text-left text-sm hover:bg-base-200"
+            className={`flex w-full items-center gap-2 rounded-field px-2 py-1.5 text-left text-sm ${
+              i === active ? "bg-base-200" : ""
+            }`}
             onClick={() => onPick(c.name)}
+            onMouseEnter={() => onHover(i)}
           >
             {c.isAgent ? (
               <Bot className="size-4 text-primary" />

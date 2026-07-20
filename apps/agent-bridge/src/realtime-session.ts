@@ -35,7 +35,37 @@ export type RealtimeSessionOptions = {
   onSpeaking?: () => void
   onIdle?: () => void
   onError?: (message: string) => void
+  /**
+   * Deterministic turn gate. When set, the model NEVER auto-responds: each
+   * committed turn is transcribed, and audio is only produced when the turn
+   * matches `mention` (addressed by name) or callOn() is invoked. Unaddressed
+   * turns get a silent text-only deliberation; if the model reports it has
+   * something important, `onHandRaise` fires and a human decides.
+   */
+  gate?: {
+    mention: RegExp
+    onHandRaise: () => void
+    /**
+     * When false, even a name mention doesn't grant the floor — the agent
+     * raises its hand and waits for callOn() (turn_policy "raise-hand").
+     * Defaults to true (mentions speak, turn_policy "on-mention").
+     */
+    mentionSpeaks?: () => boolean
+    /** Observability: every gate decision, with the transcript that drove it. */
+    onDecision?: (
+      transcript: string,
+      decision: "speak" | "deliberate" | "raise-hand",
+    ) => void
+  }
 }
+
+/** Silent text-only check run after unaddressed turns when gated. */
+const DELIBERATE_INSTRUCTIONS =
+  "Do not speak. Silently decide: given what was just said, do you have " +
+  "something genuinely important to contribute — a correction, a direct " +
+  "answer to a question aimed at you, or critical information? Reply with " +
+  "exactly PASS if not (this is almost always the answer), or RAISE_HAND " +
+  "if yes. If you have a useful aside, you may also use send_chat_message."
 
 function toBase64(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("base64")
@@ -104,12 +134,18 @@ export class RealtimeSession {
           audio: {
             input: {
               format: { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE },
+              // Gated sessions need the turn's text to check for a mention.
+              ...(this.#opts.gate
+                ? { transcription: { model: "gpt-4o-mini-transcribe" } }
+                : {}),
               // Server-side VAD is what makes this feel like a conversation:
               // the model decides when a turn ended and interrupts itself
-              // when the human starts talking again.
+              // when the human starts talking again. With a gate, VAD still
+              // segments turns but responses are created only by us — the
+              // model cannot decide to speak on its own.
               turn_detection: {
                 type: "server_vad",
-                create_response: true,
+                create_response: !this.#opts.gate,
                 interrupt_response: true,
               },
             },
@@ -199,6 +235,43 @@ export class RealtimeSession {
         this.#responding = false
         this.#opts.onInterrupt()
         break
+      case "conversation.item.input_audio_transcription.completed": {
+        // Gated mode: a turn just finished. Addressed by name → speak.
+        // Otherwise run a silent deliberation; a RAISE_HAND answer surfaces
+        // as the hand-raised badge for a human to act on.
+        const gate = this.#opts.gate
+        if (!gate || this.#gateOpen) break
+        const transcript = String(event.transcript ?? "")
+        if (!transcript.trim()) break
+        const mentioned = gate.mention.test(transcript)
+        const speaks = mentioned && (gate.mentionSpeaks?.() ?? true)
+        if (mentioned && !speaks) {
+          // Addressed by name under raise-hand policy: it clearly has the
+          // floor to ask for — no deliberation needed, hand goes straight up.
+          gate.onDecision?.(transcript, "raise-hand")
+          gate.onHandRaise()
+          break
+        }
+        gate.onDecision?.(transcript, speaks ? "speak" : "deliberate")
+        if (speaks) {
+          if (!this.#responding) this.#send({ type: "response.create" })
+        } else if (!this.#responding) {
+          this.#send({
+            type: "response.create",
+            response: {
+              output_modalities: ["text"],
+              instructions: DELIBERATE_INSTRUCTIONS,
+            },
+          })
+        }
+        break
+      }
+      case "response.output_text.done":
+        // Only gated deliberations produce text output.
+        if (String(event.text ?? "").includes("RAISE_HAND")) {
+          this.#opts.gate?.onHandRaise()
+        }
+        break
       case "response.function_call_arguments.done":
         if (event.name === CHAT_TOOL) {
           this.#sendChatMessage({
@@ -266,6 +339,45 @@ export class RealtimeSession {
         type: "message",
         role: "user",
         content: [{ type: "input_text", text: line }],
+      },
+    })
+  }
+
+  #gateOpen = false
+
+  /**
+   * Temporarily lift the gate (zap): the model auto-responds like an
+   * ungated session until the gate is restored.
+   */
+  setGateOpen(open: boolean) {
+    if (!this.#opts.gate || this.#gateOpen === open) return
+    this.#gateOpen = open
+    this.#send({
+      type: "session.update",
+      session: {
+        type: "realtime",
+        audio: {
+          input: {
+            turn_detection: {
+              type: "server_vad",
+              create_response: open,
+              interrupt_response: true,
+            },
+          },
+        },
+      },
+    })
+  }
+
+  /** A human called on the agent: give it the floor for one response. */
+  callOn() {
+    if (this.#responding) return
+    this.#send({
+      type: "response.create",
+      response: {
+        instructions:
+          "You raised your hand and have now been called on. Briefly say " +
+          "what you wanted to contribute, then yield the floor.",
       },
     })
   }

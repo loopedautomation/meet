@@ -5,3 +5,30 @@
 .tooltip[data-tip]:before {
   font-size: 0.75rem;
 }
+
+/* A tooltip must win against everything it can overlap — side panels, the
+   control bar, video tiles, the draggable self-view, toasts. The trigger is
+   promoted only while hovered/focused: a resting z-index would reorder the
+   whole app, but without one a later sibling paints over the tip and clips
+   it. The tip itself sits above every z-index used in the app (max 50). */
+.tooltip:hover,
+.tooltip:focus-within,
+.tooltip.tooltip-open {
+  position: relative;
+  z-index: 999;
+}
+
+.tooltip > .tooltip-content,
+.tooltip[data-tip]:before,
+.tooltip[data-tip]:after {
+  z-index: 999;
+}
+
+/* Keep a tip narrower than the side panel (20rem) so it wraps instead of
+   running past the edge, and let long text break rather than force width. */
+.tooltip > .tooltip-content,
+.tooltip[data-tip]:before {
+  max-width: 16rem;
+  white-space: normal;
+  text-wrap: balance;
+}

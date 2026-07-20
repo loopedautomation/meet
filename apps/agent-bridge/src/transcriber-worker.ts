@@ -13,7 +13,10 @@ import {
 import {
   type ParticipantMeta,
   parseParticipantMeta,
+  SELF_TRANSCRIBE_ACTIVE,
+  SELF_TRANSCRIBE_ATTRIBUTE,
   TRANSCRIPTION_TOPIC,
+  tidyShoutyTranscript,
 } from "@meet/shared"
 import { postDebugEvent, postTranscriptSegment } from "./meeting-context.js"
 import {
@@ -74,19 +77,6 @@ export default defineAgent({
       | (() => Denoiser)
       | null
       | undefined
-    // Kick off the heavyweight finalizer load now that this process serves a
-    // real room; interim text flows immediately and finals upgrade once the
-    // model is ready (streaming text is used until then).
-    if (!ctx.proc.userData.finalizerLoading) {
-      ctx.proc.userData.finalizerLoading = loadFinalizer()
-    }
-    let finalizer: Finalizer | null = null
-    void (ctx.proc.userData.finalizerLoading as Promise<Finalizer | null>).then(
-      (f) => {
-        finalizer = f
-      },
-    )
-
     try {
       await ctx.connect()
     } catch (err) {
@@ -109,13 +99,39 @@ export default defineAgent({
     const local = ctx.room.localParticipant
     if (!local) throw new Error("no local participant")
 
+    // Load the heavyweight finalizer only once the room is connected. Its
+    // construction is a blocking native call that stalls the event loop for
+    // seconds; starting it before connect starves the FFI handshake and
+    // fails the join ("handle not found"). Interim text flows immediately
+    // and finals upgrade once the model is ready.
+    if (!ctx.proc.userData.finalizerLoading) {
+      ctx.proc.userData.finalizerLoading = loadFinalizer()
+    }
+    let finalizer: Finalizer | null = null
+    void (ctx.proc.userData.finalizerLoading as Promise<Finalizer | null>).then(
+      (f) => {
+        finalizer = f
+      },
+    )
+
     let nextSegment = 0
+
+    // Active server-side transcription loops, keyed by trackSid, so a
+    // participant turning on self-transcription can hand its track off (and
+    // reclaim it later) without leaking loops.
+    const running = new Map<
+      string,
+      { identity: string; abort: AbortController }
+    >()
 
     const transcribe = (
       track: RemoteTrack,
       participant: RemoteParticipant,
       trackSid: string,
     ) => {
+      if (running.has(trackSid)) return
+      const abort = new AbortController()
+      running.set(trackSid, { identity: participant.identity, abort })
       const stream = new AudioStream(track, {
         sampleRate: STT_SAMPLE_RATE,
         numChannels: 1,
@@ -132,10 +148,13 @@ export default defineAgent({
       }
 
       const publish = async (
-        text: string,
+        rawText: string,
         segmentId: string,
         final: boolean,
       ) => {
+        // Streaming zipformer text is ALL CAPS; Parakeet finals are mixed
+        // case and pass through untouched.
+        const text = tidyShoutyTranscript(rawText)
         try {
           const writer = await local.streamText({
             topic: TRANSCRIPTION_TOPIC,
@@ -164,6 +183,9 @@ export default defineAgent({
 
       void (async () => {
         const reader = stream.getReader()
+        abort.signal.addEventListener("abort", () => {
+          void reader.cancel().catch(() => {})
+        })
         let segmentId = `seg-${participant.identity}-${nextSegment++}`
         let lastInterim = 0
         let lastText = ""
@@ -193,7 +215,7 @@ export default defineAgent({
         try {
           while (true) {
             const { value: frame, done } = await reader.read()
-            if (done) break
+            if (done || abort.signal.aborted) break
             let samples: Float32Array<ArrayBufferLike> = new Float32Array(
               frame.data.length,
             )
@@ -238,14 +260,39 @@ export default defineAgent({
           const text = stt.text()
           if (text) await publish(finalText(text), segmentId, true)
           stt.free()
+          if (running.get(trackSid)?.abort === abort) running.delete(trackSid)
         }
       })()
     }
 
-    const shouldTranscribe = (participant: RemoteParticipant) => {
+    const isHuman = (participant: RemoteParticipant) => {
       const meta = parseParticipantMeta(participant.metadata)
       // Agents publish their own transcriptions; other services have no voice.
       return !meta || meta.kind === "human"
+    }
+
+    const selfTranscribing = (participant: RemoteParticipant) =>
+      participant.attributes?.[SELF_TRANSCRIBE_ATTRIBUTE] ===
+      SELF_TRANSCRIBE_ACTIVE
+
+    const shouldTranscribe = (participant: RemoteParticipant) =>
+      isHuman(participant) && !selfTranscribing(participant)
+
+    const stopFor = (identity: string) => {
+      for (const [sid, entry] of running) {
+        if (entry.identity !== identity) continue
+        entry.abort.abort()
+        running.delete(sid)
+      }
+    }
+
+    const startFor = (participant: RemoteParticipant) => {
+      for (const pub of participant.trackPublications.values()) {
+        const t = pub.track
+        if (t && t.kind === TrackKind.KIND_AUDIO) {
+          transcribe(t, participant, pub.sid ?? t.sid ?? "")
+        }
+      }
     }
 
     ctx.room.on("trackSubscribed", (track, pub, participant) => {
@@ -253,14 +300,70 @@ export default defineAgent({
       if (!shouldTranscribe(participant)) return
       transcribe(track, participant, pub.sid ?? track.sid ?? "")
     })
+    ctx.room.on("trackUnsubscribed", (_track, pub) => {
+      const sid = pub.sid
+      if (!sid) return
+      running.get(sid)?.abort.abort()
+      running.delete(sid)
+    })
+    ctx.room.on("participantDisconnected", (participant) => {
+      stopFor(participant.identity)
+    })
+    // Clients hand their mic off to in-browser STT by setting the
+    // self-transcribe attribute, and reclaim server transcription by
+    // clearing it (e.g. their WASM engine crashed mid-call).
+    ctx.room.on("participantAttributesChanged", (changed, participant) => {
+      if (!(SELF_TRANSCRIBE_ATTRIBUTE in changed)) return
+      const remote = ctx.room.remoteParticipants.get(participant.identity)
+      if (!remote || !isHuman(remote)) return
+      if (selfTranscribing(remote)) {
+        stopFor(remote.identity)
+        postDebugEvent(
+          ctx.room.name ?? "",
+          "transcriber",
+          "info",
+          `${remote.identity} self-transcribing; server STT paused`,
+        )
+      } else {
+        startFor(remote)
+        postDebugEvent(
+          ctx.room.name ?? "",
+          "transcriber",
+          "info",
+          `${remote.identity} fell back to server STT`,
+        )
+      }
+    })
+
+    // Self-transcribing clients publish their own segments on the
+    // transcription topic; mirror their finals into the control API's
+    // transcript store so agent meeting context stays complete without
+    // clients ever holding the internal bearer token.
+    ctx.room.registerTextStreamHandler(TRANSCRIPTION_TOPIC, (reader, info) => {
+      void (async () => {
+        try {
+          if (reader.info.attributes?.["lk.transcription_final"] !== "true") {
+            return
+          }
+          const sender = ctx.room.remoteParticipants.get(info.identity)
+          if (!sender || !isHuman(sender) || !selfTranscribing(sender)) return
+          const text = await reader.readAll()
+          if (text && ctx.room.name) {
+            postTranscriptSegment(ctx.room.name, {
+              at: Date.now(),
+              speaker: sender.name || sender.identity,
+              text,
+            })
+          }
+        } catch {
+          // malformed or interrupted stream; nothing to store
+        }
+      })()
+    })
+
     for (const participant of ctx.room.remoteParticipants.values()) {
       if (!shouldTranscribe(participant)) continue
-      for (const pub of participant.trackPublications.values()) {
-        const t = pub.track
-        if (t && t.kind === TrackKind.KIND_AUDIO) {
-          transcribe(t, participant, pub.sid ?? t.sid ?? "")
-        }
-      }
+      startFor(participant)
     }
   },
 })

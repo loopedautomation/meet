@@ -5,6 +5,7 @@ import { X } from "lucide-react"
 import { AgentsPanel } from "@/components/room/panels/AgentsPanel"
 import { ChatPanel } from "@/components/room/panels/ChatPanel"
 import { ParticipantsPanel } from "@/components/room/panels/ParticipantsPanel"
+import { SettingsPanel } from "@/components/room/panels/SettingsPanel"
 import { TranscriptPanel } from "@/components/room/panels/TranscriptPanel"
 import { $openPanel } from "@/stores/panels"
 
@@ -13,6 +14,7 @@ const titles = {
   transcript: "Transcript",
   chat: "Chat",
   participants: "Participants",
+  settings: "Settings",
 } as const
 
 export function PanelHost({ slug }: { slug: string }) {
@@ -38,6 +40,7 @@ export function PanelHost({ slug }: { slug: string }) {
         {openPanel === "transcript" && <TranscriptPanel />}
         {openPanel === "chat" && <ChatPanel />}
         {openPanel === "participants" && <ParticipantsPanel slug={slug} />}
+        {openPanel === "settings" && <SettingsPanel />}
       </div>
     </aside>
   )

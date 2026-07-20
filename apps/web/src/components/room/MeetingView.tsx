@@ -18,6 +18,11 @@ import { ScreenShareTile } from "@/components/room/ScreenShareTile"
 import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { useKnockAlerts } from "@/hooks/useKnockAlerts"
+import {
+  readLocalSttPref,
+  useLocalTranscription,
+} from "@/hooks/useLocalTranscription"
+import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -32,6 +37,8 @@ export function MeetingView({
   useJoinLeaveSounds()
   useKnockAlerts(slug)
   useAwayOnHidden()
+  useLocalTranscription(readLocalSttPref())
+  useMutedSpeakingToast()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },

@@ -4,7 +4,11 @@ import { AccessToken, TokenVerifier } from "livekit-server-sdk"
 import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
-import { isValidRoomSlug } from "@/lib/server/slug"
+import {
+  deriveHostKey,
+  isRecreatableRoomSlug,
+  isValidRoomSlug,
+} from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
 
@@ -19,16 +23,38 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ error: "displayName required" }, { status: 400 })
   }
 
-  // The room must exist: links to ended meetings 404 instead of silently
-  // recreating the room, which would bypass the creation gate.
-  const existing = await roomService()
+  // Meeting codes are durable: LiveKit garbage-collects empty rooms after a
+  // few minutes, so a link recreates its room on demand — in the not-started
+  // state, where only the creator's derived host key opens it. A guessed
+  // code therefore yields nothing but an empty room the GC sweeps back up.
+  let existing = await roomService()
     .listRooms([slug])
     .catch(() => [])
   if (existing.length === 0) {
-    return NextResponse.json(
-      { error: "meeting not found or has ended" },
-      { status: 404 },
-    )
+    if (!isRecreatableRoomSlug(slug)) {
+      return NextResponse.json(
+        { error: "meeting not found or has ended" },
+        { status: 404 },
+      )
+    }
+    const recreated = await roomService()
+      .createRoom({
+        name: slug,
+        emptyTimeout: 300,
+        departureTimeout: 60,
+        metadata: JSON.stringify({
+          hostKey: deriveHostKey(slug),
+          started: false,
+        }),
+      })
+      .catch(() => null)
+    if (!recreated) {
+      return NextResponse.json(
+        { error: "meeting not found or has ended" },
+        { status: 404 },
+      )
+    }
+    existing = [recreated]
   }
 
   // The meeting starts when its creator arrives. Room metadata carries the
@@ -36,7 +62,7 @@ export async function POST(request: Request, { params }: Params) {
   // the key flips it. Everyone earlier gets 425 and the client polls.
   // (Rooms without metadata predate this gate — treat them as started.)
   const room = existing[0]
-  let roomMeta: { hostKey?: string; started?: boolean } = {}
+  let roomMeta: { hostKey?: string; started?: boolean; startedAt?: number } = {}
   try {
     roomMeta = JSON.parse(room.metadata || "{}")
   } catch {}
@@ -46,8 +72,12 @@ export async function POST(request: Request, { params }: Params) {
     return NextResponse.json({ notStarted: true }, { status: 425 })
   }
   if (!started && isCreator) {
+    // Stamp the start moment: the call timer anchors here, so a meeting
+    // that reconvenes in a reused (not yet GC'd) room starts from 0:00
+    // instead of inheriting the room's creation time.
+    roomMeta = { ...roomMeta, started: true, startedAt: Date.now() }
     await roomService()
-      .updateRoomMetadata(slug, JSON.stringify({ ...roomMeta, started: true }))
+      .updateRoomMetadata(slug, JSON.stringify(roomMeta))
       .catch(() => undefined)
   }
 
@@ -106,6 +136,16 @@ export async function POST(request: Request, { params }: Params) {
       // invalid/expired proof — knock like anyone else
     }
   }
+  // A fresh occurrence: the first human entering (not knocking) resets the
+  // call timer — covers both a first start and a meeting reconvening in a
+  // room the GC hadn't swept yet.
+  if (!waiting && participantCount === 0) {
+    roomMeta = { ...roomMeta, startedAt: Date.now() }
+    await roomService()
+      .updateRoomMetadata(slug, JSON.stringify(roomMeta))
+      .catch(() => undefined)
+  }
+
   const identity = `user-${nanoid(10)}`
   const meta: ParticipantMeta = { kind: waiting ? "waiting" : "human" }
   const token = new AccessToken(apiKey, apiSecret, {
@@ -126,8 +166,11 @@ export async function POST(request: Request, { params }: Params) {
     canPublishData: !waiting,
   })
 
+  // Prefer the stamped start moment; rooms predating it (or open
+  // deployments without the host gate) fall back to room creation time.
   const roomStartedAt =
-    Number(room.creationTimeMs ?? 0) || Number(room.creationTime ?? 0) * 1000
+    roomMeta.startedAt ??
+    (Number(room.creationTimeMs ?? 0) || Number(room.creationTime ?? 0) * 1000)
 
   return NextResponse.json({
     token: await token.toJwt(),
@@ -135,6 +178,9 @@ export async function POST(request: Request, { params }: Params) {
     identity,
     participantCount,
     waiting,
+    // Only the creator organises the meeting's agents. In open deployments
+    // (no host gate) the first human in acts as host, as before.
+    isHost: isCreator || (!roomMeta.hostKey && isHost),
     roomStartedAt,
   })
 }

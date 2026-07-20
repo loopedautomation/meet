@@ -1,0 +1,6 @@
+# Large WASM/model binaries are fetched via scripts/fetch-stt-model.sh, not
+# committed. The worklet and worker JS are source-controlled.
+sherpa-onnx-wasm-main-asr.js
+sherpa-onnx-wasm-main-asr.wasm
+sherpa-onnx-wasm-main-asr.data
+sherpa-onnx-asr.js

@@ -9,6 +9,7 @@ import { toast } from "react-toastify"
 import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
+import { $isHost } from "@/stores/host"
 
 const queryClient = new QueryClient()
 
@@ -75,6 +76,7 @@ export function RoomClient({
         if (!res.ok) throw new Error(`token request failed (${res.status})`)
         const token = (await res.json()) as TokenResponse
         setAwaitingStart(null)
+        $isHost.set(token.isHost)
         try {
           sessionStorage.setItem(
             `rejoin:${slug}`,

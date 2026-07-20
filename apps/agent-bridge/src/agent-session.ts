@@ -1,6 +1,6 @@
 import { ReadableStream } from "node:stream/web"
 import { type ChatContext, type llm, voice } from "@livekit/agents"
-import type { AgentActivityEvent, AgentState } from "@meet/shared"
+import type { AgentActivityEvent, AgentState, TurnPolicy } from "@meet/shared"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
 import type { AgentEntry } from "./registry.js"
@@ -23,6 +23,13 @@ export class SessionState {
   notifyUndeafened = false
   /** on-mention policy: a participant called on the agent; answer next turn. */
   callOnPending = false
+  /** Zapped: the agent responds freely until this epoch-ms deadline. */
+  zappedUntil = 0
+  /**
+   * Effective turn policy: seeded from the registry, but the meeting's host
+   * can change it mid-call (see the "set-turn-policy" control).
+   */
+  turnPolicy: TurnPolicy = "open"
 }
 
 /** Room facts fed to the brain alongside each turn. */
@@ -80,20 +87,40 @@ export class LoopedVoiceAgent extends voice.Agent {
     const callbacks = this.#callbacks
     const brain = this.#brain
 
-    // Turn policy "on-mention": stay quiet unless addressed by name or a
-    // participant called on the agent — raise a hand instead of speaking, so
-    // agents don't jump into every human exchange.
-    if (entry.turn_policy === "on-mention") {
-      const addressed = new RegExp(`\\b${entry.name}\\b`, "i").test(input)
+    // Gated turn policies: stay quiet unless addressed by name or a
+    // participant called on the agent. "raise-hand" additionally raises a
+    // hand so a host can call on it; "on-mention" stays silent.
+    let calledOn = false
+    if (state.turnPolicy !== "open") {
+      const zapped = Date.now() < state.zappedUntil
+      const mentioned = new RegExp(entry.name, "i").test(input)
+      // "raise-hand" is strict: even a name mention only raises the hand —
+      // the floor is granted exclusively by call-on (zap still bypasses,
+      // it's an explicit host action).
+      const addressed =
+        state.turnPolicy === "raise-hand" ? zapped : mentioned || zapped
       if (!addressed && !state.callOnPending) {
-        if (!state.muted && !state.deafened) callbacks.setState("hand-raised")
+        if (
+          state.turnPolicy === "raise-hand" &&
+          !state.muted &&
+          !state.deafened
+        ) {
+          callbacks.setState("hand-raised")
+        }
         return null
       }
+      calledOn = state.callOnPending
       state.callOnPending = false
       callbacks.setState(state.muted ? "muted" : "thinking")
     }
 
     let text = input
+    if (calledOn) {
+      text =
+        "[You raised your hand and have now been called on — give the " +
+        "answer you were holding, briefly, then yield the floor.]\n" +
+        text
+    }
     if (this.#meeting) {
       const roster = this.#meeting.roster()
       if (roster && roster !== this.#lastRoster) {

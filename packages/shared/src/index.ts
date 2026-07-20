@@ -13,6 +13,45 @@ export const TRANSCRIPTION_TOPIC = "lk.transcription"
 /** Participant attribute key holding an agent's conversational state. */
 export const AGENT_STATE_ATTRIBUTE = "agent.state"
 
+/** Participant attribute set to "1" while a human has their hand raised. */
+export const HAND_ATTRIBUTE = "hand"
+
+/**
+ * Mute and deafen are independent flags, but `agent.state` can only carry
+ * one value (deafened wins) — so the flags are also published individually
+ * ("1" or absent) and the controls read these, not the display state.
+ */
+export const AGENT_MUTED_ATTRIBUTE = "agent.muted"
+export const AGENT_DEAFENED_ATTRIBUTE = "agent.deafened"
+
+/** Participant attribute holding an agent's effective turn policy. */
+export const AGENT_POLICY_ATTRIBUTE = "agent.policy"
+
+/**
+ * Participant attribute a client sets (value "active") once its in-browser
+ * WASM transcriber is loaded, warmed, and proven real-time. The server
+ * transcriber skips mics whose owner advertises this and resumes them the
+ * moment the attribute clears — local STT can never block transcription.
+ */
+export const SELF_TRANSCRIBE_ATTRIBUTE = "stt.local"
+export const SELF_TRANSCRIBE_ACTIVE = "active"
+
+/**
+ * Streaming ASR models trained on GigaSpeech emit ALL-CAPS text with no
+ * punctuation, while finalized utterances are properly cased — so captions
+ * visibly "flip" at utterance end. Sentence-case shouty text so interims and
+ * finals read alike; anything already mixed-case passes through untouched.
+ */
+export function tidyShoutyTranscript(text: string): string {
+  const letters = text.replace(/[^a-zA-Z]/g, "")
+  if (!letters || letters !== letters.toUpperCase()) return text
+  return text
+    .toLowerCase()
+    .replace(/(^|[.!?]\s+)([a-z])/g, (m, pre, c) => pre + c.toUpperCase())
+    .replace(/\bi\b/g, "I")
+    .replace(/\bi'/g, "I'")
+}
+
 export const agentStateSchema = z.enum([
   "listening",
   "thinking",
@@ -22,6 +61,8 @@ export const agentStateSchema = z.enum([
   // The agent has something to contribute but its turn policy keeps it
   // quiet until a participant calls on it.
   "hand-raised",
+  // Zapped: temporarily responding to everything, no mention needed.
+  "zapped",
 ])
 export type AgentState = z.infer<typeof agentStateSchema>
 
@@ -58,6 +99,15 @@ export const AGENT_VOICES = [
 ] as const
 export type AgentVoice = (typeof AGENT_VOICES)[number]
 
+/**
+ * How an agent decides when to speak.
+ * - "open": replies whenever it hears a turn.
+ * - "on-mention": stays quiet unless addressed by name or called on, and
+ *   raises its hand when it has something to contribute.
+ */
+export const turnPolicySchema = z.enum(["open", "on-mention", "raise-hand"])
+export type TurnPolicy = z.infer<typeof turnPolicySchema>
+
 /** True for infrastructure participants that the UI should not render. */
 export function isServiceParticipant(metadata: string | undefined): boolean {
   return parseParticipantMeta(metadata)?.kind === "service"
@@ -73,8 +123,16 @@ export const agentControlSchema = z.object({
     "interrupt",
     // Lets a hand-raised agent take its turn (see the agent turn policy).
     "call-on",
+    // Wakes an agent up: it listens and responds freely for a short window,
+    // then returns to its usual policy (gated agents re-gate, open agents
+    // are muted).
+    "zap",
+    // Host-only: change how the agent takes turns for the rest of the
+    // meeting, overriding the registry default. Carries `policy`.
+    "set-turn-policy",
   ]),
   agentId: z.string(),
+  policy: turnPolicySchema.optional(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>
 
@@ -163,6 +221,8 @@ export const tokenResponseSchema = z.object({
   participantCount: z.number().int().min(0).default(0),
   /** True when the joiner enters the waiting room pending admission. */
   waiting: z.boolean().default(false),
+  /** True for the meeting's organiser — gates the agent settings UI. */
+  isHost: z.boolean().default(false),
   /** Epoch ms when the room was created — anchors the call duration timer. */
   roomStartedAt: z.number().default(0),
 })

@@ -9,7 +9,11 @@ import * as elevenlabs from "@livekit/agents-plugin-elevenlabs"
 import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
+  AGENT_DEAFENED_ATTRIBUTE,
+  AGENT_MUTED_ATTRIBUTE,
+  AGENT_POLICY_ATTRIBUTE,
   AGENT_STATE_ATTRIBUTE,
+  AGENT_VOICES,
   type AgentActivityEvent,
   type AgentState,
   agentControlSchema,
@@ -33,34 +37,68 @@ import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
 import { ScreenCapture } from "./screen-capture.js"
 
-type DispatchMeta = { agentId: string }
+type DispatchMeta = { agentId: string; mode?: "realtime" | "pipeline" }
+
+/** How long a zapped agent answers freely before its policy resumes. */
+const ZAP_WINDOW_MS = 30_000
 
 /** A registry entry plus, for dynamic (URL-invited) agents, its token. */
 type ResolvedEntry = AgentEntry & { directToken?: string }
 
+/**
+ * Interaction mode is a meeting-level choice, not an agent-level one: any
+ * brain can be fronted by either the realtime speech-to-speech layer or the
+ * STT/TTS pipeline. The registry's `realtime` block is just the default;
+ * a dispatch-time mode override converts in either direction.
+ */
+function applyMode(
+  entry: ResolvedEntry,
+  mode?: DispatchMeta["mode"],
+): ResolvedEntry {
+  if (mode === "pipeline" && entry.realtime) {
+    return { ...entry, realtime: undefined }
+  }
+  if (mode === "realtime" && !entry.realtime) {
+    const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
+      ? entry.tts.voice
+      : "marin"
+    return {
+      ...entry,
+      realtime: {
+        model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
+        voice,
+      },
+    }
+  }
+  return entry
+}
+
 function entryFromMetadata(metadata: string): ResolvedEntry {
-  const { agentId } = JSON.parse(metadata) as DispatchMeta
+  const { agentId, mode } = JSON.parse(metadata) as DispatchMeta
   if (agentId.startsWith("dyn-")) {
     const spec = getDynamicAgent(agentId)
     if (!spec) throw new Error(`unknown dynamic agent: ${agentId}`)
-    return {
-      id: agentId,
-      name: spec.name,
-      greeting: `Hi, I'm ${spec.name}.`,
-      turn_policy: "open",
-      brain: { kind: "tty", url: spec.url, token_env: "" },
-      realtime: {
-        model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
-        voice: spec.voice ?? "marin",
+    return applyMode(
+      {
+        id: agentId,
+        name: spec.name,
+        greeting: `Hi, I'm ${spec.name}.`,
+        turn_policy: "open",
+        brain: { kind: "tty", url: spec.url, token_env: "" },
+        realtime: {
+          model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
+          voice: spec.voice ?? "marin",
+        },
+        stt: { provider: "openai", model: "gpt-4o-mini-transcribe" },
+        tts: { provider: "openai", model: "gpt-4o-mini-tts", voice: "alloy" },
+        directToken: spec.token,
       },
-      stt: { provider: "openai", model: "gpt-4o-mini-transcribe" },
-      tts: { provider: "openai", model: "gpt-4o-mini-tts", voice: "alloy" },
-      directToken: spec.token,
-    }
+      mode,
+    )
   }
   const entry = loadRegistry().find((a) => a.id === agentId)
   if (!entry) throw new Error(`unknown agent: ${agentId}`)
-  return entry
+  return applyMode(entry, mode)
 }
 
 /** Accept dispatches with an agent-scoped identity and metadata. */
@@ -95,12 +133,32 @@ export default defineAgent({
     if (!local) throw new Error("no local participant after connect")
 
     const sessionState = new SessionState()
+    sessionState.turnPolicy = entry.turn_policy
+    let zapTimer: ReturnType<typeof setTimeout> | null = null
 
     const setState = (state: AgentState) => {
       local
         .setAttributes({ [AGENT_STATE_ATTRIBUTE]: state })
         .catch(() => undefined)
     }
+    // Mute and deafen are independent — publish both flags so the UI's
+    // buttons stay truthful when an agent is muted AND deafened (the single
+    // state attribute can only show one of them).
+    const publishFlags = () => {
+      local
+        .setAttributes({
+          [AGENT_MUTED_ATTRIBUTE]: sessionState.muted ? "1" : "",
+          [AGENT_DEAFENED_ATTRIBUTE]: sessionState.deafened ? "1" : "",
+        })
+        .catch(() => undefined)
+    }
+    /** Publish the effective turn policy so the host's toggle reflects it. */
+    const publishPolicy = () => {
+      local
+        .setAttributes({ [AGENT_POLICY_ATTRIBUTE]: sessionState.turnPolicy })
+        .catch(() => undefined)
+    }
+    publishPolicy()
     const publishActivity = (event: AgentActivityEvent) => {
       local
         .publishData(new TextEncoder().encode(JSON.stringify(event)), {
@@ -173,11 +231,29 @@ export default defineAgent({
             JSON.parse(new TextDecoder().decode(payload)),
           )
           if (control.agentId !== entry.id) return
+          if (control.type === "set-turn-policy" && control.policy) {
+            sessionState.turnPolicy = control.policy
+            publishPolicy()
+            return
+          }
           if (control.type === "mute") sessionState.muted = true
           else if (control.type === "unmute") sessionState.muted = false
           else if (control.type === "deafen") sessionState.deafened = true
           else if (control.type === "undeafen") sessionState.deafened = false
-          setState(sessionState.muted ? "muted" : "listening")
+          // Only these four own the state attribute here; zap, call-on and
+          // interrupt are handled in realtime-agent.ts and would otherwise
+          // have their state (e.g. "zapped") clobbered by this handler.
+          else return
+          // The state attribute must reflect deafened too, or the UI's
+          // deafen button never flips and appears broken.
+          setState(
+            sessionState.deafened
+              ? "deafened"
+              : sessionState.muted
+                ? "muted"
+                : "listening",
+          )
+          publishFlags()
         } catch {}
       })
       await runRealtimeAgent({
@@ -208,7 +284,14 @@ export default defineAgent({
       // delay turns get committed while their transcript is still empty, so
       // the agent hears nothing (llmNode sees no user input) even though the
       // transcription panel later shows the text.
-      turnHandling: { endpointing: { minDelay: 2 } },
+      // 2s still lost the race in practice (empty-transcript turns → the
+      // agent hears nothing at all); 4s is sluggish but reliable. Tunable
+      // because it's a latency/reliability trade per deployment.
+      turnHandling: {
+        endpointing: {
+          minDelay: Number(process.env.PIPELINE_ENDPOINT_MIN_DELAY ?? 4),
+        },
+      },
       stt: new openai.STT({ model: entry.stt.model }),
       tts:
         entry.tts.provider === "elevenlabs"
@@ -275,10 +358,13 @@ export default defineAgent({
     publishStats()
 
     // Mirror the pipeline's state onto a participant attribute for the UI.
+    // While zapped, "listening" reads as "zapped" so the indicator stays up
+    // for the whole window instead of clearing after the first turn.
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev) => {
       if (sessionState.muted) return
       const map: Record<string, AgentState> = {
-        listening: "listening",
+        listening:
+          Date.now() < sessionState.zappedUntil ? "zapped" : "listening",
         thinking: "thinking",
         speaking: "speaking",
       }
@@ -306,6 +392,27 @@ export default defineAgent({
             } catch {
               sessionState.callOnPending = false
             }
+          } else if (control.type === "set-turn-policy" && control.policy) {
+            sessionState.turnPolicy = control.policy
+            publishPolicy()
+          } else if (control.type === "zap") {
+            // Wake the agent: unmuted and answering every turn for the zap
+            // window, then back to its usual policy. "zapped" is the visible
+            // cue, and a timer clears it so the badge matches the window.
+            sessionState.muted = false
+            sessionState.zappedUntil = Date.now() + ZAP_WINDOW_MS
+            setState("zapped")
+            if (zapTimer) clearTimeout(zapTimer)
+            zapTimer = setTimeout(() => {
+              zapTimer = null
+              sessionState.zappedUntil = 0
+              if (!sessionState.muted && !sessionState.deafened) {
+                setState("listening")
+              }
+            }, ZAP_WINDOW_MS)
+            publishChat(
+              "(You zapped me — I'm listening and will chime in for the next 30 seconds.)",
+            )
           } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
             sessionState.notifiedMuted = false
@@ -326,6 +433,9 @@ export default defineAgent({
             session.input.setAudioEnabled(true)
             sessionState.notifyUndeafened = true
             setState(sessionState.muted ? "muted" : "listening")
+          }
+          if (["mute", "unmute", "deafen", "undeafen"].includes(control.type)) {
+            publishFlags()
           }
         } catch {
           // ignore malformed control messages
@@ -417,6 +527,7 @@ export default defineAgent({
     }
 
     ctx.addShutdownCallback(async () => {
+      if (zapTimer) clearTimeout(zapTimer)
       brain.close()
     })
   },
