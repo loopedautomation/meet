@@ -318,59 +318,81 @@ function InRoomControls({
     ? "Undeafen — let the agent hear the meeting"
     : "Deafen — the agent stops hearing the meeting"
 
+  // Tooltips clip against the panel's scroll container, and no bubble
+  // direction fits every button in a 22rem panel — so the tip renders as a
+  // caption line under the controls instead (hover or keyboard focus).
+  const [tip, setTip] = useState<string | null>(null)
+
   return (
-    <div className="flex items-center gap-1">
-      <ControlButton
-        tip={
-          gated
-            ? "Hand-raising on — speaks only when addressed or called on"
-            : "Hand-raising off — speaks whenever it has something to say"
-        }
-        state={gated ? "on" : "off"}
-        onClick={() =>
-          sendControl({
-            type: "set-turn-policy",
-            agentId,
-            policy: gated ? "open" : "on-mention",
-          })
-        }
+    <div>
+      <div
+        className="flex items-center gap-1"
+        onMouseLeave={() => setTip(null)}
       >
-        <Hand className="size-4" />
-      </ControlButton>
-      <ControlButton
-        tip={zapTip}
-        state={zapped ? "on" : "off"}
-        onClick={() => sendControl({ type: "zap", agentId })}
-      >
-        <Zap className="size-4" />
-      </ControlButton>
-      {/* Mic and ears read as capabilities: green while the agent has them,
+        <ControlButton
+          onTip={setTip}
+          tip={
+            gated
+              ? "Hand-raising on — speaks only when addressed or called on"
+              : "Hand-raising off — speaks whenever it has something to say"
+          }
+          state={gated ? "on" : "off"}
+          onClick={() =>
+            sendControl({
+              type: "set-turn-policy",
+              agentId,
+              policy: gated ? "open" : "on-mention",
+            })
+          }
+        >
+          <Hand className="size-4" />
+        </ControlButton>
+        <ControlButton
+          onTip={setTip}
+          tip={zapTip}
+          state={zapped ? "on" : "off"}
+          onClick={() => sendControl({ type: "zap", agentId })}
+        >
+          <Zap className="size-4" />
+        </ControlButton>
+        {/* Mic and ears read as capabilities: green while the agent has them,
           red once a host takes one away. */}
-      <ControlButton
-        tip={muteTip}
-        state={muted ? "revoked" : "on"}
-        onClick={() =>
-          sendControl({ type: muted ? "unmute" : "mute", agentId })
-        }
-      >
-        {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
-      </ControlButton>
-      <ControlButton
-        tip={deafenTip}
-        state={deafened ? "revoked" : "on"}
-        onClick={() =>
-          sendControl({ type: deafened ? "undeafen" : "deafen", agentId })
-        }
-      >
-        {deafened ? <EarOff className="size-4" /> : <Ear className="size-4" />}
-      </ControlButton>
-      <ControlButton
-        tip="Remove the agent from the meeting"
-        state="danger"
-        onClick={onRemove}
-      >
-        <UserX className="size-4" />
-      </ControlButton>
+        <ControlButton
+          onTip={setTip}
+          tip={muteTip}
+          state={muted ? "revoked" : "on"}
+          onClick={() =>
+            sendControl({ type: muted ? "unmute" : "mute", agentId })
+          }
+        >
+          {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
+        </ControlButton>
+        <ControlButton
+          onTip={setTip}
+          tip={deafenTip}
+          state={deafened ? "revoked" : "on"}
+          onClick={() =>
+            sendControl({ type: deafened ? "undeafen" : "deafen", agentId })
+          }
+        >
+          {deafened ? (
+            <EarOff className="size-4" />
+          ) : (
+            <Ear className="size-4" />
+          )}
+        </ControlButton>
+        <ControlButton
+          onTip={setTip}
+          tip="Remove the agent from the meeting"
+          state="danger"
+          onClick={onRemove}
+        >
+          <UserX className="size-4" />
+        </ControlButton>
+      </div>
+      <p className="min-h-4 pt-1 text-[11px] text-base-content/50 leading-tight">
+        {tip}
+      </p>
     </div>
   )
 }
@@ -384,11 +406,14 @@ function ControlButton({
   tip,
   state,
   onClick,
+  onTip,
   children,
 }: {
   tip: string
   state: "on" | "off" | "revoked" | "danger"
   onClick: () => void
+  /** Reports the tip to show in the shared caption line (null to clear). */
+  onTip: (tip: string | null) => void
   children: React.ReactNode
 }) {
   const tone =
@@ -400,19 +425,17 @@ function ControlButton({
           ? "btn-ghost text-error"
           : "btn-ghost"
   return (
-    // Below the button: a tip above is clipped by the panel's scroll
-    // container, and it wraps within the panel rather than overflowing it.
-    <div className="tooltip tooltip-bottom" data-tip={tip}>
-      <button
-        type="button"
-        title={tip}
-        aria-label={tip}
-        className={`btn btn-circle btn-sm ${tone}`}
-        onClick={onClick}
-      >
-        {children}
-      </button>
-    </div>
+    <button
+      type="button"
+      aria-label={tip}
+      className={`btn btn-circle btn-sm ${tone}`}
+      onClick={onClick}
+      onMouseEnter={() => onTip(tip)}
+      onFocus={() => onTip(tip)}
+      onBlur={() => onTip(null)}
+    >
+      {children}
+    </button>
   )
 }
 
