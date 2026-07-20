@@ -5,6 +5,7 @@ export const DataTopic = {
   AgentActivity: "agent-activity",
   AgentControl: "agent-control",
   Chat: "chat",
+  ScreenShare: "screen-share",
 } as const
 
 /** LiveKit's built-in transcription text-stream topic. */
@@ -187,6 +188,19 @@ export const chatMessageSchema = z.object({
   at: z.number(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
+
+/**
+ * Only one screen share owns the stage. Starting a share broadcasts a
+ * "takeover" on the `screen-share` topic; whoever else was sharing stops,
+ * and viewers prefer the newest sharer. `at` breaks ties so the older share
+ * yields to the newer one, never the reverse.
+ */
+export const screenShareControlSchema = z.object({
+  type: z.literal("takeover"),
+  from: z.string(),
+  at: z.number(),
+})
+export type ScreenShareControl = z.infer<typeof screenShareControlSchema>
 
 /** API DTOs. */
 export const createRoomResponseSchema = z.object({

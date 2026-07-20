@@ -23,6 +23,7 @@ import {
   useLocalTranscription,
 } from "@/hooks/useLocalTranscription"
 import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
+import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -46,7 +47,13 @@ export function MeetingView({
   const screenTracks = useTracks([Track.Source.ScreenShare], {
     onlySubscribed: true,
   })
-  const focused = screenTracks[0]
+  // A single share owns the stage: the newest sharer takes over and stops the
+  // previous one. While both are briefly live, prefer the one that most
+  // recently announced a takeover; fall back to LiveKit's order otherwise.
+  const latestSharer = useScreenShareTakeover()
+  const focused =
+    screenTracks.find((t) => t.participant.identity === latestSharer) ??
+    screenTracks[0]
 
   const localTrack = cameraTracks.find((t) => t.participant.isLocal)
   // Service participants (the transcriber) and knockers still in the waiting
@@ -82,23 +89,23 @@ export function MeetingView({
         className="relative flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row"
       >
         {focused ? (
-          <>
-            <div className="min-h-0 min-w-0 flex-1">
-              <ScreenShareTile trackRef={focused} />
-            </div>
-            {/* Phones: a horizontal strip of feeds below the share.
-                Desktop: the classic column to its right. */}
-            <div className="flex h-24 shrink-0 flex-row gap-3 overflow-x-auto md:h-auto md:w-52 md:flex-col md:overflow-x-visible md:overflow-y-auto">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+            {/* Participants sit in a horizontal strip above the share,
+                centered and sized to match the draggable self-view. */}
+            <div className="flex shrink-0 flex-row flex-wrap justify-center gap-3 overflow-x-auto">
               {remoteTracks.map((trackRef) => (
                 <div
                   key={trackRef.participant.identity}
-                  className="w-36 shrink-0 md:w-auto"
+                  className="w-32 shrink-0 sm:w-56"
                 >
                   <ParticipantTile trackRef={trackRef} compact />
                 </div>
               ))}
             </div>
-          </>
+            <div className="min-h-0 min-w-0 flex-1">
+              <ScreenShareTile trackRef={focused} />
+            </div>
+          </div>
         ) : alone ? (
           // Just you: your own camera fills the stage.
           localTrack && (
