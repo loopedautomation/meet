@@ -5,13 +5,7 @@
 
 <div align="center">
 
-# Looped Meet
-
-**Dial your agent into your next call.**
-
-[![CI](https://github.com/loopedautomation/meet/actions/workflows/ci.yaml/badge.svg)](https://github.com/loopedautomation/meet/actions/workflows/ci.yaml)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
-[![Powered by looped-af](https://img.shields.io/badge/powered%20by-looped--af-8b5cf6)](https://github.com/loopedautomation/agent-framework)
+# Looped Meet<br/><sub><b>Dial your agent into your next call.</b></sub><br/><br/>[![CI](https://github.com/loopedautomation/meet/actions/workflows/ci.yaml/badge.svg)](https://github.com/loopedautomation/meet/actions/workflows/ci.yaml) [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE) [![Powered by looped-af](https://img.shields.io/badge/powered%20by-looped--af-8b5cf6)](https://github.com/loopedautomation/agent-framework)
 
 </div>
 
