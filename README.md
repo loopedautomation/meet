@@ -3,22 +3,26 @@
   <img alt="Looped Meet" src=".github/readme-cover-light.png" width="100%">
 </picture>
 
+<div align="center">
+
 # Looped Meet
+
+**Dial your agent into your next call.**
 
 [![CI](https://github.com/loopedautomation/meet/actions/workflows/ci.yaml/badge.svg)](https://github.com/loopedautomation/meet/actions/workflows/ci.yaml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](./LICENSE)
 [![Powered by looped-af](https://img.shields.io/badge/powered%20by-looped--af-8b5cf6)](https://github.com/loopedautomation/agent-framework)
 
-Open-source, self-hostable video meetings with **first-class AI agent participants**, powered by [LiveKit](https://livekit.io) and the [Looped agent framework](https://github.com/loopedautomation/agent-framework).
+</div>
 
-Share a link, talk face to face — and invite an agent into the room. It listens to the conversation, speaks its answers, can be interrupted mid-sentence, and streams its tool calls (web lookups, code, APIs) into the meeting as it works.
+Self-hostable video meetings with first-class AI agent participants. Share a link, talk face to face — and invite an agent into the room. It listens to the conversation, speaks its answers, can be interrupted mid-sentence, and streams its tool calls (web lookups, code, APIs) into the meeting as it works. Open source, powered by [LiveKit](https://livekit.io) and the [Looped agent framework](https://github.com/loopedautomation/agent-framework).
 
 **Contents:** [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Your own agents](#registering-your-own-agents) · [Self-hosting](./selfhost.md) · [Development](#development) · [Theming](#theming--whitelabel) · [Roadmap](#roadmap)
 
 ## Features
 
 - **Google-Meet-style rooms** — create a room, share `/r/{slug}`, join with a display name. No accounts, no IdP.
-- **Agents as participants** — invite a looped-af agent from the agents panel; it joins with its own tile, live state (listening / thinking / speaking), and voice.
+- **Agents as participants** — invite any [looped-af](https://github.com/loopedautomation/agent-framework) agent from the agents panel, unchanged; it joins with its own tile, live state (listening / thinking / speaking), and voice.
 - **Realtime speech-to-speech agents** — optionally run an agent on a realtime voice model (~500ms responses) that delegates tool work to the looped agent brain in the background.
 - **Turn policies** — per-agent etiquette a host can change mid-call: speak freely (`open`), only when addressed (`on-mention`), or raise a hand and wait to be called on (`raise-hand`). Zap an agent to wake it up for a while.
 - **Tool activity feed** — watch the agent's tool calls stream in real time while it works.
@@ -29,17 +33,16 @@ Share a link, talk face to face — and invite an agent into the room. It listen
 
 ## Architecture
 
-```
-browser ── web (Next.js: rooms, tokens, UI)
-   │             │
-   ▼             ▼
-LiveKit SFU ◄── agent-bridge (Node: VAD, STT, TTS, turn-taking)
-                     │  TTY WebSocket
-                     ▼
-               looped-af agent (your agent.yaml, unchanged)
+```mermaid
+flowchart TB
+    browser["browser"] --> web["web<br/>(Next.js: rooms, tokens, UI)"]
+    browser --> sfu["LiveKit SFU"]
+    web --> sfu
+    bridge["agent-bridge<br/>(Node: VAD, STT, TTS, turn-taking)"] --> sfu
+    bridge -- "TTY WebSocket" --> agent["looped-af agent<br/>(your agent.yaml, unchanged)"]
 ```
 
-The bridge hosts the voice pipeline ([LiveKit Agents](https://docs.livekit.io/agents/)); the *thinking* happens in a stock looped-af agent over its TTY trigger — same tools, permissions, memory, and audit trail as everywhere else the agent runs. Realtime agents swap the STT/TTS pipeline for a speech-to-speech model that delegates tool work to the same brain.
+**Bring any looped agent-framework agent.** The bridge hosts the voice pipeline ([LiveKit Agents](https://docs.livekit.io/agents/)); the *thinking* happens in a stock [looped-af](https://github.com/loopedautomation/agent-framework) agent over its TTY trigger. No meeting-specific code in the agent: any agent you already run — with its tools, permissions, memory, and audit trail intact — joins a meeting as-is with one entry in the registry. Realtime agents swap the STT/TTS pipeline for a speech-to-speech model that delegates tool work to the same brain.
 
 ## Quick start
 
