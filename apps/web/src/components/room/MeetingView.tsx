@@ -82,23 +82,19 @@ export function MeetingView({
         className="relative flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row"
       >
         {focused ? (
-          <>
-            <div className="min-h-0 min-w-0 flex-1">
-              <ScreenShareTile trackRef={focused} />
-            </div>
-            {/* Phones: a horizontal strip of feeds below the share.
-                Desktop: the classic column to its right. */}
-            <div className="flex h-24 shrink-0 flex-row gap-3 overflow-x-auto md:h-auto md:w-52 md:flex-col md:overflow-x-visible md:overflow-y-auto">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+            {/* Participants sit in a horizontal strip above the share. */}
+            <div className="flex h-24 shrink-0 flex-row gap-3 overflow-x-auto md:h-28">
               {remoteTracks.map((trackRef) => (
-                <div
-                  key={trackRef.participant.identity}
-                  className="w-36 shrink-0 md:w-auto"
-                >
+                <div key={trackRef.participant.identity} className="w-36 shrink-0">
                   <ParticipantTile trackRef={trackRef} compact />
                 </div>
               ))}
             </div>
-          </>
+            <div className="min-h-0 min-w-0 flex-1">
+              <ScreenShareTile trackRef={focused} />
+            </div>
+          </div>
         ) : alone ? (
           // Just you: your own camera fills the stage.
           localTrack && (
