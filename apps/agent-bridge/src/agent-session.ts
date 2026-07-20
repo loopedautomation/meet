@@ -23,8 +23,8 @@ export class SessionState {
   notifyUndeafened = false
   /** on-mention policy: a participant called on the agent; answer next turn. */
   callOnPending = false
-  /** Poked: the agent responds freely until this epoch-ms deadline. */
-  pokedUntil = 0
+  /** Zapped: the agent responds freely until this epoch-ms deadline. */
+  zappedUntil = 0
   /**
    * Effective turn policy: seeded from the registry, but the meeting's host
    * can change it mid-call (see the "set-turn-policy" control).
@@ -92,7 +92,8 @@ export class LoopedVoiceAgent extends voice.Agent {
     // agents don't jump into every human exchange.
     if (state.turnPolicy === "on-mention") {
       const addressed =
-        new RegExp(entry.name, "i").test(input) || Date.now() < state.pokedUntil
+        new RegExp(entry.name, "i").test(input) ||
+        Date.now() < state.zappedUntil
       if (!addressed && !state.callOnPending) {
         if (!state.muted && !state.deafened) callbacks.setState("hand-raised")
         return null

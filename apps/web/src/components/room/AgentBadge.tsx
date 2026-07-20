@@ -16,7 +16,7 @@ const stateLabel: Record<AgentState, string> = {
   muted: "muted",
   deafened: "deafened",
   "hand-raised": "hand raised",
-  awake: "awake",
+  zapped: "zapped",
 }
 
 export function useAgentState(participant: Participant): AgentState {
@@ -34,7 +34,7 @@ export function AgentBadge({ participant }: { participant: Participant }) {
         state === "muted" ||
         state === "deafened" ||
         state === "hand-raised" ||
-        state === "awake"
+        state === "zapped"
           ? "badge-warning"
           : "badge-primary"
       }`}
@@ -45,7 +45,7 @@ export function AgentBadge({ participant }: { participant: Participant }) {
         <EarOff className="size-3" />
       ) : state === "hand-raised" ? (
         <Hand className="size-3" />
-      ) : state === "awake" ? (
+      ) : state === "zapped" ? (
         <Zap className="size-3" />
       ) : (
         <Bot className="size-3" />

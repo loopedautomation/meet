@@ -329,7 +329,7 @@ export class RealtimeSession {
   #gateOpen = false
 
   /**
-   * Temporarily lift the gate (poke): the model auto-responds like an
+   * Temporarily lift the gate (zap): the model auto-responds like an
    * ungated session until the gate is restored.
    */
   setGateOpen(open: boolean) {

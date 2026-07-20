@@ -53,8 +53,8 @@ export const agentStateSchema = z.enum([
   // The agent has something to contribute but its turn policy keeps it
   // quiet until a participant calls on it.
   "hand-raised",
-  // Poked: temporarily responding to everything, no mention needed.
-  "awake",
+  // Zapped: temporarily responding to everything, no mention needed.
+  "zapped",
 ])
 export type AgentState = z.infer<typeof agentStateSchema>
 
@@ -118,7 +118,7 @@ export const agentControlSchema = z.object({
     // Wakes an agent up: it listens and responds freely for a short window,
     // then returns to its usual policy (gated agents re-gate, open agents
     // are muted).
-    "poke",
+    "zap",
     // Host-only: change how the agent takes turns for the rest of the
     // meeting, overriding the registry default. Carries `policy`.
     "set-turn-policy",

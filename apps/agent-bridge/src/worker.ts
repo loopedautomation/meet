@@ -36,8 +36,8 @@ import { ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = { agentId: string }
 
-/** How long a poked agent answers freely before its policy resumes. */
-const POKE_WINDOW_MS = 60_000
+/** How long a zapped agent answers freely before its policy resumes. */
+const ZAP_WINDOW_MS = 30_000
 
 /** A registry entry plus, for dynamic (URL-invited) agents, its token. */
 type ResolvedEntry = AgentEntry & { directToken?: string }
@@ -100,7 +100,7 @@ export default defineAgent({
 
     const sessionState = new SessionState()
     sessionState.turnPolicy = entry.turn_policy
-    let pokeTimer: ReturnType<typeof setTimeout> | null = null
+    let zapTimer: ReturnType<typeof setTimeout> | null = null
 
     const setState = (state: AgentState) => {
       local
@@ -195,9 +195,9 @@ export default defineAgent({
           else if (control.type === "unmute") sessionState.muted = false
           else if (control.type === "deafen") sessionState.deafened = true
           else if (control.type === "undeafen") sessionState.deafened = false
-          // Only these four own the state attribute here; poke, call-on and
+          // Only these four own the state attribute here; zap, call-on and
           // interrupt are handled in realtime-agent.ts and would otherwise
-          // have their state (e.g. "awake") clobbered by this handler.
+          // have their state (e.g. "zapped") clobbered by this handler.
           else return
           // The state attribute must reflect deafened too, or the UI's
           // deafen button never flips and appears broken.
@@ -305,12 +305,13 @@ export default defineAgent({
     publishStats()
 
     // Mirror the pipeline's state onto a participant attribute for the UI.
-    // While poked, "listening" reads as "awake" so the indicator stays up
+    // While zapped, "listening" reads as "zapped" so the indicator stays up
     // for the whole window instead of clearing after the first turn.
     session.on(voice.AgentSessionEventTypes.AgentStateChanged, (ev) => {
       if (sessionState.muted) return
       const map: Record<string, AgentState> = {
-        listening: Date.now() < sessionState.pokedUntil ? "awake" : "listening",
+        listening:
+          Date.now() < sessionState.zappedUntil ? "zapped" : "listening",
         thinking: "thinking",
         speaking: "speaking",
       }
@@ -341,23 +342,23 @@ export default defineAgent({
           } else if (control.type === "set-turn-policy" && control.policy) {
             sessionState.turnPolicy = control.policy
             publishPolicy()
-          } else if (control.type === "poke") {
-            // Wake the agent: unmuted and answering every turn for a minute,
-            // then back to its usual policy. "awake" is the visible cue, and
-            // a timer clears it so the badge matches the actual window.
+          } else if (control.type === "zap") {
+            // Wake the agent: unmuted and answering every turn for the zap
+            // window, then back to its usual policy. "zapped" is the visible
+            // cue, and a timer clears it so the badge matches the window.
             sessionState.muted = false
-            sessionState.pokedUntil = Date.now() + POKE_WINDOW_MS
-            setState("awake")
-            if (pokeTimer) clearTimeout(pokeTimer)
-            pokeTimer = setTimeout(() => {
-              pokeTimer = null
-              sessionState.pokedUntil = 0
+            sessionState.zappedUntil = Date.now() + ZAP_WINDOW_MS
+            setState("zapped")
+            if (zapTimer) clearTimeout(zapTimer)
+            zapTimer = setTimeout(() => {
+              zapTimer = null
+              sessionState.zappedUntil = 0
               if (!sessionState.muted && !sessionState.deafened) {
                 setState("listening")
               }
-            }, POKE_WINDOW_MS)
+            }, ZAP_WINDOW_MS)
             publishChat(
-              "(You poked me — I'm listening and will chime in for the next minute.)",
+              "(You zapped me — I'm listening and will chime in for the next 30 seconds.)",
             )
           } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
@@ -470,7 +471,7 @@ export default defineAgent({
     }
 
     ctx.addShutdownCallback(async () => {
-      if (pokeTimer) clearTimeout(pokeTimer)
+      if (zapTimer) clearTimeout(zapTimer)
       brain.close()
     })
   },

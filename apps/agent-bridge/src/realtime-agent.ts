@@ -23,8 +23,8 @@ import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
 import type { AgentEntry } from "./registry.js"
 import type { ScreenCapture } from "./screen-capture.js"
 
-/** How long a poked agent stays fully awake before re-gating/muting. */
-const POKE_WINDOW_MS = 60_000
+/** How long a zapped agent responds freely before re-gating/muting. */
+const ZAP_WINDOW_MS = 30_000
 
 /** How much mixed room audio each push into the session carries. */
 const MIX_INTERVAL_MS = 50
@@ -164,11 +164,11 @@ export async function runRealtimeAgent(opts: {
   // flip mid-call; `gate` below is installed once and consults it each turn.
   const gated = () => state.turnPolicy === "on-mention"
   let handRaised = false
-  let pokeTimer: ReturnType<typeof setTimeout> | null = null
-  let pokedUntil = 0
-  /** What "at rest" looks like right now: awake during a poke window. */
+  let zapTimer: ReturnType<typeof setTimeout> | null = null
+  let zappedUntil = 0
+  /** What "at rest" looks like right now: zapped during a zap window. */
   const idleState = () =>
-    state.muted ? "muted" : Date.now() < pokedUntil ? "awake" : "listening"
+    state.muted ? "muted" : Date.now() < zappedUntil ? "zapped" : "listening"
 
   const session = new RealtimeSession({
     model: realtime.model,
@@ -347,19 +347,19 @@ export async function runRealtimeAgent(opts: {
       } else if (control.type === "call-on") {
         handRaised = false
         session.callOn()
-      } else if (control.type === "poke") {
-        // Wake the agent: gate lifted (or unmuted) for a minute, then back
-        // to normal. A fresh poke extends the window. The "awake" state is
-        // the visible indicator that the poke took.
+      } else if (control.type === "zap") {
+        // Wake the agent: gate lifted (or unmuted) for the zap window, then
+        // to normal. A fresh zap extends the window. The "zapped" state is
+        // the visible indicator that the zap took.
         handRaised = false
         state.muted = false
-        pokedUntil = Date.now() + POKE_WINDOW_MS
+        zappedUntil = Date.now() + ZAP_WINDOW_MS
         session.setGateOpen(true)
-        callbacks.setState("awake")
-        if (pokeTimer) clearTimeout(pokeTimer)
-        pokeTimer = setTimeout(() => {
-          pokeTimer = null
-          pokedUntil = 0
+        callbacks.setState("zapped")
+        if (zapTimer) clearTimeout(zapTimer)
+        zapTimer = setTimeout(() => {
+          zapTimer = null
+          zappedUntil = 0
           if (gated()) {
             session.setGateOpen(false)
           } else {
@@ -370,10 +370,8 @@ export async function runRealtimeAgent(opts: {
             return
           }
           callbacks.setState(state.muted ? "muted" : "listening")
-        }, POKE_WINDOW_MS)
-        session.say(
-          "Acknowledge in a few words that you're now listening in for a bit.",
-        )
+        }, ZAP_WINDOW_MS)
+        session.say("Acknowledge in a few words that you're now listening in.")
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
         // mute take effect audibly by cutting playback mid-word.
@@ -386,7 +384,7 @@ export async function runRealtimeAgent(opts: {
 
   ctx.addShutdownCallback(async () => {
     clearInterval(pump)
-    if (pokeTimer) clearTimeout(pokeTimer)
+    if (zapTimer) clearTimeout(zapTimer)
     session.close()
   })
 

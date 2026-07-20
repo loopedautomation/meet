@@ -267,12 +267,12 @@ function InRoomControls({
   const policy = (attributes?.[AGENT_POLICY_ATTRIBUTE] ?? "open") as TurnPolicy
   const deafened = state === "deafened"
   const muted = state === "muted"
-  const awake = state === "awake"
+  const zapped = state === "zapped"
   const gated = policy === "on-mention"
 
-  const pokeTip = awake
-    ? "Awake — responding freely for a minute"
-    : "Poke: responds to everything for a minute"
+  const zapTip = zapped
+    ? "Zapped — responding freely for 30 seconds"
+    : "Zap: responds to everything for 30 seconds"
   const muteTip = muted
     ? "Unmute — let the agent speak aloud"
     : "Mute — the agent replies in chat instead"
@@ -300,9 +300,9 @@ function InRoomControls({
         <Hand className="size-4" />
       </ControlButton>
       <ControlButton
-        tip={pokeTip}
-        active={awake}
-        onClick={() => sendControl({ type: "poke", agentId })}
+        tip={zapTip}
+        active={zapped}
+        onClick={() => sendControl({ type: "zap", agentId })}
       >
         <Zap className="size-4" />
       </ControlButton>
