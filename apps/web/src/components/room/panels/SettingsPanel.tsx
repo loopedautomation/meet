@@ -4,11 +4,16 @@ import { useMediaDeviceSelect } from "@livekit/components-react"
 import { useStore } from "@nanostores/react"
 import { Moon, Sun } from "lucide-react"
 import { $blur, setBlur } from "@/stores/blur"
+import {
+  $pauseCameraOnBackground,
+  setPauseCameraOnBackground,
+} from "@/stores/camera"
 import { $theme, setTheme } from "@/stores/theme"
 
 export function SettingsPanel() {
   const theme = useStore($theme)
   const blur = useStore($blur)
+  const pauseOnBackground = useStore($pauseCameraOnBackground)
 
   return (
     <div className="flex flex-col gap-6 p-4">
@@ -68,6 +73,28 @@ export function SettingsPanel() {
             className="toggle toggle-primary"
             checked={blur}
             onChange={(e) => setBlur(e.target.checked)}
+          />
+        </label>
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
+          When you switch away
+        </h3>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="flex flex-col">
+            <span className="text-sm">Pause my camera</span>
+            <span className="text-base-content/60 text-xs">
+              Turns your camera off while this tab is in the background, and
+              back on when you return. Off by default — your camera keeps
+              running.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={pauseOnBackground}
+            onChange={(e) => setPauseCameraOnBackground(e.target.checked)}
           />
         </label>
       </section>
