@@ -1,0 +1,27 @@
+# Overlay: run the datamaker-github agent (Amin's GitHub assistant for
+# automators-com/datamaker + auth) on the meet network so the agent-bridge
+# can reach its TTY trigger at ws://datamaker-github:8300/tty.
+#
+# Built from the sibling checkout ../datamaker-github-agent. Layer it in
+# alongside the debug override (which mounts this repo's agent-registry.yaml
+# over the baked one):
+#
+#   COMPOSE_FILE=docker-compose.yaml:docker-compose.debug.yaml:docker-compose.datamaker-github.yaml
+#
+# Required in .env (on top of the standard meet values):
+#   ANTHROPIC_API_KEY, DISCORD_BOT_TOKEN, GITHUB_TOKEN, DATAMAKER_GITHUB_TTY_TOKEN
+services:
+  datamaker-github:
+    build: ../datamaker-github-agent
+    env_file: .env
+    volumes:
+      - datamaker-github-data:/data
+    expose:
+      - "8300" # tty trigger — reachable only inside the compose network
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp
+
+volumes:
+  datamaker-github-data:

@@ -49,3 +49,24 @@ agents:
       model: gpt-4o-mini-tts
       voice: ash
 
+
+  # DataMaker GitHub — Amin's repo assistant for automators-com/datamaker and
+  # automators-com/auth. Brain runs as its own looped-af container (see
+  # docker-compose.datamaker-github.yaml); pipeline mode, so it only spends
+  # tokens when addressed.
+  - id: datamaker-github
+    name: DataMaker
+    description: GitHub assistant for the datamaker and auth repos — issues, PRs, CI status.
+    greeting: "Hi, I'm DataMaker. Ask me about issues, PRs, or CI in the datamaker and auth repos."
+    turn_policy: on-mention
+    brain:
+      kind: tty
+      url: ws://datamaker-github:8300/tty
+      token_env: DATAMAKER_GITHUB_TTY_TOKEN
+    stt:
+      provider: openai
+      model: gpt-4o-mini-transcribe
+    tts:
+      provider: openai
+      model: gpt-4o-mini-tts
+      voice: echo
