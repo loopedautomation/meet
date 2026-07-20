@@ -5,6 +5,8 @@ export type Brain = {
     input: string,
     images?: { mediaType: string; data: string }[],
   ) => AsyncGenerator<TtyServerFrame>
+  /** Abort the in-flight turn, if the transport supports it. */
+  abortTurn?: () => void
   close: () => void
 }
 

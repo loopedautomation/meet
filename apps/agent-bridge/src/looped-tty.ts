@@ -27,12 +27,14 @@ export type TtyClientOptions = {
 export class LoopedTtyClient {
   #opts: Required<TtyClientOptions>
   #ws: WebSocket | null = null
-  #turnActive = false
+  /** Tail of the turn queue: each turn awaits the previous one's release. */
+  #tail: Promise<void> = Promise.resolve()
+  #aborted = false
 
   constructor(opts: TtyClientOptions) {
     this.#opts = {
       connectTimeoutMs: 10_000,
-      turnTimeoutMs: 120_000,
+      turnTimeoutMs: 600_000,
       ...opts,
     }
   }
@@ -64,15 +66,21 @@ export class LoopedTtyClient {
   /**
    * Run one turn: send `input` (optionally with images, e.g. a screenshare
    * frame) and yield frames until the run finishes.
-   * Throws if a turn is already in progress.
+   * Turns that arrive while one is in flight queue behind it instead of
+   * failing — a mid-turn utterance waits its turn rather than being dropped.
    */
   async *runTurn(
     input: string,
     images?: { mediaType: string; data: string }[],
   ): AsyncGenerator<TtyServerFrame> {
-    if (this.#turnActive) throw new Error("a TTY turn is already in progress")
-    this.#turnActive = true
+    let release!: () => void
+    const previous = this.#tail
+    this.#tail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await previous
     try {
+      this.#aborted = false
       const ws = await this.#connect()
       const queue: TtyServerFrame[] = []
       let notify: (() => void) | null = null
@@ -87,7 +95,9 @@ export class LoopedTtyClient {
         notify?.()
       }
       const onClose = () => {
-        closed = new Error("TTY connection closed")
+        closed = new Error(
+          this.#aborted ? "cancelled" : "TTY connection closed",
+        )
         notify?.()
       }
       ws.on("message", onMessage)
@@ -126,8 +136,20 @@ export class LoopedTtyClient {
         ws.off("error", onClose)
       }
     } finally {
-      this.#turnActive = false
+      release()
     }
+  }
+
+  /**
+   * Abort the in-flight turn. The TTY protocol has no cancel frame, but the
+   * trigger's one-run-at-a-time flag is per-socket — dropping the socket
+   * detaches the run (it finishes server-side into the void) and the next
+   * turn reconnects clean. The aborted `runTurn` throws `Error("cancelled")`.
+   */
+  abortTurn() {
+    this.#aborted = true
+    this.#ws?.close()
+    this.#ws = null
   }
 
   close() {
