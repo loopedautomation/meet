@@ -39,7 +39,7 @@ import {
 } from "./meeting-context.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
-import { ScreenCapture } from "./screen-capture.js"
+import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = { agentId: string; mode?: "realtime" | "pipeline" }
 
@@ -223,6 +223,12 @@ export default defineAgent({
     const meetingContext = [
       `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
       priorDoc,
+      // Say so explicitly: an agent that doesn't know a share exists can't
+      // offer to look at it, and one that doesn't know it's blind will
+      // happily invent what's on screen.
+      screen.enabled && entry.brain.kind === "tty"
+        ? "You can see screenshares in this meeting — a current frame is attached whenever someone is sharing."
+        : "You cannot see screenshares in this meeting. If someone asks about their screen, say so rather than guessing.",
       priorTranscript
         ? `Transcript of the meeting before you joined:\n${priorTranscript}`
         : "",
@@ -372,6 +378,12 @@ export default defineAgent({
         "barge-in": bargeIn.enabled
           ? `vad, ${bargeIn.minSpeechMs}ms sustained`
           : "off (manual interrupt only)",
+        vision:
+          screen.enabled && entry.brain.kind === "tty"
+            ? "screenshare frame attached to every turn"
+            : screen.enabled
+              ? "off (brain is webhook; images are dropped)"
+              : "off (AGENT_SCREEN_VISION)",
         "noise suppression": "room transcriber (gtcrn)",
       } as Record<string, string>,
       latencyMs: {} as Record<string, number>,
@@ -519,16 +531,10 @@ export default defineAgent({
     // Chat mentions get a chat reply — text in, text out; tool activity
     // still streams to the activity feed.
     const replyInChat = async (message: ChatMessage) => {
-      let input = `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`
-      const capture = screen.active
-        ? await screen.latestJpeg().catch(() => null)
-        : null
-      const images = capture
-        ? [{ mediaType: capture.mediaType, data: capture.data }]
-        : undefined
-      if (capture) {
-        input = `[A current frame of ${capture.sharerName}'s shared screen is attached.]\n${input}`
-      }
+      const { text: input, images } = await attachScreenFrame(
+        screen,
+        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
+      )
       setState(sessionState.muted ? "muted" : "thinking")
       try {
         let reply = ""

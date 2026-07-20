@@ -25,6 +25,7 @@ import {
 } from "@/hooks/useLocalTranscription"
 import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
 import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
+import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -42,6 +43,7 @@ export function MeetingView({
   useAwayOnHidden()
   useLocalTranscription(readLocalSttPref())
   useMutedSpeakingToast()
+  useScreenShareVisionNotice()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
