@@ -40,8 +40,14 @@ const instructions = (entry: AgentEntry, context?: string) =>
   "don't; if you have a useful aside or link, post it with " +
   "send_chat_message instead of talking. Keep spoken replies concise and " +
   "conversational — a sentence or two unless asked for more. Answer " +
-  "questions yourself whenever you can; reach for the ask_agent tool only " +
-  "when you need its tools, its memory, or to take an action. Messages " +
+  "questions yourself whenever you can; reach for the do_task tool only " +
+  "when you need your tools, your memory, or to take an action. A task is " +
+  "you doing the work — speak about it in the first person ('I'll look " +
+  "that up', 'I've filed it'), never as asking or waiting on another " +
+  "agent, and never mention runs, tasks, tools or delegation out loud. If " +
+  "a task continues in the background, you'll get a [task finished] note " +
+  "with the outcome; until it arrives, don't guess at results, and use " +
+  "cancel_task if someone tells you to stop. Messages " +
   "prefixed [meeting chat] are the room's text chat: read them for context " +
   "and reply in chat (or aloud only if addressed there)." +
   " Your audio may be gated by the meeting's host: while it is, you are " +
@@ -86,7 +92,7 @@ export async function runRealtimeAgent(opts: {
       mode: "realtime",
       "speech-to-speech": `openai/${realtime.model}`,
       voice: realtime.voice,
-      brain: "looped-af (tty, via ask_agent)",
+      brain: "looped-af (tty, via do_task)",
       "turn detection":
         entry.turn_policy === "open"
           ? "server vad"
@@ -109,8 +115,10 @@ export async function runRealtimeAgent(opts: {
     })
 
   // ---- delegate: realtime model -> looped agent brain ---------------------
+  let workInFlight = 0
   const delegate = async (request: string): Promise<string> => {
     const startedAt = Date.now()
+    workInFlight++
     callbacks.setState("thinking")
     let input = request
     const capture = screen.active
@@ -149,8 +157,9 @@ export async function runRealtimeAgent(opts: {
       const digest = actions.length
         ? `\n\n[For your own awareness — the tool actions behind this answer, so you can speak to them naturally and accurately:\n${actions.join("\n")}]`
         : ""
-      return (reply || "(the agent had nothing to add)") + digest
+      return (reply || "(the task produced no summary)") + digest
     } finally {
+      workInFlight--
       stats.latencyMs["brain delegation"] = Date.now() - startedAt
       publishStats()
       callbacks.setState(state.muted ? "muted" : "listening")
@@ -198,6 +207,11 @@ export async function runRealtimeAgent(opts: {
     apiKey,
     instructions: instructions(entry, opts.context),
     delegate,
+    cancelWork: () => {
+      if (workInFlight === 0 || !brain.abortTurn) return false
+      brain.abortTurn()
+      return true
+    },
     sendChat: callbacks.publishChat,
     gate: {
       // Substring, not word-boundary: STT often renders the name with

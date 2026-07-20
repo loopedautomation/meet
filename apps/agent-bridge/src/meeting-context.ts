@@ -72,7 +72,7 @@ export function formatTranscript(
 /**
  * Injects meeting context (roster, prior transcript) into the brain's first
  * turn, whichever path triggers it — a voice turn, a chat mention, or a
- * realtime model's ask_agent delegation. Brains are stateful conversations,
+ * realtime model's do_task delegation. Brains are stateful conversations,
  * so once is enough.
  */
 export function withMeetingContext(
@@ -92,6 +92,7 @@ export function withMeetingContext(
       }
       return brain.runTurn(input, images)
     },
+    abortTurn: brain.abortTurn?.bind(brain),
     close: () => brain.close(),
   }
 }

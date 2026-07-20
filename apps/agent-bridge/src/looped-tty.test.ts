@@ -123,7 +123,7 @@ describe("LoopedTtyClient", () => {
     expect(receivedProtocols).toHaveLength(1)
   })
 
-  it("rejects concurrent turns", async () => {
+  it("queues a turn started while another is in flight", async () => {
     const client = new LoopedTtyClient({
       url: `ws://127.0.0.1:${port}/tty`,
       token: "secret",
@@ -131,12 +131,49 @@ describe("LoopedTtyClient", () => {
     })
     const first = client.runTurn("a")
     await first.next()
-    await expect(async () => {
-      for await (const _ of client.runTurn("b")) {
-        // should throw before yielding
+    const secondTypes: string[] = []
+    const second = (async () => {
+      for await (const frame of client.runTurn("b")) {
+        secondTypes.push(frame.type)
       }
-    }).rejects.toThrow(/already in progress/)
-    await first.return(undefined)
+    })()
+    // The queued turn only starts once the first finishes.
+    expect(secondTypes).toHaveLength(0)
+    for await (const _ of first) {
+      // drain
+    }
+    await second
+    expect(secondTypes.at(-1)).toBe("result")
+    client.close()
+  })
+
+  it("abortTurn cancels the in-flight turn; the next turn reconnects", async () => {
+    server.removeAllListeners("connection")
+    server.on("connection", (socket) => {
+      socket.on("message", (data) => {
+        const frame = JSON.parse(String(data)) as { text: string }
+        if (frame.text === "hang") return // a run that never finishes
+        for (const f of frames(`you said: ${frame.text}`)) {
+          socket.send(JSON.stringify(f))
+        }
+      })
+    })
+    const client = new LoopedTtyClient({
+      url: `ws://127.0.0.1:${port}/tty`,
+      token: "secret",
+      conversationId: "room-scout",
+    })
+    const hung = (async () => {
+      for await (const _ of client.runTurn("hang")) {
+        // no frames expected
+      }
+    })()
+    setTimeout(() => client.abortTurn(), 50)
+    await expect(hung).rejects.toThrow(/cancelled/)
+
+    const types: string[] = []
+    for await (const frame of client.runTurn("ok")) types.push(frame.type)
+    expect(types.at(-1)).toBe("result")
     client.close()
   })
 

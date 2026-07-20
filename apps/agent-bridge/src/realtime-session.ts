@@ -9,8 +9,14 @@
 /** The audio format both directions of the session speak: 24 kHz mono PCM16. */
 export const REALTIME_SAMPLE_RATE = 24_000
 
-/** The tool the realtime model calls to put the agent to work. */
-export const DELEGATE_TOOL = "ask_agent"
+/** The tool the realtime model calls to do focused work with its own tools. */
+export const DELEGATE_TOOL = "do_task"
+
+/** The tool the realtime model calls to stop an in-flight background task. */
+export const CANCEL_TOOL = "cancel_task"
+
+/** How long a task may take before it goes to the background. */
+const TASK_ACK_MS = 8_000
 
 /** The tool the realtime model calls to post into the meeting chat. */
 export const CHAT_TOOL = "send_chat_message"
@@ -25,6 +31,11 @@ export type RealtimeSessionOptions = {
   instructions: string
   /** Runs the prompt through the looped agent and resolves with the reply. */
   delegate: (request: string) => Promise<string>
+  /**
+   * Stop the in-flight background task. Returns true if there was one.
+   * The aborted delegate promise is expected to reject with "cancelled".
+   */
+  cancelWork?: () => boolean
   /** Post a message into the meeting chat on the agent's behalf. */
   sendChat?: (text: string) => void
   /** Speak these 24 kHz mono PCM16 bytes into the room. */
@@ -159,23 +170,34 @@ export class RealtimeSession {
               type: "function",
               name: DELEGATE_TOOL,
               description:
-                "Ask the agent to do something on your behalf. It has this agent's tools, " +
-                "memory and permissions but takes several seconds, so use it only when you " +
-                "actually need it: taking an action, looking something up, or answering about " +
-                "systems, data or private state. Answer general questions and conversation " +
-                "yourself, directly. When you do call it, say a few words first so the person " +
-                "knows you are working on it.",
+                "Go do focused work yourself: this runs your own tools, memory and " +
+                "permissions — it is you working, not another agent, so never describe it " +
+                "as asking or waiting on someone else. It takes seconds to minutes, so use " +
+                "it only when you actually need it: taking an action, looking something up, " +
+                "or answering about systems, data or private state. Answer general " +
+                "questions and conversation directly. When you start a task, say a few " +
+                "words first so the person knows you're on it. If it takes long, it " +
+                "continues in the background and you'll receive a [task finished] note — " +
+                "until then, keep conversing normally and never invent a result.",
               parameters: {
                 type: "object",
                 properties: {
                   request: {
                     type: "string",
                     description:
-                      "What to ask the agent, in full sentences and self-contained.",
+                      "What to work on, in full sentences and self-contained.",
                   },
                 },
                 required: ["request"],
               },
+            },
+            {
+              type: "function",
+              name: CANCEL_TOOL,
+              description:
+                "Stop the background task you are currently working on, e.g. when " +
+                "someone tells you to stop, never mind, or changes their request.",
+              parameters: { type: "object", properties: {} },
             },
             {
               type: "function",
@@ -278,6 +300,8 @@ export class RealtimeSession {
             call_id: String(event.call_id),
             arguments: String(event.arguments),
           })
+        } else if (event.name === CANCEL_TOOL) {
+          this.#cancelTask(String(event.call_id))
         } else {
           void this.#delegate({
             call_id: String(event.call_id),
@@ -292,21 +316,88 @@ export class RealtimeSession {
   }
 
   /**
-   * The model asked the agent for something. Run it, hand the answer back as
-   * the tool's result, and ask for a spoken response. A failed run comes back
-   * as text too — the model can tell the person what broke.
+   * The model started a task. Quick tasks resolve as the tool's result;
+   * anything slower is acknowledged immediately so the conversation stays
+   * live, and the outcome lands later as a [task finished] note. Failures
+   * come back as text too — the model can tell the person what broke.
    */
   async #delegate(call: { call_id: string; arguments: string }) {
-    let output: string
-    try {
-      const { request } = JSON.parse(call.arguments) as { request: string }
-      output = await this.#opts.delegate(request)
-    } catch (err) {
-      output = `The agent could not answer: ${(err as Error).message}`
+    const finish = (output: string) => {
+      this.#send({
+        type: "conversation.item.create",
+        item: { type: "function_call_output", call_id: call.call_id, output },
+      })
+      this.#send({ type: "response.create" })
     }
+
+    let request: string
+    try {
+      request = (JSON.parse(call.arguments) as { request: string }).request
+    } catch (err) {
+      finish(`You couldn't start that task: ${(err as Error).message}`)
+      return
+    }
+
+    const work = this.#opts.delegate(request).then(
+      (reply) => ({ ok: true as const, reply }),
+      (err: Error) => ({ ok: false as const, reply: err.message }),
+    )
+    const backgrounded = Symbol("backgrounded")
+    const settled = await Promise.race([
+      work,
+      new Promise<typeof backgrounded>((resolve) =>
+        setTimeout(() => resolve(backgrounded), TASK_ACK_MS),
+      ),
+    ])
+
+    if (settled !== backgrounded) {
+      finish(
+        settled.ok
+          ? settled.reply
+          : `You couldn't finish that task: ${settled.reply}`,
+      )
+      return
+    }
+
+    finish(
+      "The task is taking a while, so it's continuing in the background. " +
+        "Briefly let the person know you're still on it if you haven't; " +
+        "you'll get a [task finished] note here with the outcome — do not " +
+        "report or invent a result before then.",
+    )
+    const result = await work
+    const note = result.ok
+      ? `[task finished] Your background task is done. Outcome:\n${result.reply}`
+      : result.reply === "cancelled"
+        ? "[task cancelled] Your background task was stopped before finishing."
+        : `[task failed] Your background task failed: ${result.reply}`
     this.#send({
       type: "conversation.item.create",
-      item: { type: "function_call_output", call_id: call.call_id, output },
+      item: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: note }],
+      },
+    })
+    // Speak to the outcome unless mid-reply; then it surfaces next turn.
+    // A cancelled task stays silent — the cancel_task ack already spoke.
+    if (!this.#responding && !note.startsWith("[task cancelled]")) {
+      this.#send({ type: "response.create" })
+    }
+  }
+
+  /** The model wants to stop its in-flight background task. */
+  #cancelTask(callId: string) {
+    const stopped = this.#opts.cancelWork?.() ?? false
+    this.#send({
+      type: "conversation.item.create",
+      item: {
+        type: "function_call_output",
+        call_id: callId,
+        output: stopped
+          ? "Stopped. The task will not finish."
+          : "There was no task running.",
+      },
     })
     this.#send({ type: "response.create" })
   }
