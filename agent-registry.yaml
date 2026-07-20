@@ -16,7 +16,7 @@ agents:
     # Speech-to-speech interaction layer; tool work is delegated to the brain.
     realtime:
       model: gpt-realtime-2.1
-      voice: marin
+      voice: cedar
     # Fallback pipeline config (used only if `realtime` is removed).
     stt:
       provider: openai
