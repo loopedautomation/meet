@@ -139,5 +139,23 @@ services:
       - "8300"
     restart: unless-stopped
 
+  datamaker-github:
+    # GitHub assistant for automators-com/datamaker + auth (registry id
+    # `datamaker-github`). Requires agent-framework >= 0.9 (tty trigger).
+    image: ghcr.io/loopedautomation/meet-datamaker-github:${IMAGE_TAG:-latest}
+    pull_policy: always
+    volumes:
+      - datamaker-github-data:/data
+    <<: *local-env
+    # Secrets (ANTHROPIC_API_KEY, GITHUB_TOKEN, DATAMAKER_GITHUB_TTY_TOKEN)
+    # come from Infisical in production, or from the root .env locally.
+    environment:
+      <<: *infisical
+      INFISICAL_SECRETS_PATH: "/apps/datamaker-github /shared"
+    expose:
+      - "8300"
+    restart: unless-stopped
+
 volumes:
   demo-agent-data:
+  datamaker-github-data:

@@ -19,3 +19,7 @@ services:
     build:
       context: .
       dockerfile: examples/demo-agent/Dockerfile
+  datamaker-github:
+    build:
+      context: .
+      dockerfile: examples/datamaker-github-agent/Dockerfile

@@ -40,6 +40,8 @@ jobs:
             dockerfile: docker/livekit.Dockerfile
           - service: demo-agent
             dockerfile: examples/demo-agent/Dockerfile
+          - service: datamaker-github
+            dockerfile: examples/datamaker-github-agent/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
