@@ -59,6 +59,11 @@ export function AgentsPanel({ slug }: { slug: string }) {
       .filter(([id]) => id),
   )
 
+  // One mutation serves every row, so isPending alone would disable all the
+  // Invite buttons at once — scope it to the agent actually being invited.
+  const isInviting = (agentId: string) =>
+    invite.isPending && invite.variables?.agentId === agentId
+
   return (
     <div className="flex h-full flex-col">
       <ul className="space-y-2 p-4">
@@ -75,16 +80,18 @@ export function AgentsPanel({ slug }: { slug: string }) {
           return (
             <li
               key={agent.id}
-              className="flex items-center gap-3 rounded-field bg-base-200 p-3"
+              className="flex flex-col gap-2 rounded-field bg-base-200 p-3"
             >
-              <Bot className="size-5 shrink-0 text-primary" />
-              <div className="min-w-0 flex-1">
-                <p className="truncate font-medium text-sm">{agent.name}</p>
-                {agent.description && (
-                  <p className="truncate text-base-content/60 text-xs">
-                    {agent.description}
-                  </p>
-                )}
+              <div className="flex items-center gap-3">
+                <Bot className="size-5 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-medium text-sm">{agent.name}</p>
+                  {agent.description && (
+                    <p className="text-base-content/60 text-xs">
+                      {agent.description}
+                    </p>
+                  )}
+                </div>
               </div>
               {participant ? (
                 isHost ? (
@@ -105,9 +112,9 @@ export function AgentsPanel({ slug }: { slug: string }) {
                   <span className="badge badge-ghost badge-sm">in call</span>
                 )
               ) : isHost ? (
-                <div className="join">
+                <div className="join w-full">
                   <select
-                    className="select select-sm join-item w-24"
+                    className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
                     value={modes[agent.id] ?? ""}
                     onChange={(e) =>
                       setModes((m) => ({
@@ -119,12 +126,12 @@ export function AgentsPanel({ slug }: { slug: string }) {
                   >
                     <option value="">Default</option>
                     <option value="realtime">Realtime</option>
-                    <option value="pipeline">Pipeline</option>
+                    <option value="pipeline">STT + TTS</option>
                   </select>
                   <button
                     type="button"
                     className="btn btn-primary btn-sm join-item"
-                    disabled={invite.isPending}
+                    disabled={isInviting(agent.id)}
                     onClick={() =>
                       invite.mutate({
                         agentId: agent.id,
@@ -133,7 +140,11 @@ export function AgentsPanel({ slug }: { slug: string }) {
                       })
                     }
                   >
-                    <Plus className="size-4" />
+                    {isInviting(agent.id) ? (
+                      <span className="loading loading-spinner loading-xs" />
+                    ) : (
+                      <Plus className="size-4" />
+                    )}
                     Invite
                   </button>
                 </div>
@@ -255,7 +266,7 @@ function InviteByUrl({ slug }: { slug: string }) {
         onChange={(e) => setToken(e.target.value)}
       />
       <select
-        className="select select-sm w-full"
+        className="select select-sm w-full border border-base-300"
         value={voice}
         onChange={(e) => setVoice(e.target.value)}
         aria-label="Agent voice"
