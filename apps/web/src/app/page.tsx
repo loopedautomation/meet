@@ -34,11 +34,11 @@ export default function HomePage() {
           Open source · self-hosted
         </span>
         <h1 className="max-w-2xl text-balance font-semibold text-4xl tracking-tight sm:text-5xl">
-          Give your agents a voice in your next meeting
+          Dial your agent into your next meeting
         </h1>
         <p className="max-w-xl text-balance text-base-content/70 text-lg">
-          And let them be part of the conversation. Open-source video calls with
-          first-class AI participants, powered by the looped agent framework.
+          Open-source, self-hostable video meetings with first-class AI
+          participants, powered by the looped agent framework.
         </p>
         <HomeActions />
       </section>
