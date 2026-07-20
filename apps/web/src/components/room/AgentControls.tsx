@@ -1,15 +1,11 @@
 "use client"
 
-import {
-  useDataChannel,
-  useParticipantAttributes,
-} from "@livekit/components-react"
+import { useParticipantAttributes } from "@livekit/components-react"
 import {
   AGENT_DEAFENED_ATTRIBUTE,
   AGENT_MUTED_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
   type AgentControl,
-  DataTopic,
   type TurnPolicy,
 } from "@meet/shared"
 import type { Participant } from "livekit-client"
@@ -29,11 +25,19 @@ import { useParams } from "next/navigation"
 import { useState } from "react"
 import { useAgentState } from "@/components/room/AgentBadge"
 import { useAgentInvite } from "@/hooks/mutations/useAgentInvite"
+import { useAgentPermissions } from "@/hooks/useRoomSettings"
+import { useSendAgentControl } from "@/hooks/useSendAgentControl"
 
 /**
- * The host's per-agent controls, shared between the Agents panel (horizontal,
- * with a caption line for tips) and the agent's video tile (vertical overlay,
+ * Per-agent controls, shared between the Agents panel (horizontal, with a
+ * caption line for tips) and the agent's video tile (vertical overlay,
  * native title tooltips).
+ *
+ * Everyone sees them: an agent talking over the room is the room's problem,
+ * not just the organiser's. A host who wants a tighter meeting can turn off
+ * `participantsCanControlAgents`, and the buttons stay visible but inert —
+ * showing what exists and who may use it beats hiding it and leaving people
+ * to wonder why the agent won't stop.
  */
 export function AgentControls({
   agentId,
@@ -42,6 +46,7 @@ export function AgentControls({
   sendControl,
   vertical,
   withCaption,
+  disabled,
 }: {
   agentId: string
   participant: Participant
@@ -49,6 +54,8 @@ export function AgentControls({
   sendControl: (control: AgentControl) => void
   vertical?: boolean
   withCaption?: boolean
+  /** Visible but not pressable — the host reserved agent controls. */
+  disabled?: boolean
 }) {
   const state = useAgentState(participant)
   const { attributes } = useParticipantAttributes({ participant })
@@ -95,6 +102,7 @@ export function AgentControls({
         onMouseLeave={() => setTip(null)}
       >
         <ControlButton
+          disabled={disabled}
           onTip={withCaption ? setTip : undefined}
           tip={policyTip[policy]}
           active={policy !== "open"}
@@ -115,6 +123,7 @@ export function AgentControls({
           )}
         </ControlButton>
         <ControlButton
+          disabled={disabled}
           onTip={withCaption ? setTip : undefined}
           tip={zapTip}
           active={zapped}
@@ -123,6 +132,7 @@ export function AgentControls({
           <Zap className="size-4" />
         </ControlButton>
         <ControlButton
+          disabled={disabled}
           onTip={withCaption ? setTip : undefined}
           tip={
             state === "speaking"
@@ -135,6 +145,7 @@ export function AgentControls({
           <CircleStop className="size-4" />
         </ControlButton>
         <ControlButton
+          disabled={disabled}
           onTip={withCaption ? setTip : undefined}
           tip={muteTip}
           alert={muted}
@@ -145,6 +156,7 @@ export function AgentControls({
           {muted ? <MicOff className="size-4" /> : <Mic className="size-4" />}
         </ControlButton>
         <ControlButton
+          disabled={disabled}
           onTip={withCaption ? setTip : undefined}
           tip={deafenTip}
           alert={deafened}
@@ -159,6 +171,7 @@ export function AgentControls({
           )}
         </ControlButton>
         <ControlButton
+          disabled={disabled}
           onTip={withCaption ? setTip : undefined}
           tip="Remove the agent from the meeting"
           danger
@@ -176,7 +189,7 @@ export function AgentControls({
   )
 }
 
-/** Self-contained vertical overlay for the agent's video tile (host only). */
+/** Self-contained vertical overlay for the agent's video tile. */
 export function AgentTileControls({
   agentId,
   participant,
@@ -186,7 +199,9 @@ export function AgentTileControls({
 }) {
   const { slug } = useParams<{ slug: string }>()
   const invite = useAgentInvite(slug)
-  const { send } = useDataChannel(DataTopic.AgentControl)
+  const sendControl = useSendAgentControl()
+  const { canControl } = useAgentPermissions()
+  const agentName = participant.name || participant.identity
 
   return (
     <div className="absolute top-1/2 right-2 z-10 -translate-y-1/2 rounded-field bg-base-100/70 p-1 backdrop-blur">
@@ -194,13 +209,20 @@ export function AgentTileControls({
         agentId={agentId}
         participant={participant}
         vertical
-        onRemove={() => invite.mutate({ agentId, action: "remove" })}
-        sendControl={(control) =>
-          send(new TextEncoder().encode(JSON.stringify(control)), {
-            topic: DataTopic.AgentControl,
-            reliable: true,
-          })
+        disabled={!canControl}
+        onRemove={() =>
+          invite.mutate(
+            { agentId, action: "remove" },
+            // Removal goes through the control API, so it has no data
+            // message of its own — announce it once it lands, or the agent
+            // just vanishes and nobody knows who did it.
+            {
+              onSuccess: () =>
+                sendControl({ type: "remove", agentId }, agentName),
+            },
+          )
         }
+        sendControl={(control) => sendControl(control, agentName)}
       />
     </div>
   )
@@ -216,11 +238,14 @@ function ControlButton({
   active,
   alert,
   danger,
+  disabled,
   onClick,
   onTip,
   children,
 }: {
   tip: string
+  /** Shown, but reserved for the host. */
+  disabled?: boolean
   /** A behavioural mode the host switched on (hand-raising, zap). */
   active?: boolean
   /** A capability the host took away (muted, deafened). */
@@ -239,15 +264,20 @@ function ControlButton({
       : active
         ? "btn-primary"
         : "btn-ghost"
+  // A disabled button still reports the agent's state (muted, hand-raised);
+  // the tip explains why it can't be pressed rather than leaving a dead
+  // control to be discovered by clicking it.
+  const label = disabled ? `${tip} (the meeting's organiser only)` : tip
   return (
     <button
       type="button"
-      aria-label={tip}
-      title={onTip ? undefined : tip}
-      className={`btn btn-circle btn-sm ${tone}`}
+      aria-label={label}
+      title={onTip ? undefined : label}
+      disabled={disabled}
+      className={`btn btn-circle btn-sm ${tone} ${disabled ? "!bg-transparent cursor-not-allowed opacity-40" : ""}`}
       onClick={onClick}
-      onMouseEnter={() => onTip?.(tip)}
-      onFocus={() => onTip?.(tip)}
+      onMouseEnter={() => onTip?.(label)}
+      onFocus={() => onTip?.(label)}
       onBlur={() => onTip?.(null)}
     >
       {children}

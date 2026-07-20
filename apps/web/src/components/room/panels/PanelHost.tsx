@@ -40,7 +40,7 @@ export function PanelHost({ slug }: { slug: string }) {
         {openPanel === "transcript" && <TranscriptPanel />}
         {openPanel === "chat" && <ChatPanel />}
         {openPanel === "participants" && <ParticipantsPanel slug={slug} />}
-        {openPanel === "settings" && <SettingsPanel />}
+        {openPanel === "settings" && <SettingsPanel slug={slug} />}
       </div>
     </aside>
   )

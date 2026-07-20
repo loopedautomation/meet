@@ -4,20 +4,19 @@ import {
   isTrackReference,
   type TrackReferenceOrPlaceholder,
   useConnectionQualityIndicator,
-  useDataChannel,
   useIsMuted,
   useIsSpeaking,
   useParticipantAttributes,
   VideoTrack,
 } from "@livekit/components-react"
-import { DataTopic, HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
-import { useStore } from "@nanostores/react"
+import { HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
 import { ConnectionQuality, Track } from "livekit-client"
 import { Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { AgentBadge, useAgentState } from "@/components/room/AgentBadge"
 import { AgentTileControls } from "@/components/room/AgentControls"
-import { $isHost } from "@/stores/host"
+import { useAgentPermissions } from "@/hooks/useRoomSettings"
+import { useSendAgentControl } from "@/hooks/useSendAgentControl"
 
 type ParticipantTileProps = {
   trackRef: TrackReferenceOrPlaceholder
@@ -33,13 +32,16 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   })
   const meta = parseParticipantMeta(participant.metadata)
   const isAgent = meta?.kind === "agent"
+  // Narrowed through a const so the click handlers below see a string, not
+  // string | undefined.
+  const agentId = meta?.agentId
   const { quality } = useConnectionQualityIndicator({ participant })
   const { attributes } = useParticipantAttributes({ participant })
   const isAway = attributes?.away === "1"
   const handUp = attributes?.[HAND_ATTRIBUTE] === "1"
   const agentState = useAgentState(participant)
-  const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
-  const isHost = useStore($isHost)
+  const sendControl = useSendAgentControl()
+  const { canControl } = useAgentPermissions()
   const name = participant.name || participant.identity
   const hasVideo = isTrackReference(trackRef) && !trackRef.publication.isMuted
   // A phone in portrait publishes a taller-than-wide track; cropping it into
@@ -101,18 +103,11 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
       )}
 
       {/* Call on: lets a hand-raised (on-mention policy) agent take a turn. */}
-      {isAgent && meta?.agentId && agentState === "hand-raised" && (
+      {isAgent && agentId && agentState === "hand-raised" && canControl && (
         <button
           type="button"
           className="btn btn-primary btn-xs absolute top-2 right-2 z-10 gap-1"
-          onClick={() =>
-            sendControl(
-              new TextEncoder().encode(
-                JSON.stringify({ type: "call-on", agentId: meta.agentId }),
-              ),
-              { topic: DataTopic.AgentControl, reliable: true },
-            )
-          }
+          onClick={() => sendControl({ type: "call-on", agentId }, name)}
         >
           <Hand className="size-3" />
           Call on
@@ -120,28 +115,22 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
       )}
 
       {/* Tap to interrupt: cuts the agent off mid-sentence. */}
-      {isAgent && meta?.agentId && agentState === "speaking" && (
+      {isAgent && agentId && agentState === "speaking" && canControl && (
         <button
           type="button"
           className="btn btn-warning btn-xs absolute top-2 right-2 z-10 gap-1"
-          onClick={() =>
-            sendControl(
-              new TextEncoder().encode(
-                JSON.stringify({ type: "interrupt", agentId: meta.agentId }),
-              ),
-              { topic: DataTopic.AgentControl, reliable: true },
-            )
-          }
+          onClick={() => sendControl({ type: "interrupt", agentId }, name)}
         >
           <Hand className="size-3" />
           Interrupt
         </button>
       )}
 
-      {/* The host's full agent controls, stacked along the tile's right
-          edge. Hidden on compact tiles — no room, and the panel covers it. */}
-      {isAgent && meta?.agentId && isHost && !compact && (
-        <AgentTileControls agentId={meta.agentId} participant={participant} />
+      {/* Full agent controls, stacked along the tile's right edge — everyone
+          sees them; they're inert for non-hosts if the host reserved them.
+          Hidden on compact tiles: no room, and the panel covers it. */}
+      {isAgent && agentId && !compact && (
+        <AgentTileControls agentId={agentId} participant={participant} />
       )}
 
       {handUp && (
