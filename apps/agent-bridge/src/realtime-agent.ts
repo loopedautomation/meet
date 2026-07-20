@@ -88,9 +88,11 @@ export async function runRealtimeAgent(opts: {
       voice: realtime.voice,
       brain: "looped-af (tty, via ask_agent)",
       "turn detection":
-        entry.turn_policy === "on-mention"
-          ? "server vad, gated (speaks on mention/call-on)"
-          : "server vad",
+        entry.turn_policy === "open"
+          ? "server vad"
+          : entry.turn_policy === "raise-hand"
+            ? "server vad, gated (raises hand; speaks on mention/call-on)"
+            : "server vad, gated (speaks on mention/call-on)",
       "turn policy": entry.turn_policy,
       "echo control": "half-duplex",
       "noise suppression": "room transcriber (gtcrn)",
@@ -122,15 +124,32 @@ export async function runRealtimeAgent(opts: {
     }
     try {
       let reply = ""
+      // The brain's tool activity streams to the room's activity feed, but
+      // the realtime model only hears the final reply — so it can't speak to
+      // what was actually done ("I filed issue #42"). Digest the tool calls
+      // and hand them back with the reply.
+      const actions: string[] = []
+      let pendingCall: string | null = null
       for await (const frame of brain.runTurn(input, images)) {
         publishBrainActivity(entry.id, frame, callbacks)
         if (frame.type === "assistant") {
           reply += (reply ? "\n" : "") + frame.content
+        } else if (frame.type === "tool_call") {
+          pendingCall = `${frame.name}(${frame.arguments.slice(0, 120)})`
+        } else if (frame.type === "tool_result") {
+          if (actions.length < 12) {
+            const result = frame.content.replace(/\s+/g, " ").slice(0, 150)
+            actions.push(`${pendingCall ?? frame.name} -> ${result}`)
+          }
+          pendingCall = null
         } else if (frame.type === "error") {
           throw new Error(frame.error)
         }
       }
-      return reply || "(the agent had nothing to add)"
+      const digest = actions.length
+        ? `\n\n[For your own awareness — the tool actions behind this answer, so you can speak to them naturally and accurately:\n${actions.join("\n")}]`
+        : ""
+      return (reply || "(the agent had nothing to add)") + digest
     } finally {
       stats.latencyMs["brain delegation"] = Date.now() - startedAt
       publishStats()
@@ -144,6 +163,9 @@ export async function runRealtimeAgent(opts: {
   // instead of resuming the cancelled reply.
   let writeChain: Promise<void> = Promise.resolve()
   let generation = 0
+  // Guards delayed idle transitions: bumped whenever speech (re)starts so a
+  // stale playout-drain can't overwrite a newer "speaking" state.
+  let idleGen = 0
   const enqueueAudio = (samples: Int16Array) => {
     const gen = generation
     writeChain = writeChain
@@ -162,7 +184,7 @@ export async function runRealtimeAgent(opts: {
   // silent deliberation must not clear it).
   // The gate follows the session's turn policy, which the meeting's host can
   // flip mid-call; `gate` below is installed once and consults it each turn.
-  const gated = () => state.turnPolicy === "on-mention"
+  const gated = () => state.turnPolicy !== "open"
   let handRaised = false
   let zapTimer: ReturnType<typeof setTimeout> | null = null
   let zappedUntil = 0
@@ -181,7 +203,12 @@ export async function runRealtimeAgent(opts: {
       // Substring, not word-boundary: STT often renders the name with
       // possessives or punctuation attached ("Scout's", "scout?").
       mention: new RegExp(entry.name.replace(/[^a-z0-9]/gi, ""), "i"),
+      // Under raise-hand, a mention only raises the hand; the floor is
+      // granted exclusively by call-on.
+      mentionSpeaks: () => state.turnPolicy !== "raise-hand",
       onHandRaise: () => {
+        // Strict on-mention keeps the hand down — silence is the point.
+        if (state.turnPolicy !== "raise-hand") return
         handRaised = true
         if (!state.muted) callbacks.setState("hand-raised")
       },
@@ -208,12 +235,24 @@ export async function runRealtimeAgent(opts: {
       source.clearQueue()
     },
     onSpeaking: () => {
+      idleGen++
       handRaised = false
       if (!state.muted) callbacks.setState("speaking")
     },
     onIdle: () => {
-      if (handRaised && !state.muted) return
-      callbacks.setState(idleState())
+      // onIdle fires when the model finishes *generating* — long before the
+      // buffered audio finishes *playing*. Hold the "speaking" state until
+      // playout drains, or the badge flashes for a second on a 20s answer
+      // and the interrupt affordance never has time to exist.
+      const gen = ++idleGen
+      void source
+        .waitForPlayout()
+        .catch(() => undefined)
+        .then(() => {
+          if (gen !== idleGen) return
+          if (handRaised && !state.muted) return
+          callbacks.setState(idleState())
+        })
     },
     onError: (msg) => {
       console.error(`[${entry.id}] realtime: ${msg}`)
@@ -339,9 +378,11 @@ export async function runRealtimeAgent(opts: {
         session.setGateOpen(control.policy === "open")
         callbacks.setState(idleState())
         stats.config["turn detection"] =
-          control.policy === "on-mention"
-            ? "server vad, gated (speaks on mention/call-on)"
-            : "server vad"
+          control.policy === "open"
+            ? "server vad"
+            : control.policy === "raise-hand"
+              ? "server vad, gated (raises hand; speaks on mention/call-on)"
+              : "server vad, gated (speaks on mention/call-on)"
         stats.config["turn policy"] = control.policy
         publishStats()
       } else if (control.type === "call-on") {

@@ -22,6 +22,7 @@ import {
   readLocalSttPref,
   useLocalTranscription,
 } from "@/hooks/useLocalTranscription"
+import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -37,6 +38,7 @@ export function MeetingView({
   useKnockAlerts(slug)
   useAwayOnHidden()
   useLocalTranscription(readLocalSttPref())
+  useMutedSpeakingToast()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },

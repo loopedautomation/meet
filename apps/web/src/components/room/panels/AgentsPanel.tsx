@@ -8,7 +8,7 @@ import {
   parseParticipantMeta,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Bot, Plus, Wrench } from "lucide-react"
+import { Bot, ChevronDown, Plus, Wrench } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { AgentControls } from "@/components/room/AgentControls"
@@ -33,6 +33,8 @@ export function AgentsPanel({ slug }: { slug: string }) {
   // Per-agent interaction-mode choice ("" = the agent's registry default).
   // Meeting-level, not agent-level: any brain can front realtime or pipeline.
   const [modes, setModes] = useState<Record<string, AgentMode | "">>({})
+  // Accordion: one card open at a time; collapsed rows are just icon + name.
+  const [expanded, setExpanded] = useState<string | null>(null)
 
   const agentParticipants = new Map(
     participants
@@ -45,108 +47,138 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const isInviting = (agentId: string) =>
     invite.isPending && invite.variables?.agentId === agentId
 
+  // URL-invited agents aren't in the registry, but they're in the room —
+  // give them a row too, or they'd have a tile but no panel presence.
+  const registryIds = new Set(agents.map((a) => a.id))
+  const dynamicAgents = [...agentParticipants.entries()]
+    .filter(([id]) => id && !registryIds.has(id))
+    .map(([id, p]) => ({
+      id: id as string,
+      name: p.name || (id as string),
+      description: "Invited by URL",
+    }))
+  const allAgents = [...agents, ...dynamicAgents]
+
   return (
+    // Two scroll regions: the agent list (with invite + stats) takes the
+    // flexible space; the activity feed keeps a bounded strip at the bottom.
+    // Without this the h-full column inside the panel's own scroll container
+    // pinned to viewport height and neither section scrolled properly.
     <div className="flex h-full flex-col">
-      <ul className="space-y-2 p-4">
-        {isLoading && (
-          <li className="text-base-content/50 text-sm">Loading agents…</li>
-        )}
-        {!isLoading && agents.length === 0 && (
-          <li className="text-base-content/50 text-sm">
-            No agents registered. Add them to agent-registry.yaml.
-          </li>
-        )}
-        {agents.map((agent) => {
-          const participant = agentParticipants.get(agent.id)
-          return (
-            <li
-              key={agent.id}
-              className="flex flex-col gap-2 rounded-field bg-base-200 p-3"
-            >
-              <div className="flex items-center gap-3">
-                <Bot className="size-5 shrink-0 text-primary" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-sm">{agent.name}</p>
-                  {agent.description && (
-                    <p className="text-base-content/60 text-xs">
-                      {agent.description}
-                    </p>
-                  )}
-                </div>
-              </div>
-              {participant ? (
-                isHost ? (
-                  <AgentControls
-                    withCaption
-                    agentId={agent.id}
-                    participant={participant}
-                    onRemove={() =>
-                      invite.mutate({ agentId: agent.id, action: "remove" })
-                    }
-                    sendControl={(control) =>
-                      sendControl(
-                        new TextEncoder().encode(JSON.stringify(control)),
-                        { topic: DataTopic.AgentControl, reliable: true },
-                      )
-                    }
-                  />
-                ) : (
-                  <span className="badge badge-ghost badge-sm">in call</span>
-                )
-              ) : isHost ? (
-                <div className="join w-full">
-                  <select
-                    className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
-                    value={modes[agent.id] ?? ""}
-                    onChange={(e) =>
-                      setModes((m) => ({
-                        ...m,
-                        [agent.id]: e.target.value as AgentMode | "",
-                      }))
-                    }
-                    aria-label="Interaction mode"
-                  >
-                    <option value="">Default</option>
-                    <option value="realtime">Realtime</option>
-                    <option value="pipeline">STT + TTS</option>
-                  </select>
-                  <button
-                    type="button"
-                    className="btn btn-primary btn-sm join-item"
-                    disabled={isInviting(agent.id)}
-                    onClick={() =>
-                      invite.mutate({
-                        agentId: agent.id,
-                        action: "invite",
-                        mode: modes[agent.id] || undefined,
-                      })
-                    }
-                  >
-                    {isInviting(agent.id) ? (
-                      <span className="loading loading-spinner loading-xs" />
-                    ) : (
-                      <Plus className="size-4" />
-                    )}
-                    Invite
-                  </button>
-                </div>
-              ) : null}
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ul className="space-y-2 p-4">
+          {isLoading && (
+            <li className="text-base-content/50 text-sm">Loading agents…</li>
+          )}
+          {!isLoading && allAgents.length === 0 && (
+            <li className="text-base-content/50 text-sm">
+              No agents registered. Add them to agent-registry.yaml.
             </li>
-          )
-        })}
-      </ul>
+          )}
+          {allAgents.map((agent) => {
+            const participant = agentParticipants.get(agent.id)
+            const open = expanded === agent.id
+            return (
+              <li
+                key={agent.id}
+                className="flex flex-col gap-2 rounded-field bg-base-200 p-3"
+              >
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-3 text-left"
+                  aria-expanded={open}
+                  onClick={() => setExpanded(open ? null : agent.id)}
+                >
+                  <Bot className="size-5 shrink-0 text-primary" />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate font-medium text-sm">{agent.name}</p>
+                    {open && agent.description && (
+                      <p className="text-base-content/60 text-xs">
+                        {agent.description}
+                      </p>
+                    )}
+                  </div>
+                  {participant && (
+                    <span className="badge badge-ghost badge-sm shrink-0">
+                      in call
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={`size-4 shrink-0 text-base-content/40 transition-transform ${open ? "rotate-180" : ""}`}
+                  />
+                </button>
+                {!open ? null : participant ? (
+                  isHost ? (
+                    <AgentControls
+                      withCaption
+                      agentId={agent.id}
+                      participant={participant}
+                      onRemove={() =>
+                        invite.mutate({ agentId: agent.id, action: "remove" })
+                      }
+                      sendControl={(control) =>
+                        sendControl(
+                          new TextEncoder().encode(JSON.stringify(control)),
+                          { topic: DataTopic.AgentControl, reliable: true },
+                        )
+                      }
+                    />
+                  ) : null // non-hosts already see "in call" in the header
+                ) : isHost ? (
+                  <div className="join w-full">
+                    <select
+                      className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
+                      value={modes[agent.id] ?? ""}
+                      onChange={(e) =>
+                        setModes((m) => ({
+                          ...m,
+                          [agent.id]: e.target.value as AgentMode | "",
+                        }))
+                      }
+                      aria-label="Interaction mode"
+                    >
+                      <option value="">Default</option>
+                      <option value="realtime">Realtime</option>
+                      <option value="pipeline">STT + TTS</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn btn-primary btn-sm join-item"
+                      disabled={isInviting(agent.id)}
+                      onClick={() =>
+                        invite.mutate({
+                          agentId: agent.id,
+                          action: "invite",
+                          mode: modes[agent.id] || undefined,
+                        })
+                      }
+                    >
+                      {isInviting(agent.id) ? (
+                        <span className="loading loading-spinner loading-xs" />
+                      ) : (
+                        <Plus className="size-4" />
+                      )}
+                      Invite
+                    </button>
+                  </div>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
 
-      {!isHost && (
-        <p className="px-4 pb-2 text-base-content/50 text-xs">
-          The meeting's organiser manages agents.
-        </p>
-      )}
+        {!isHost && (
+          <p className="px-4 pb-2 text-base-content/50 text-xs">
+            The meeting's organiser manages agents.
+          </p>
+        )}
 
-      {isHost && <InviteByUrl slug={slug} />}
+        {isHost && <InviteByUrl slug={slug} />}
 
-      <StatsForNerds agents={agents} />
+        <StatsForNerds agents={agents} />
+      </div>
 
-      <div className="border-base-300 border-t px-4 py-2 font-medium text-base-content/60 text-xs uppercase tracking-wide">
+      <div className="shrink-0 border-base-300 border-t px-4 py-2 font-medium text-base-content/60 text-xs uppercase tracking-wide">
         Activity
       </div>
       <ActivityFeed activity={activity} />
@@ -201,31 +233,107 @@ function StatsForNerds({ agents }: { agents: { id: string; name: string }[] }) {
   )
 }
 
+/**
+ * Successful URL invites, remembered per browser so kicking an agent doesn't
+ * mean retyping its URL and token next time. Token included deliberately —
+ * it's the inviter's own credential on their own device (same trust level as
+ * the stored rejoin token).
+ */
+type RecentAgent = {
+  url: string
+  token: string
+  name: string
+  voice?: string
+  at: number
+}
+const RECENT_AGENTS_KEY = "recentAgents"
+const MAX_RECENT_AGENTS = 5
+
+function readRecentAgents(): RecentAgent[] {
+  if (typeof window === "undefined") return []
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_AGENTS_KEY) ?? "[]")
+    return Array.isArray(list) ? list : []
+  } catch {
+    return []
+  }
+}
+
+function rememberAgent(entry: RecentAgent): RecentAgent[] {
+  const list = [
+    entry,
+    ...readRecentAgents().filter((a) => a.url !== entry.url),
+  ].slice(0, MAX_RECENT_AGENTS)
+  try {
+    localStorage.setItem(RECENT_AGENTS_KEY, JSON.stringify(list))
+  } catch {}
+  return list
+}
+
+function forgetAgent(url: string): RecentAgent[] {
+  const list = readRecentAgents().filter((a) => a.url !== url)
+  try {
+    localStorage.setItem(RECENT_AGENTS_KEY, JSON.stringify(list))
+  } catch {}
+  return list
+}
+
 /** Bring any looped agent into the call by its TTY URL — no registration. */
 function InviteByUrl({ slug }: { slug: string }) {
   const [url, setUrl] = useState("")
   const [token, setToken] = useState("")
+  const [name, setName] = useState("")
   const [voice, setVoice] = useState<string>(AGENT_VOICES[0])
   const [busy, setBusy] = useState(false)
+  const [recent, setRecent] = useState<RecentAgent[]>(readRecentAgents)
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!url.trim()) return
+  const inviteAgent = async (spec: {
+    url: string
+    token: string
+    name?: string
+    voice?: string
+  }) => {
     setBusy(true)
     try {
       const res = await fetch(`/api/rooms/${slug}/agents`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: url.trim(), token: token.trim(), voice }),
+        body: JSON.stringify(spec),
       })
-      const data = (await res.json()) as { error?: string }
+      const data = (await res.json()) as { error?: string; name?: string }
       if (!res.ok) throw new Error(data.error ?? "invite failed")
-      setUrl("")
-      setToken("")
+      setRecent(
+        rememberAgent({
+          url: spec.url,
+          token: spec.token,
+          name: data.name || spec.url,
+          voice: spec.voice,
+          at: Date.now(),
+        }),
+      )
+      return true
     } catch (err) {
       toast.error((err as Error).message)
+      return false
     } finally {
       setBusy(false)
+    }
+  }
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!url.trim()) return
+    if (
+      await inviteAgent({
+        url: url.trim(),
+        token: token.trim(),
+        name: name.trim() || undefined,
+        voice,
+      })
+    ) {
+      setUrl("")
+      setToken("")
+      setName("")
     }
   }
 
@@ -234,6 +342,34 @@ function InviteByUrl({ slug }: { slug: string }) {
       <p className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
         Invite by URL
       </p>
+      {recent.length > 0 && (
+        <ul className="space-y-1">
+          {recent.map((a) => (
+            <li key={a.url} className="flex items-center gap-1">
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs min-w-0 flex-1 justify-start gap-1 font-normal"
+                disabled={busy}
+                title={a.url}
+                onClick={() =>
+                  inviteAgent({ url: a.url, token: a.token, voice: a.voice })
+                }
+              >
+                <Plus className="size-3 shrink-0" />
+                <span className="truncate">{a.name}</span>
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-xs btn-circle text-base-content/40"
+                aria-label={`Forget ${a.name}`}
+                onClick={() => setRecent(forgetAgent(a.url))}
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <input
         className="input input-sm w-full"
         placeholder="your-agent.lpd.sh"
@@ -246,6 +382,12 @@ function InviteByUrl({ slug }: { slug: string }) {
         type="password"
         value={token}
         onChange={(e) => setToken(e.target.value)}
+      />
+      <input
+        className="input input-sm w-full"
+        placeholder="Name (optional)"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
       />
       <select
         className="select select-sm w-full border border-base-300"
@@ -280,9 +422,11 @@ function ActivityFeed({ activity }: { activity: AgentActivityEvent[] }) {
     )
   }
   return (
-    <ul className="min-h-0 flex-1 space-y-1 overflow-y-auto px-4 pb-4">
+    <ul className="max-h-56 shrink-0 space-y-1 overflow-y-auto px-4 pb-4">
       {activity
         .filter((e) => e.type === "tool_call" || e.type === "tool_result")
+        // Newest at the top — the live call is what you came to watch.
+        .reverse()
         .map((e) => (
           <li
             key={`${e.type}-${e.at}`}

@@ -45,8 +45,17 @@ export type RealtimeSessionOptions = {
   gate?: {
     mention: RegExp
     onHandRaise: () => void
+    /**
+     * When false, even a name mention doesn't grant the floor — the agent
+     * raises its hand and waits for callOn() (turn_policy "raise-hand").
+     * Defaults to true (mentions speak, turn_policy "on-mention").
+     */
+    mentionSpeaks?: () => boolean
     /** Observability: every gate decision, with the transcript that drove it. */
-    onDecision?: (transcript: string, decision: "speak" | "deliberate") => void
+    onDecision?: (
+      transcript: string,
+      decision: "speak" | "deliberate" | "raise-hand",
+    ) => void
   }
 }
 
@@ -235,8 +244,16 @@ export class RealtimeSession {
         const transcript = String(event.transcript ?? "")
         if (!transcript.trim()) break
         const mentioned = gate.mention.test(transcript)
-        gate.onDecision?.(transcript, mentioned ? "speak" : "deliberate")
-        if (mentioned) {
+        const speaks = mentioned && (gate.mentionSpeaks?.() ?? true)
+        if (mentioned && !speaks) {
+          // Addressed by name under raise-hand policy: it clearly has the
+          // floor to ask for — no deliberation needed, hand goes straight up.
+          gate.onDecision?.(transcript, "raise-hand")
+          gate.onHandRaise()
+          break
+        }
+        gate.onDecision?.(transcript, speaks ? "speak" : "deliberate")
+        if (speaks) {
           if (!this.#responding) this.#send({ type: "response.create" })
         } else if (!this.#responding) {
           this.#send({

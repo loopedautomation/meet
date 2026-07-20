@@ -16,6 +16,14 @@ export const AGENT_STATE_ATTRIBUTE = "agent.state"
 /** Participant attribute set to "1" while a human has their hand raised. */
 export const HAND_ATTRIBUTE = "hand"
 
+/**
+ * Mute and deafen are independent flags, but `agent.state` can only carry
+ * one value (deafened wins) — so the flags are also published individually
+ * ("1" or absent) and the controls read these, not the display state.
+ */
+export const AGENT_MUTED_ATTRIBUTE = "agent.muted"
+export const AGENT_DEAFENED_ATTRIBUTE = "agent.deafened"
+
 /** Participant attribute holding an agent's effective turn policy. */
 export const AGENT_POLICY_ATTRIBUTE = "agent.policy"
 
@@ -97,7 +105,7 @@ export type AgentVoice = (typeof AGENT_VOICES)[number]
  * - "on-mention": stays quiet unless addressed by name or called on, and
  *   raises its hand when it has something to contribute.
  */
-export const turnPolicySchema = z.enum(["open", "on-mention"])
+export const turnPolicySchema = z.enum(["open", "on-mention", "raise-hand"])
 export type TurnPolicy = z.infer<typeof turnPolicySchema>
 
 /** True for infrastructure participants that the UI should not render. */

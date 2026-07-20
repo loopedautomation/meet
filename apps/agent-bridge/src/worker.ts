@@ -9,6 +9,8 @@ import * as elevenlabs from "@livekit/agents-plugin-elevenlabs"
 import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
+  AGENT_DEAFENED_ATTRIBUTE,
+  AGENT_MUTED_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
   AGENT_STATE_ATTRIBUTE,
   AGENT_VOICES,
@@ -139,6 +141,17 @@ export default defineAgent({
         .setAttributes({ [AGENT_STATE_ATTRIBUTE]: state })
         .catch(() => undefined)
     }
+    // Mute and deafen are independent — publish both flags so the UI's
+    // buttons stay truthful when an agent is muted AND deafened (the single
+    // state attribute can only show one of them).
+    const publishFlags = () => {
+      local
+        .setAttributes({
+          [AGENT_MUTED_ATTRIBUTE]: sessionState.muted ? "1" : "",
+          [AGENT_DEAFENED_ATTRIBUTE]: sessionState.deafened ? "1" : "",
+        })
+        .catch(() => undefined)
+    }
     /** Publish the effective turn policy so the host's toggle reflects it. */
     const publishPolicy = () => {
       local
@@ -240,6 +253,7 @@ export default defineAgent({
                 ? "muted"
                 : "listening",
           )
+          publishFlags()
         } catch {}
       })
       await runRealtimeAgent({
@@ -270,7 +284,14 @@ export default defineAgent({
       // delay turns get committed while their transcript is still empty, so
       // the agent hears nothing (llmNode sees no user input) even though the
       // transcription panel later shows the text.
-      turnHandling: { endpointing: { minDelay: 2 } },
+      // 2s still lost the race in practice (empty-transcript turns → the
+      // agent hears nothing at all); 4s is sluggish but reliable. Tunable
+      // because it's a latency/reliability trade per deployment.
+      turnHandling: {
+        endpointing: {
+          minDelay: Number(process.env.PIPELINE_ENDPOINT_MIN_DELAY ?? 4),
+        },
+      },
       stt: new openai.STT({ model: entry.stt.model }),
       tts:
         entry.tts.provider === "elevenlabs"
@@ -412,6 +433,9 @@ export default defineAgent({
             session.input.setAudioEnabled(true)
             sessionState.notifyUndeafened = true
             setState(sessionState.muted ? "muted" : "listening")
+          }
+          if (["mute", "unmute", "deafen", "undeafen"].includes(control.type)) {
+            publishFlags()
           }
         } catch {
           // ignore malformed control messages

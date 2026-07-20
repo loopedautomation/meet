@@ -27,7 +27,11 @@ const agentEntrySchema = z.object({
   // raises its hand and waits for someone to call on it. For realtime
   // agents this is a hard gate — auto-response is off and audio can only be
   // triggered by a name mention or a call-on.
-  turn_policy: z.enum(["open", "on-mention"]).default("open"),
+  // "open": speaks whenever it has something to say. "on-mention": speaks
+  // only when addressed by name or called on, silent otherwise.
+  // "raise-hand": like on-mention, but raises a hand when it has something,
+  // so a host can call on it.
+  turn_policy: z.enum(["open", "on-mention", "raise-hand"]).default("open"),
   // When present, the agent runs on a realtime speech-to-speech model (the
   // interaction layer) that delegates tool work to the brain — no STT/TTS
   // pipeline. stt/tts below are ignored for realtime agents.

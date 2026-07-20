@@ -5,13 +5,26 @@ import {
   useParticipantAttributes,
 } from "@livekit/components-react"
 import {
+  AGENT_DEAFENED_ATTRIBUTE,
+  AGENT_MUTED_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
   type AgentControl,
   DataTopic,
   type TurnPolicy,
 } from "@meet/shared"
 import type { Participant } from "livekit-client"
-import { Ear, EarOff, Hand, Mic, MicOff, UserX, Zap } from "lucide-react"
+import {
+  AtSign,
+  CircleStop,
+  Ear,
+  EarOff,
+  Hand,
+  Megaphone,
+  Mic,
+  MicOff,
+  UserX,
+  Zap,
+} from "lucide-react"
 import { useParams } from "next/navigation"
 import { useState } from "react"
 import { useAgentState } from "@/components/room/AgentBadge"
@@ -40,10 +53,25 @@ export function AgentControls({
   const state = useAgentState(participant)
   const { attributes } = useParticipantAttributes({ participant })
   const policy = (attributes?.[AGENT_POLICY_ATTRIBUTE] ?? "open") as TurnPolicy
-  const deafened = state === "deafened"
-  const muted = state === "muted"
+  // The dedicated flags are authoritative — mute and deafen are independent
+  // and can both be on, which the single state value can't express. State is
+  // the fallback for agents on an older bridge.
+  const deafened =
+    attributes?.[AGENT_DEAFENED_ATTRIBUTE] === "1" || state === "deafened"
+  const muted = attributes?.[AGENT_MUTED_ATTRIBUTE] === "1" || state === "muted"
   const zapped = state === "zapped"
-  const gated = policy === "on-mention"
+  // Hand button cycles through the three turn policies.
+  const nextPolicy: Record<TurnPolicy, TurnPolicy> = {
+    open: "on-mention",
+    "on-mention": "raise-hand",
+    "raise-hand": "open",
+  }
+  const policyTip: Record<TurnPolicy, string> = {
+    open: "Open — speaks whenever it has something to say",
+    "on-mention": "On mention — speaks only when addressed or called on",
+    "raise-hand":
+      "Raise hand — waits to be called on, raising a hand when it has something",
+  }
 
   const zapTip = zapped
     ? "Zapped — responding freely for 30 seconds"
@@ -68,21 +96,23 @@ export function AgentControls({
       >
         <ControlButton
           onTip={withCaption ? setTip : undefined}
-          tip={
-            gated
-              ? "Hand-raising on — speaks only when addressed or called on"
-              : "Hand-raising off — speaks whenever it has something to say"
-          }
-          active={gated}
+          tip={policyTip[policy]}
+          active={policy !== "open"}
           onClick={() =>
             sendControl({
               type: "set-turn-policy",
               agentId,
-              policy: gated ? "open" : "on-mention",
+              policy: nextPolicy[policy],
             })
           }
         >
-          <Hand className="size-4" />
+          {policy === "raise-hand" ? (
+            <Hand className="size-4" />
+          ) : policy === "on-mention" ? (
+            <AtSign className="size-4" />
+          ) : (
+            <Megaphone className="size-4" />
+          )}
         </ControlButton>
         <ControlButton
           onTip={withCaption ? setTip : undefined}
@@ -91,6 +121,18 @@ export function AgentControls({
           onClick={() => sendControl({ type: "zap", agentId })}
         >
           <Zap className="size-4" />
+        </ControlButton>
+        <ControlButton
+          onTip={withCaption ? setTip : undefined}
+          tip={
+            state === "speaking"
+              ? "Interrupt — cut the agent off mid-sentence"
+              : "Interrupt (the agent isn't speaking right now)"
+          }
+          active={state === "speaking"}
+          onClick={() => sendControl({ type: "interrupt", agentId })}
+        >
+          <CircleStop className="size-4" />
         </ControlButton>
         <ControlButton
           onTip={withCaption ? setTip : undefined}

@@ -280,6 +280,17 @@ export function ControlBar({
       </div>
 
       <div className="flex items-center gap-1">
+        {/* Agents first — it's the most frequently used panel. */}
+        <div className="tooltip tooltip-bottom" data-tip="Agents">
+          <button
+            type="button"
+            className={`btn btn-circle ${openPanel === "agents" ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => togglePanel("agents")}
+            aria-label="Agents"
+          >
+            <Bot className="size-5" />
+          </button>
+        </div>
         <div className="tooltip tooltip-bottom" data-tip="Participants">
           <button
             type="button"
@@ -293,16 +304,6 @@ export function ControlBar({
               </span>
             )}
             <Users className="size-5" />
-          </button>
-        </div>
-        <div className="tooltip tooltip-bottom" data-tip="Agents">
-          <button
-            type="button"
-            className={`btn btn-circle ${openPanel === "agents" ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => togglePanel("agents")}
-            aria-label="Agents"
-          >
-            <Bot className="size-5" />
           </button>
         </div>
         <div className="tooltip tooltip-bottom" data-tip="Transcript">
