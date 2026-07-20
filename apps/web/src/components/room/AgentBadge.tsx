@@ -31,12 +31,13 @@ export function AgentBadge({ participant }: { participant: Participant }) {
   return (
     <span
       className={`badge badge-sm gap-1 ${
-        state === "muted" ||
-        state === "deafened" ||
-        state === "hand-raised" ||
-        state === "zapped"
-          ? "badge-warning"
-          : "badge-primary"
+        // Red where a capability has been taken away, green where the agent
+        // is actively engaged, primary for its ordinary working states.
+        state === "muted" || state === "deafened"
+          ? "badge-error"
+          : state === "zapped" || state === "hand-raised"
+            ? "badge-success"
+            : "badge-primary"
       }`}
     >
       {state === "muted" ? (

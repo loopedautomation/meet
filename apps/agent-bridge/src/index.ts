@@ -55,6 +55,12 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   const { room, id } = c.req.param()
   const entry = loadRegistry().find((a) => a.id === id)
   if (!entry) return c.json({ error: "unknown agent" }, 404)
+  // Optional per-invite interaction-mode override (realtime <-> pipeline);
+  // the worker applies it when resolving the dispatch.
+  const body = (await c.req.json().catch(() => ({}))) as { mode?: string }
+  if (body.mode && body.mode !== "realtime" && body.mode !== "pipeline") {
+    return c.json({ error: "unknown mode" }, 400)
+  }
 
   const participants = await rooms.listParticipants(room).catch(() => [])
   if (participants.some((p) => p.identity === `agent-${id}`)) {
@@ -62,7 +68,7 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   }
 
   await dispatch.createDispatch(room, "looped-bridge", {
-    metadata: JSON.stringify({ agentId: id }),
+    metadata: JSON.stringify({ agentId: id, mode: body.mode }),
   })
   return c.json({ ok: true })
 })

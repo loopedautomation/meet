@@ -11,6 +11,7 @@ import * as silero from "@livekit/agents-plugin-silero"
 import {
   AGENT_POLICY_ATTRIBUTE,
   AGENT_STATE_ATTRIBUTE,
+  AGENT_VOICES,
   type AgentActivityEvent,
   type AgentState,
   agentControlSchema,
@@ -34,7 +35,7 @@ import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
 import { ScreenCapture } from "./screen-capture.js"
 
-type DispatchMeta = { agentId: string }
+type DispatchMeta = { agentId: string; mode?: "realtime" | "pipeline" }
 
 /** How long a zapped agent answers freely before its policy resumes. */
 const ZAP_WINDOW_MS = 30_000
@@ -42,29 +43,60 @@ const ZAP_WINDOW_MS = 30_000
 /** A registry entry plus, for dynamic (URL-invited) agents, its token. */
 type ResolvedEntry = AgentEntry & { directToken?: string }
 
+/**
+ * Interaction mode is a meeting-level choice, not an agent-level one: any
+ * brain can be fronted by either the realtime speech-to-speech layer or the
+ * STT/TTS pipeline. The registry's `realtime` block is just the default;
+ * a dispatch-time mode override converts in either direction.
+ */
+function applyMode(
+  entry: ResolvedEntry,
+  mode?: DispatchMeta["mode"],
+): ResolvedEntry {
+  if (mode === "pipeline" && entry.realtime) {
+    return { ...entry, realtime: undefined }
+  }
+  if (mode === "realtime" && !entry.realtime) {
+    const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
+      ? entry.tts.voice
+      : "marin"
+    return {
+      ...entry,
+      realtime: {
+        model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
+        voice,
+      },
+    }
+  }
+  return entry
+}
+
 function entryFromMetadata(metadata: string): ResolvedEntry {
-  const { agentId } = JSON.parse(metadata) as DispatchMeta
+  const { agentId, mode } = JSON.parse(metadata) as DispatchMeta
   if (agentId.startsWith("dyn-")) {
     const spec = getDynamicAgent(agentId)
     if (!spec) throw new Error(`unknown dynamic agent: ${agentId}`)
-    return {
-      id: agentId,
-      name: spec.name,
-      greeting: `Hi, I'm ${spec.name}.`,
-      turn_policy: "open",
-      brain: { kind: "tty", url: spec.url, token_env: "" },
-      realtime: {
-        model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
-        voice: spec.voice ?? "marin",
+    return applyMode(
+      {
+        id: agentId,
+        name: spec.name,
+        greeting: `Hi, I'm ${spec.name}.`,
+        turn_policy: "open",
+        brain: { kind: "tty", url: spec.url, token_env: "" },
+        realtime: {
+          model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1",
+          voice: spec.voice ?? "marin",
+        },
+        stt: { provider: "openai", model: "gpt-4o-mini-transcribe" },
+        tts: { provider: "openai", model: "gpt-4o-mini-tts", voice: "alloy" },
+        directToken: spec.token,
       },
-      stt: { provider: "openai", model: "gpt-4o-mini-transcribe" },
-      tts: { provider: "openai", model: "gpt-4o-mini-tts", voice: "alloy" },
-      directToken: spec.token,
-    }
+      mode,
+    )
   }
   const entry = loadRegistry().find((a) => a.id === agentId)
   if (!entry) throw new Error(`unknown agent: ${agentId}`)
-  return entry
+  return applyMode(entry, mode)
 }
 
 /** Accept dispatches with an agent-scoped identity and metadata. */

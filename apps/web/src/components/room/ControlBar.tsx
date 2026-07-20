@@ -260,7 +260,7 @@ export function ControlBar({
         >
           <button
             type="button"
-            className={`btn btn-circle ${handRaised ? "btn-warning" : "btn-neutral"}`}
+            className={`btn btn-circle ${handRaised ? "btn-success" : "btn-neutral"}`}
             onClick={toggleHand}
             aria-label={handRaised ? "Lower hand" : "Raise hand"}
           >

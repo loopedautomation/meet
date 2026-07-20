@@ -31,7 +31,10 @@ import {
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { useAgentState } from "@/components/room/AgentBadge"
-import { useAgentInvite } from "@/hooks/mutations/useAgentInvite"
+import {
+  type AgentMode,
+  useAgentInvite,
+} from "@/hooks/mutations/useAgentInvite"
 import { useAgents } from "@/hooks/queries/useAgents"
 import { $isHost } from "@/stores/host"
 import { $agentActivity, $agentStats } from "@/stores/roomData"
@@ -46,6 +49,9 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const isHost = useStore($isHost)
 
   const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
+  // Per-agent interaction-mode choice ("" = the agent's registry default).
+  // Meeting-level, not agent-level: any brain can front realtime or pipeline.
+  const [modes, setModes] = useState<Record<string, AgentMode | "">>({})
 
   const agentParticipants = new Map(
     participants
@@ -99,17 +105,38 @@ export function AgentsPanel({ slug }: { slug: string }) {
                   <span className="badge badge-ghost badge-sm">in call</span>
                 )
               ) : isHost ? (
-                <button
-                  type="button"
-                  className="btn btn-primary btn-sm"
-                  disabled={invite.isPending}
-                  onClick={() =>
-                    invite.mutate({ agentId: agent.id, action: "invite" })
-                  }
-                >
-                  <Plus className="size-4" />
-                  Invite
-                </button>
+                <div className="join">
+                  <select
+                    className="select select-sm join-item w-24"
+                    value={modes[agent.id] ?? ""}
+                    onChange={(e) =>
+                      setModes((m) => ({
+                        ...m,
+                        [agent.id]: e.target.value as AgentMode | "",
+                      }))
+                    }
+                    aria-label="Interaction mode"
+                  >
+                    <option value="">Default</option>
+                    <option value="realtime">Realtime</option>
+                    <option value="pipeline">Pipeline</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm join-item"
+                    disabled={invite.isPending}
+                    onClick={() =>
+                      invite.mutate({
+                        agentId: agent.id,
+                        action: "invite",
+                        mode: modes[agent.id] || undefined,
+                      })
+                    }
+                  >
+                    <Plus className="size-4" />
+                    Invite
+                  </button>
+                </div>
               ) : null}
             </li>
           )
@@ -288,7 +315,7 @@ function InRoomControls({
             ? "Hand-raising on — speaks only when addressed or called on"
             : "Hand-raising off — speaks whenever it has something to say"
         }
-        active={gated}
+        state={gated ? "on" : "off"}
         onClick={() =>
           sendControl({
             type: "set-turn-policy",
@@ -301,14 +328,16 @@ function InRoomControls({
       </ControlButton>
       <ControlButton
         tip={zapTip}
-        active={zapped}
+        state={zapped ? "on" : "off"}
         onClick={() => sendControl({ type: "zap", agentId })}
       >
         <Zap className="size-4" />
       </ControlButton>
+      {/* Mic and ears read as capabilities: green while the agent has them,
+          red once a host takes one away. */}
       <ControlButton
         tip={muteTip}
-        active={muted}
+        state={muted ? "revoked" : "on"}
         onClick={() =>
           sendControl({ type: muted ? "unmute" : "mute", agentId })
         }
@@ -317,7 +346,7 @@ function InRoomControls({
       </ControlButton>
       <ControlButton
         tip={deafenTip}
-        active={deafened}
+        state={deafened ? "revoked" : "on"}
         onClick={() =>
           sendControl({ type: deafened ? "undeafen" : "deafen", agentId })
         }
@@ -326,7 +355,7 @@ function InRoomControls({
       </ControlButton>
       <ControlButton
         tip="Remove the agent from the meeting"
-        danger
+        state="danger"
         onClick={onRemove}
       >
         <UserX className="size-4" />
@@ -335,31 +364,39 @@ function InRoomControls({
   )
 }
 
-/** An agent control: icon button with a hover tooltip and matching label. */
+/**
+ * An agent control: icon button with a hover tooltip and matching label.
+ * Colour carries the meaning — green while a capability or mode is on, red
+ * once the host has taken it away, neutral for an unset mode.
+ */
 function ControlButton({
   tip,
-  active,
-  danger,
+  state,
   onClick,
   children,
 }: {
   tip: string
-  active?: boolean
-  danger?: boolean
+  state: "on" | "off" | "revoked" | "danger"
   onClick: () => void
   children: React.ReactNode
 }) {
+  const tone =
+    state === "on"
+      ? "btn-success"
+      : state === "revoked"
+        ? "btn-error"
+        : state === "danger"
+          ? "btn-ghost text-error"
+          : "btn-ghost"
   return (
-    // Above the button: the panel is too narrow for a side tip, which gets
-    // clipped by the scroll container's edge.
-    <div className="tooltip tooltip-top" data-tip={tip}>
+    // Below the button: a tip above is clipped by the panel's scroll
+    // container, and it wraps within the panel rather than overflowing it.
+    <div className="tooltip tooltip-bottom" data-tip={tip}>
       <button
         type="button"
         title={tip}
         aria-label={tip}
-        className={`btn btn-circle btn-sm ${
-          active ? "btn-warning" : danger ? "btn-ghost text-error" : "btn-ghost"
-        }`}
+        className={`btn btn-circle btn-sm ${tone}`}
         onClick={onClick}
       >
         {children}

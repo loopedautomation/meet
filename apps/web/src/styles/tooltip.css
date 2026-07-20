@@ -23,3 +23,12 @@
 .tooltip[data-tip]:after {
   z-index: 999;
 }
+
+/* Keep a tip narrower than the side panel (20rem) so it wraps instead of
+   running past the edge, and let long text break rather than force width. */
+.tooltip > .tooltip-content,
+.tooltip[data-tip]:before {
+  max-width: 16rem;
+  white-space: normal;
+  text-wrap: balance;
+}
