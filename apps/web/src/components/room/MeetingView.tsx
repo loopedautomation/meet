@@ -23,6 +23,7 @@ import {
   useLocalTranscription,
 } from "@/hooks/useLocalTranscription"
 import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
+import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -46,7 +47,13 @@ export function MeetingView({
   const screenTracks = useTracks([Track.Source.ScreenShare], {
     onlySubscribed: true,
   })
-  const focused = screenTracks[0]
+  // A single share owns the stage: the newest sharer takes over and stops the
+  // previous one. While both are briefly live, prefer the one that most
+  // recently announced a takeover; fall back to LiveKit's order otherwise.
+  const latestSharer = useScreenShareTakeover()
+  const focused =
+    screenTracks.find((t) => t.participant.identity === latestSharer) ??
+    screenTracks[0]
 
   const localTrack = cameraTracks.find((t) => t.participant.isLocal)
   // Service participants (the transcriber) and knockers still in the waiting
