@@ -1,0 +1,73 @@
+"use client"
+
+import { useDataChannel, useParticipants } from "@livekit/components-react"
+import {
+  agentControlSchema,
+  DataTopic,
+  describeAgentControl,
+  parseParticipantMeta,
+} from "@meet/shared"
+import { useRef } from "react"
+import { toast } from "react-toastify"
+
+/**
+ * Announces agent controls to the room. Agents are shared: if someone mutes
+ * one mid-answer or changes how it takes turns, everyone else needs to know
+ * why the agent's behaviour just changed, and who to ask about it.
+ *
+ * Only handles controls arriving from others — LiveKit doesn't loop a data
+ * message back to its sender, so the actor toasts their own action locally
+ * (see `announceAgentControl`).
+ */
+export function useAgentControlToasts(): void {
+  const participants = useParticipants()
+  // useDataChannel's callback closes over the first render's participants, so
+  // read them through a ref or an agent that joined later goes unnamed.
+  const participantsRef = useRef(participants)
+  participantsRef.current = participants
+
+  useDataChannel(DataTopic.AgentControl, (msg) => {
+    let parsed: ReturnType<typeof agentControlSchema.safeParse>
+    try {
+      parsed = agentControlSchema.safeParse(
+        JSON.parse(new TextDecoder().decode(msg.payload)),
+      )
+    } catch {
+      return
+    }
+    if (!parsed.success) return
+    const control = parsed.data
+    // Older clients don't stamp who acted; without a name there's no sentence
+    // worth showing, so stay quiet rather than narrate "someone".
+    if (!control.byName) return
+
+    const agent = participantsRef.current.find(
+      (p) => parseParticipantMeta(p.metadata)?.agentId === control.agentId,
+    )
+    const agentName = agent?.name || agent?.identity || "the agent"
+    const description = describeAgentControl(control, agentName)
+    if (!description) return
+
+    toast.info(`${control.byName} ${description}`, {
+      // Rapid repeats of the same control on the same agent collapse rather
+      // than stacking up the corner of the screen.
+      toastId: `agent-control-${control.agentId}-${control.type}`,
+    })
+  })
+}
+
+/**
+ * The actor's own toast. Data messages don't come back to their sender, so
+ * without this the one person who pressed the button is the only one who
+ * doesn't see it confirmed.
+ */
+export function announceAgentControl(
+  control: Parameters<typeof describeAgentControl>[0],
+  agentName: string,
+): void {
+  const description = describeAgentControl(control, agentName)
+  if (!description) return
+  toast.info(`You ${description}`, {
+    toastId: `agent-control-${control.agentId}-${control.type}`,
+  })
+}

@@ -1,9 +1,9 @@
-import { timingSafeEqual } from "node:crypto"
 import { TrackSource } from "livekit-server-sdk"
 import { NextResponse } from "next/server"
 import { z } from "zod"
+import { authorizeHost } from "@/lib/server/host"
 import { roomService } from "@/lib/server/livekit"
-import { deriveHostKey, isValidRoomSlug } from "@/lib/server/slug"
+import { isValidRoomSlug } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
 
@@ -13,12 +13,6 @@ const moderateSchema = z.object({
   /** The organiser's key, held only by the browser that created the room. */
   hostKey: z.string().min(1),
 })
-
-function keyMatches(given: string, expected: string): boolean {
-  const a = Buffer.from(given)
-  const b = Buffer.from(expected)
-  return a.length === b.length && timingSafeEqual(a, b)
-}
 
 /**
  * Moderation actions on another participant — the organiser's alone, and
@@ -40,21 +34,10 @@ export async function POST(request: Request, { params }: Params) {
   }
   const { identity, action, hostKey } = body.data
 
-  const rooms = await roomService()
-    .listRooms([slug])
-    .catch(() => [])
-  if (rooms.length === 0) {
-    return NextResponse.json({ error: "room not found" }, { status: 404 })
-  }
-  let roomMeta: { hostKey?: string } = {}
-  try {
-    roomMeta = JSON.parse(rooms[0].metadata || "{}")
-  } catch {}
-  // Rooms carry the key they were created with; fall back to the derived one
-  // so a room recreated after garbage collection still authorises its host.
-  const expected = roomMeta.hostKey ?? deriveHostKey(slug)
-  if (!keyMatches(hostKey, expected)) {
-    return NextResponse.json({ error: "not authorized" }, { status: 403 })
+  const auth = await authorizeHost(slug, hostKey)
+  if (!auth.ok) {
+    const error = auth.status === 404 ? "room not found" : "not authorized"
+    return NextResponse.json({ error }, { status: auth.status })
   }
 
   if (action === "remove") {

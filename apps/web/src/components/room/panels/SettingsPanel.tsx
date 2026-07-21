@@ -1,8 +1,13 @@
 "use client"
 
 import { useMediaDeviceSelect } from "@livekit/components-react"
+import type { RoomSettings } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { Moon, Sun } from "lucide-react"
+import { useState } from "react"
+import { toast } from "react-toastify"
+import { useAgentPermissions } from "@/hooks/useRoomSettings"
+import { readHostKey } from "@/lib/hostKey"
 import { $blur, setBlur } from "@/stores/blur"
 import {
   $pauseCameraOnBackground,
@@ -10,13 +15,15 @@ import {
 } from "@/stores/camera"
 import { $theme, setTheme } from "@/stores/theme"
 
-export function SettingsPanel() {
+export function SettingsPanel({ slug }: { slug: string }) {
   const theme = useStore($theme)
   const blur = useStore($blur)
   const pauseOnBackground = useStore($pauseCameraOnBackground)
 
   return (
     <div className="flex flex-col gap-6 p-4">
+      <HostControls slug={slug} />
+
       <section className="flex flex-col gap-2">
         <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
           Appearance
@@ -154,5 +161,86 @@ function DeviceSelect({
         ))}
       </select>
     </label>
+  )
+}
+
+/**
+ * The organiser's room-level settings. Only they see this section, and only
+ * they can change it — the toggles write to room metadata through a
+ * host-key-authenticated route, which is also what the invite endpoints
+ * check, so a locked-down room stays locked down against a crafted request
+ * and not just a hidden button.
+ */
+function HostControls({ slug }: { slug: string }) {
+  const { isHost, settings } = useAgentPermissions()
+  const [saving, setSaving] = useState<keyof RoomSettings | null>(null)
+
+  if (!isHost) return null
+
+  const update = async (key: keyof RoomSettings, value: boolean) => {
+    const hostKey = readHostKey(slug)
+    if (!hostKey) {
+      toast.error("Only the meeting's organiser can change this.")
+      return
+    }
+    setSaving(key)
+    try {
+      const res = await fetch(`/api/rooms/${slug}/settings`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: { [key]: value }, hostKey }),
+      })
+      if (!res.ok) throw new Error("save failed")
+      // No local state to set: the change lands in room metadata and comes
+      // back through useRoomInfo, so every participant (including this one)
+      // sees the same value from the same source.
+    } catch {
+      toast.error("Could not save that setting.")
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-2">
+      <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
+        Everyone in this meeting can
+      </h3>
+      <label className="flex cursor-pointer items-center justify-between gap-4">
+        <span className="flex flex-col">
+          <span className="text-sm">Control agents</span>
+          <span className="text-base-content/60 text-xs">
+            Mute, interrupt, zap and change how agents take turns. Off leaves
+            the buttons visible but yours alone.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className="toggle toggle-primary"
+          disabled={saving === "participantsCanControlAgents"}
+          checked={settings.participantsCanControlAgents}
+          onChange={(e) =>
+            update("participantsCanControlAgents", e.target.checked)
+          }
+        />
+      </label>
+      <label className="flex cursor-pointer items-center justify-between gap-4">
+        <span className="flex flex-col">
+          <span className="text-sm">Invite agents</span>
+          <span className="text-base-content/60 text-xs">
+            Bring agents into the meeting, from the registry or by URL.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className="toggle toggle-primary"
+          disabled={saving === "participantsCanInviteAgents"}
+          checked={settings.participantsCanInviteAgents}
+          onChange={(e) =>
+            update("participantsCanInviteAgents", e.target.checked)
+          }
+        />
+      </label>
+    </section>
   )
 }

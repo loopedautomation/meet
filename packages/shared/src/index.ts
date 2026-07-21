@@ -128,14 +128,99 @@ export const agentControlSchema = z.object({
     // then returns to its usual policy (gated agents re-gate, open agents
     // are muted).
     "zap",
-    // Host-only: change how the agent takes turns for the rest of the
-    // meeting, overriding the registry default. Carries `policy`.
+    // Change how the agent takes turns for the rest of the meeting,
+    // overriding the registry default. Carries `policy`.
     "set-turn-policy",
+    // Not a control the bridge acts on — removal goes through the control
+    // API. Broadcast purely so the room can say who did it, like every
+    // other agent control.
+    "remove",
   ]),
   agentId: z.string(),
   policy: turnPolicySchema.optional(),
+  /**
+   * Who pressed the button. Optional so older clients still parse, and
+   * carried on the message rather than resolved from the sender identity:
+   * the receiving side would otherwise have to keep a roster to name
+   * someone who may already have left.
+   */
+  by: z.string().optional(),
+  byName: z.string().optional(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>
+
+/**
+ * What non-hosts are allowed to do with agents. Agent controls are shared
+ * ground by default — an agent talking over the room is everyone's problem,
+ * and making only the organiser able to mute it is how a meeting derails.
+ * A host who wants a tighter room can turn either off.
+ */
+export const roomSettingsSchema = z.object({
+  participantsCanControlAgents: z.boolean().default(true),
+  participantsCanInviteAgents: z.boolean().default(true),
+})
+export type RoomSettings = z.infer<typeof roomSettingsSchema>
+
+export const defaultRoomSettings: RoomSettings = {
+  participantsCanControlAgents: true,
+  participantsCanInviteAgents: true,
+}
+
+/**
+ * Room metadata, which is where settings live: unlike a data message it
+ * reaches participants who join later, and LiveKit pushes changes to
+ * everyone already in the room.
+ */
+export const roomMetadataSchema = z.object({
+  hostKey: z.string().optional(),
+  started: z.boolean().optional(),
+  startedAt: z.number().optional(),
+  settings: roomSettingsSchema.optional(),
+})
+export type RoomMetadata = z.infer<typeof roomMetadataSchema>
+
+/** Settings from raw room metadata, falling back to the defaults. */
+export function parseRoomSettings(raw: string | undefined): RoomSettings {
+  if (!raw) return defaultRoomSettings
+  try {
+    return roomSettingsSchema.parse(
+      roomMetadataSchema.parse(JSON.parse(raw)).settings ?? {},
+    )
+  } catch {
+    return defaultRoomSettings
+  }
+}
+
+/** How an agent control reads in the room's activity toast. */
+export function describeAgentControl(
+  control: AgentControl,
+  agentName: string,
+): string | null {
+  switch (control.type) {
+    case "mute":
+      return `muted ${agentName}`
+    case "unmute":
+      return `unmuted ${agentName}`
+    case "deafen":
+      return `deafened ${agentName}`
+    case "undeafen":
+      return `undeafened ${agentName}`
+    case "interrupt":
+      return `interrupted ${agentName}`
+    case "call-on":
+      return `called on ${agentName}`
+    case "zap":
+      return `zapped ${agentName}`
+    case "remove":
+      return `removed ${agentName} from the meeting`
+    case "set-turn-policy":
+      return control.policy
+        ? `set ${agentName}'s response mode to ${control.policy}`
+        : null
+    default:
+      return null
+  }
+}
 
 /** Events published by the bridge on the `agent-activity` data topic. */
 export const agentActivityEventSchema = z.discriminatedUnion("type", [

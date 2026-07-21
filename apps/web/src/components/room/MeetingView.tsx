@@ -15,6 +15,7 @@ import { ParticipantTile } from "@/components/room/ParticipantTile"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
+import { useAgentControlToasts } from "@/hooks/useAgentControlToasts"
 import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { useKnockAlerts } from "@/hooks/useKnockAlerts"
@@ -37,6 +38,7 @@ export function MeetingView({
 }) {
   useJoinLeaveSounds()
   useKnockAlerts(slug)
+  useAgentControlToasts()
   useAwayOnHidden()
   useLocalTranscription(readLocalSttPref())
   useMutedSpeakingToast()
