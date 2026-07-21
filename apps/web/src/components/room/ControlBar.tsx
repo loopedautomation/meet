@@ -488,7 +488,9 @@ function DeviceMenu({
           <li key={d.deviceId}>
             <button
               type="button"
-              className={d.deviceId === activeDeviceId ? "active" : ""}
+              // DaisyUI v5 highlights the active menu row with `menu-active`
+              // (renamed from `active` in v4).
+              className={d.deviceId === activeDeviceId ? "menu-active" : ""}
               onClick={() => {
                 void setActiveMediaDevice(d.deviceId)
                 try {
@@ -499,6 +501,9 @@ function DeviceMenu({
               <span className="truncate">
                 {d.label || (kind === "audioinput" ? "Microphone" : "Camera")}
               </span>
+              {d.deviceId === activeDeviceId && (
+                <Check className="size-4 shrink-0 text-success" />
+              )}
             </button>
           </li>
         ))}
