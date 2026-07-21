@@ -2,7 +2,16 @@ import WebSocket from "ws"
 
 /** Frames spoken by the looped-af TTY trigger (agent-framework packages/triggers/tty.ts). */
 export type TtyServerFrame =
-  | { type: "hello"; handle: string; conversation_id: string }
+  // `name` and `description` are the agent's own identity, added in a later
+  // framework version; `handle` predates them and is the fallback for an
+  // agent that doesn't send them yet.
+  | {
+      type: "hello"
+      handle: string
+      conversation_id: string
+      name?: string
+      description?: string
+    }
   | { type: "step"; n: number }
   | { type: "assistant"; content: string }
   | { type: "tool_call"; name: string; arguments: string }
