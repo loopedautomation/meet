@@ -23,24 +23,31 @@ import {
   type ParticipantMeta,
 } from "@meet/shared"
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
+import { bargeInConfigFromEnv } from "./barge-in.js"
 import { getDynamicAgent } from "./dynamic.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import {
   describeRoster,
+  fetchSharedDoc,
   fetchTranscript,
+  formatSharedDoc,
   formatTranscript,
   postDebugEvent,
+  saveSharedDoc,
   withMeetingContext,
 } from "./meeting-context.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
-import { ScreenCapture } from "./screen-capture.js"
+import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = { agentId: string; mode?: "realtime" | "pipeline" }
 
 /** How long a zapped agent answers freely before its policy resumes. */
 const ZAP_WINDOW_MS = 30_000
+
+/** Barge-in thresholds, shared by the realtime and pipeline paths. */
+const bargeIn = bargeInConfigFromEnv()
 
 /** A registry entry plus, for dynamic (URL-invited) agents, its token. */
 type ResolvedEntry = AgentEntry & { directToken?: string }
@@ -185,13 +192,43 @@ export default defineAgent({
 
     const screen = new ScreenCapture(ctx.room)
 
+    /**
+     * Write the shared document and tell the room. Persisting alone isn't
+     * enough — anyone with the Doc panel open is watching the data channel,
+     * and would keep showing the old text until they reloaded.
+     */
+    const publishDoc = async (text: string): Promise<string> => {
+      const saved = await saveSharedDoc(
+        roomName,
+        text,
+        `agent-${entry.id}`,
+        entry.name,
+      )
+      if (!saved) return "The document couldn't be saved."
+      local
+        .publishData(new TextEncoder().encode(JSON.stringify(saved)), {
+          reliable: true,
+          topic: DataTopic.Doc,
+        })
+        .catch(() => undefined)
+      return "Saved. Everyone can see the updated document."
+    }
+
     // Meeting context: what was said before the agent joined (from the
     // control API's transcript store) plus who's in the room. Wrapping the
     // brain injects it into the first turn on every path — voice, chat
     // mention, or realtime ask_agent delegation.
     const priorTranscript = formatTranscript(await fetchTranscript(roomName))
+    const priorDoc = formatSharedDoc(await fetchSharedDoc(roomName))
     const meetingContext = [
       `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
+      priorDoc,
+      // Say so explicitly: an agent that doesn't know a share exists can't
+      // offer to look at it, and one that doesn't know it's blind will
+      // happily invent what's on screen.
+      screen.enabled && entry.brain.kind === "tty"
+        ? "You can see screenshares in this meeting — a current frame is attached whenever someone is sharing."
+        : "You cannot see screenshares in this meeting. If someone asks about their screen, say so rather than guessing.",
       priorTranscript
         ? `Transcript of the meeting before you joined:\n${priorTranscript}`
         : "",
@@ -264,10 +301,21 @@ export default defineAgent({
         state: sessionState,
         callbacks: { publishActivity, publishChat, setState },
         screen,
+        // Half-duplex keeps room audio away from the realtime model while it
+        // speaks, so barge-in has to be heard locally. Same prewarmed VAD the
+        // pipeline path uses for turn detection.
+        vad: ctx.proc.userData.vad as silero.VAD | undefined,
+        readDoc: async () => (await fetchSharedDoc(roomName)).text,
+        writeDoc: publishDoc,
         context: meetingContext,
       })
       return
     }
+
+    // Seconds, matching how the knob has always been documented and set —
+    // the SDK's own field is milliseconds.
+    const endpointMinDelayMs =
+      Number(process.env.PIPELINE_ENDPOINT_MIN_DELAY ?? 4) * 1000
 
     const agent = new LoopedVoiceAgent(
       entry,
@@ -289,7 +337,18 @@ export default defineAgent({
       // because it's a latency/reliability trade per deployment.
       turnHandling: {
         endpointing: {
-          minDelay: Number(process.env.PIPELINE_ENDPOINT_MIN_DELAY ?? 4),
+          minDelay: endpointMinDelayMs,
+          // maxDelay is the hard stop on a turn, and its default (3s) sits
+          // below the delay above — leave it and the turn fires early,
+          // making minDelay look like it did nothing.
+          maxDelay: Math.max(endpointMinDelayMs + 1000, 3000),
+        },
+        // Barge-in for the pipeline path. The SDK enables interruptions by
+        // default; this pins the same thresholds the realtime path uses, so
+        // both modes feel alike and tune from one place.
+        interruption: {
+          enabled: bargeIn.enabled,
+          minDuration: bargeIn.minSpeechMs,
         },
       },
       stt: new openai.STT({ model: entry.stt.model }),
@@ -316,6 +375,15 @@ export default defineAgent({
         "text-to-speech": `${entry.tts.provider}/${entry.tts.model}`,
         voice: entry.tts.voice,
         "turn detection": "vad",
+        "barge-in": bargeIn.enabled
+          ? `vad, ${bargeIn.minSpeechMs}ms sustained`
+          : "off (manual interrupt only)",
+        vision:
+          screen.enabled && entry.brain.kind === "tty"
+            ? "screenshare frame attached to every turn"
+            : screen.enabled
+              ? "off (brain is webhook; images are dropped)"
+              : "off (AGENT_SCREEN_VISION)",
         "noise suppression": "room transcriber (gtcrn)",
       } as Record<string, string>,
       latencyMs: {} as Record<string, number>,
@@ -463,16 +531,10 @@ export default defineAgent({
     // Chat mentions get a chat reply — text in, text out; tool activity
     // still streams to the activity feed.
     const replyInChat = async (message: ChatMessage) => {
-      let input = `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`
-      const capture = screen.active
-        ? await screen.latestJpeg().catch(() => null)
-        : null
-      const images = capture
-        ? [{ mediaType: capture.mediaType, data: capture.data }]
-        : undefined
-      if (capture) {
-        input = `[A current frame of ${capture.sharerName}'s shared screen is attached.]\n${input}`
-      }
+      const { text: input, images } = await attachScreenFrame(
+        screen,
+        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
+      )
       setState(sessionState.muted ? "muted" : "thinking")
       try {
         let reply = ""

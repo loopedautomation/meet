@@ -15,6 +15,7 @@ import { ParticipantTile } from "@/components/room/ParticipantTile"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
+import { useAgentControlToasts } from "@/hooks/useAgentControlToasts"
 import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { useKnockAlerts } from "@/hooks/useKnockAlerts"
@@ -24,6 +25,7 @@ import {
 } from "@/hooks/useLocalTranscription"
 import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
 import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
+import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -37,9 +39,11 @@ export function MeetingView({
 }) {
   useJoinLeaveSounds()
   useKnockAlerts(slug)
+  useAgentControlToasts()
   useAwayOnHidden()
   useLocalTranscription(readLocalSttPref())
   useMutedSpeakingToast()
+  useScreenShareVisionNotice()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
@@ -71,7 +75,7 @@ export function MeetingView({
   return (
     <div className="flex h-dvh flex-col bg-base-200">
       <RoomAudioRenderer />
-      <RoomDataListener />
+      <RoomDataListener slug={slug} />
       <ControlBar slug={slug} shareBase={shareBase} startedAt={startedAt} />
 
       {connectionState !== ConnectionState.Connected && (

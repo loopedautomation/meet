@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { bridgeFetch } from "@/lib/server/bridge"
+import { canManageAgents, HOST_KEY_HEADER } from "@/lib/server/host"
 import { isValidRoomSlug } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
@@ -23,6 +24,10 @@ export async function POST(request: Request, { params }: Params) {
   )
   if (!body.success) {
     return NextResponse.json({ error: "url required" }, { status: 400 })
+  }
+  // Same gate as the registry invites: the host can reserve agents.
+  if (!(await canManageAgents(slug, request.headers.get(HOST_KEY_HEADER)))) {
+    return NextResponse.json({ error: "not authorized" }, { status: 403 })
   }
   try {
     const res = await bridgeFetch(`/rooms/${slug}/agents`, {

@@ -15,6 +15,7 @@ import {
   Bot,
   Check,
   ChevronDown,
+  FileText,
   Hand,
   Link as LinkIcon,
   LogOut,
@@ -32,8 +33,13 @@ import {
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
+import {
+  supportsVoiceIsolation,
+  useVoiceIsolation,
+} from "@/hooks/useVoiceIsolation"
 import { $blur, setBlur } from "@/stores/blur"
 import { $openPanel, togglePanel } from "@/stores/panels"
+import { $voiceIsolation, setVoiceIsolation } from "@/stores/voiceIsolation"
 
 export function ControlBar({
   slug,
@@ -60,6 +66,9 @@ export function ControlBar({
 
   const blur = useStore($blur)
   useBackgroundBlur(blur)
+
+  const voiceIsolation = useStore($voiceIsolation)
+  useVoiceIsolation(voiceIsolation)
 
   const { handRaised, toggleHand } = useRaiseHand(localParticipant)
 
@@ -191,7 +200,21 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="audioinput" persistKey="audioDeviceId" />
+          <DeviceMenu kind="audioinput" persistKey="audioDeviceId">
+            {supportsVoiceIsolation() && (
+              <li>
+                <button
+                  type="button"
+                  className="whitespace-nowrap"
+                  onClick={() => setVoiceIsolation(!voiceIsolation)}
+                >
+                  <Sparkles className="size-4" />
+                  Enhanced noise removal
+                  {voiceIsolation && <Check className="size-4 text-success" />}
+                </button>
+              </li>
+            )}
+          </DeviceMenu>
         </div>
         <div className="join">
           <div
@@ -322,6 +345,16 @@ export function ControlBar({
             aria-label="Chat"
           >
             <MessageSquare className="size-5" />
+          </button>
+        </div>
+        <div className="tooltip tooltip-bottom" data-tip="Doc">
+          <button
+            type="button"
+            className={`btn btn-circle ${openPanel === "doc" ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => togglePanel("doc")}
+            aria-label="Doc"
+          >
+            <FileText className="size-5" />
           </button>
         </div>
         <div className="tooltip tooltip-bottom" data-tip="Settings">

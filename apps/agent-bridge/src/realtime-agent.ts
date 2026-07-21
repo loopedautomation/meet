@@ -1,4 +1,4 @@
-import type { JobContext } from "@livekit/agents"
+import { type JobContext, type VAD, VADEventType } from "@livekit/agents"
 import {
   AudioFrame,
   AudioSource,
@@ -16,12 +16,17 @@ import {
   DataTopic,
 } from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
+import {
+  BargeInPolicy,
+  bargeInConfigFromEnv,
+  PcmRingBuffer,
+} from "./barge-in.js"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
 import { postDebugEvent } from "./meeting-context.js"
 import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
 import type { AgentEntry } from "./registry.js"
-import type { ScreenCapture } from "./screen-capture.js"
+import { attachScreenFrame, type ScreenCapture } from "./screen-capture.js"
 
 /** How long a zapped agent responds freely before re-gating/muting. */
 const ZAP_WINDOW_MS = 30_000
@@ -30,7 +35,11 @@ const ZAP_WINDOW_MS = 30_000
 const MIX_INTERVAL_MS = 50
 const SAMPLES_PER_MIX = (REALTIME_SAMPLE_RATE / 1000) * MIX_INTERVAL_MS
 
-const instructions = (entry: AgentEntry, context?: string) =>
+const instructions = (
+  entry: AgentEntry,
+  canSeeScreens: boolean,
+  context?: string,
+) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting ` +
   "with several people. You are a guest, not the host: most of the " +
   "conversation is between the humans and is not for you. Stay silent unless " +
@@ -50,10 +59,25 @@ const instructions = (entry: AgentEntry, context?: string) =>
   "cancel_task if someone tells you to stop. Messages " +
   "prefixed [meeting chat] are the room's text chat: read them for context " +
   "and reply in chat (or aloud only if addressed there)." +
+  " The meeting has a shared markdown document everyone can see and edit. " +
+  "When someone asks you to write something up, capture a decision, or draft " +
+  "a plan, read it and write it back with your changes folded in — never " +
+  "just your own addition, or you'll delete their work. Say briefly what you " +
+  "changed rather than reading the document out loud." +
   " Your audio may be gated by the meeting's host: while it is, you are " +
   "only given the floor when someone addresses you by name or calls on you " +
   "after you raise your hand, and between turns you may be asked silently " +
   "whether you want the floor — answer those checks honestly and sparingly." +
+  (canSeeScreens
+    ? " You cannot see the meeting: you hear it. If someone shares their " +
+      "screen and asks about it — what's on it, what an error says, what " +
+      "they're pointing at — call look_at_screen and answer from what it " +
+      "returns. Never describe or guess at anything on a screen you " +
+      "haven't just looked at, and look again rather than trusting an " +
+      "earlier look, since the screen changes as they work."
+    : " You cannot see anything: not the participants, not their screens. " +
+      "If someone asks about a shared screen, say plainly that you can't " +
+      "see it and ask them to describe it — never guess.") +
   (context ? `\n\n${context}` : "")
 
 /**
@@ -70,14 +94,40 @@ export async function runRealtimeAgent(opts: {
   state: SessionState
   callbacks: BridgeCallbacks
   screen: ScreenCapture
+  /**
+   * Prewarmed silero VAD, used to hear a human talking over the agent. The
+   * model's own server-side VAD can't do this job here: half-duplex withholds
+   * room audio while the agent speaks, so the interruption never reaches it.
+   * Without a VAD, barge-in is simply unavailable and the manual interrupt
+   * control remains the only recourse.
+   */
+  vad?: VAD
+  /** Read/write the meeting's shared markdown document. */
+  readDoc?: () => Promise<string>
+  writeDoc?: (text: string) => Promise<string>
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
 }): Promise<void> {
-  const { ctx, entry, realtime, brain, state, callbacks, screen } = opts
+  const { ctx, entry, realtime, brain, state, callbacks, screen, vad } = opts
+  const { readDoc, writeDoc } = opts
   const local = ctx.room.localParticipant
   if (!local) throw new Error("no local participant")
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) throw new Error("OPENAI_API_KEY is required for realtime agents")
+
+  // Barge-in: the room mix keeps feeding a local VAD while the agent talks,
+  // so a human speaking over it can cut it off. The model can't do this for
+  // us — see the half-duplex note in the pump further down. No VAD (nothing
+  // prewarmed it) means no barge-in; the manual control still works.
+  const bargeIn = bargeInConfigFromEnv()
+  if (bargeIn.enabled && !vad) {
+    console.warn(`[${entry.id}] barge-in disabled: no VAD available`)
+  }
+
+  // Vision needs both halves: a deployment that permits it, and a brain that
+  // can actually receive an image. Webhook brains drop images silently, so
+  // an agent on one is better told it has no eyes than left to guess.
+  const canSeeScreens = screen.enabled && entry.brain.kind === "tty"
 
   // ---- outbound audio: session -> room ------------------------------------
   const source = new AudioSource(REALTIME_SAMPLE_RATE, 1)
@@ -101,6 +151,15 @@ export async function runRealtimeAgent(opts: {
             : "server vad, gated (speaks on mention/call-on)",
       "turn policy": entry.turn_policy,
       "echo control": "half-duplex",
+      "barge-in":
+        bargeIn.enabled && vad
+          ? `silero vad, ${bargeIn.minSpeechMs}ms sustained`
+          : "off (manual interrupt only)",
+      vision: canSeeScreens
+        ? "screenshare frames on demand (look_at_screen)"
+        : screen.enabled
+          ? "off (brain is webhook; images are dropped)"
+          : "off (AGENT_SCREEN_VISION)",
       "noise suppression": "room transcriber (gtcrn)",
     } as Record<string, string>,
     latencyMs: {} as Record<string, number>,
@@ -120,16 +179,7 @@ export async function runRealtimeAgent(opts: {
     const startedAt = Date.now()
     workInFlight++
     callbacks.setState("thinking")
-    let input = request
-    const capture = screen.active
-      ? await screen.latestJpeg().catch(() => null)
-      : null
-    const images = capture
-      ? [{ mediaType: capture.mediaType, data: capture.data }]
-      : undefined
-    if (capture) {
-      input = `[A current frame of ${capture.sharerName}'s shared screen is attached.]\n${input}`
-    }
+    const { text: input, images } = await attachScreenFrame(screen, request)
     try {
       let reply = ""
       // The brain's tool activity streams to the room's activity feed, but
@@ -164,6 +214,31 @@ export async function runRealtimeAgent(opts: {
       publishStats()
       callbacks.setState(state.muted ? "muted" : "listening")
     }
+  }
+
+  /**
+   * Answer "what's on my screen?" — the question that used to get a
+   * confident guess. The realtime model can't see, so the frame goes to the
+   * brain (which can) and its description comes back as the tool's result.
+   */
+  const describeScreen = async (): Promise<string> => {
+    const { text, images } = await attachScreenFrame(
+      screen,
+      "Describe what is currently on the shared screen, in a couple of " +
+        "sentences someone could act on. Lead with whatever they are most " +
+        "likely asking about — an error, a diff, a chart, the active window.",
+    )
+    if (!images) return "Nobody is sharing their screen at the moment."
+    let description = ""
+    for await (const frame of brain.runTurn(text, images)) {
+      publishBrainActivity(entry.id, frame, callbacks)
+      if (frame.type === "assistant") {
+        description += (description ? "\n" : "") + frame.content
+      } else if (frame.type === "error") {
+        throw new Error(frame.error)
+      }
+    }
+    return description || "You couldn't make out what's on the screen."
   }
 
   // captureFrame is async and chunks internally — concurrent calls interleave
@@ -205,7 +280,7 @@ export async function runRealtimeAgent(opts: {
     model: realtime.model,
     voice: realtime.voice,
     apiKey,
-    instructions: instructions(entry, opts.context),
+    instructions: instructions(entry, canSeeScreens, opts.context),
     delegate,
     cancelWork: () => {
       if (workInFlight === 0 || !brain.abortTurn) return false
@@ -213,6 +288,24 @@ export async function runRealtimeAgent(opts: {
       return true
     },
     sendChat: callbacks.publishChat,
+    readDoc,
+    writeDoc,
+    // Offered only when a look could actually succeed. A webhook brain
+    // drops images on the floor, so an agent on one must not be told it
+    // can see — it would answer confidently about a screen it never saw.
+    lookAtScreen: canSeeScreens
+      ? async () => {
+          if (!screen.active) {
+            return "Nobody is sharing their screen at the moment."
+          }
+          callbacks.setState("thinking")
+          try {
+            return await describeScreen()
+          } finally {
+            callbacks.setState(state.muted ? "muted" : "listening")
+          }
+        }
+      : undefined,
     gate: {
       // Substring, not word-boundary: STT often renders the name with
       // possessives or punctuation attached ("Scout's", "scout?").
@@ -323,18 +416,17 @@ export async function runRealtimeAgent(opts: {
     }
   }
 
+  const bargeInPolicy = new BargeInPolicy(bargeIn)
+  const bargeInStream = bargeIn.enabled && vad ? vad.stream() : null
+  const prefix = new PcmRingBuffer(
+    bargeInStream ? (REALTIME_SAMPLE_RATE * bargeIn.prefixMs) / 1000 : 0,
+  )
+  let wasAudible = false
+
   const pump = setInterval(() => {
     if (!session.live || fifos.size === 0) return
-    // Half-duplex: while the model is speaking, drop room audio instead of
-    // feeding it in. Participants on open speakers echo the agent's own voice
-    // into their mics, and the model ends up in a conversation with itself.
-    // Generation finishes well before playback does (deltas stream faster
-    // than realtime), so the gate stays closed until the speaker queue has
-    // actually drained. (Trade-off: no voice barge-in while the agent talks.)
-    if (session.responding || source.queuedDuration > 0.05) {
-      for (const fifo of fifos.values()) fifo.length = 0
-      return
-    }
+    // Mix first, unconditionally: even in the half-duplex window below, this
+    // audio still has a job to do — it's what the barge-in VAD listens to.
     const mixed = new Int16Array(SAMPLES_PER_MIX)
     let any = false
     for (const fifo of fifos.values()) {
@@ -347,6 +439,36 @@ export async function runRealtimeAgent(opts: {
       }
       fifo.splice(0, n)
     }
+
+    // Half-duplex: while the agent is audible, room audio is withheld from
+    // the model rather than fed in. Participants on open speakers echo the
+    // agent's own voice into their mics, and the model ends up in a
+    // conversation with itself. Generation finishes well before playback
+    // does (deltas stream faster than realtime), so the gate stays shut
+    // until the speaker queue has actually drained.
+    if (session.responding || source.queuedDuration > 0.05) {
+      wasAudible = true
+      bargeInPolicy.agentStartedSpeaking(Date.now())
+      if (any && bargeInStream) {
+        // Withheld from the model, but not from the interrupt detector —
+        // and kept briefly, so a cut can replay what triggered it.
+        prefix.push(mixed)
+        bargeInStream.pushFrame(
+          new AudioFrame(mixed, REALTIME_SAMPLE_RATE, 1, SAMPLES_PER_MIX),
+        )
+      }
+      return
+    }
+
+    if (wasAudible) {
+      // Leaving the half-duplex window breaks the audio the VAD was hearing.
+      // Flush, or the next reply inherits a half-finished speech segment and
+      // barge-in fires on the seam.
+      wasAudible = false
+      bargeInPolicy.agentStoppedSpeaking()
+      bargeInStream?.flush()
+      prefix.clear()
+    }
     if (!any) return
     session.appendAudio(new Uint8Array(mixed.buffer, 0, SAMPLES_PER_MIX * 2))
   }, MIX_INTERVAL_MS)
@@ -358,6 +480,40 @@ export async function runRealtimeAgent(opts: {
     generation++
     session.cancelResponse()
     source.clearQueue()
+  }
+
+  // Barge-in detector: sustained human speech during the agent's turn cuts it
+  // off the way it would cut off a person. `speechDuration` is what makes it
+  // sustained — a single loud frame is a cough, half a second is a sentence
+  // starting. The policy owns the grace window and cooldown.
+  if (bargeInStream) {
+    void (async () => {
+      for await (const event of bargeInStream) {
+        if (event.type !== VADEventType.INFERENCE_DONE || !event.speaking) {
+          continue
+        }
+        if (!bargeInPolicy.shouldInterrupt(Date.now(), event.speechDuration)) {
+          continue
+        }
+        hardCut()
+        // Replay the speech that triggered the cut. Half-duplex withheld it
+        // from the model, so without this the interruption's opening words
+        // ("no, wait — I meant Tuesday") are simply lost.
+        const pending = prefix.drain()
+        if (pending.length > 0) {
+          session.appendAudio(new Uint8Array(pending.buffer))
+        }
+        callbacks.setState(idleState())
+        if (ctx.room.name) {
+          postDebugEvent(
+            ctx.room.name,
+            `agent:${entry.id}`,
+            "info",
+            `barge-in: cut off after ${Math.round(event.speechDuration)}ms of speech`,
+          )
+        }
+      }
+    })()
   }
 
   ctx.room.on("dataReceived", (payload, _p, _k, topic) => {
@@ -440,6 +596,7 @@ export async function runRealtimeAgent(opts: {
   ctx.addShutdownCallback(async () => {
     clearInterval(pump)
     if (zapTimer) clearTimeout(zapTimer)
+    bargeInStream?.close()
     session.close()
   })
 

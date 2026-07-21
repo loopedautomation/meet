@@ -1,10 +1,9 @@
 "use client"
 
-import { useDataChannel, useParticipants } from "@livekit/components-react"
+import { useParticipants } from "@livekit/components-react"
 import {
   AGENT_VOICES,
   type AgentActivityEvent,
-  DataTopic,
   parseParticipantMeta,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
@@ -17,7 +16,9 @@ import {
   useAgentInvite,
 } from "@/hooks/mutations/useAgentInvite"
 import { useAgents } from "@/hooks/queries/useAgents"
-import { $isHost } from "@/stores/host"
+import { useAgentPermissions } from "@/hooks/useRoomSettings"
+import { useSendAgentControl } from "@/hooks/useSendAgentControl"
+import { readHostKey } from "@/lib/hostKey"
 import { $agentActivity, $agentStats } from "@/stores/roomData"
 
 export function AgentsPanel({ slug }: { slug: string }) {
@@ -25,11 +26,10 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const participants = useParticipants()
   const invite = useAgentInvite(slug)
   const activity = useStore($agentActivity)
-  // Agents belong to whoever organises the meeting; everyone else sees who
-  // is in the room and what they're doing, but no controls.
-  const isHost = useStore($isHost)
-
-  const { send: sendControl } = useDataChannel(DataTopic.AgentControl)
+  // Agents are the room's, not the organiser's — everyone gets the controls
+  // unless the host has reserved them.
+  const { canControl, canInvite } = useAgentPermissions()
+  const sendControl = useSendAgentControl()
   // Per-agent interaction-mode choice ("" = the agent's registry default).
   // Meeting-level, not agent-level: any brain can front realtime or pipeline.
   const [modes, setModes] = useState<Record<string, AgentMode | "">>({})
@@ -108,23 +108,29 @@ export function AgentsPanel({ slug }: { slug: string }) {
                   />
                 </button>
                 {!open ? null : participant ? (
-                  isHost ? (
-                    <AgentControls
-                      withCaption
-                      agentId={agent.id}
-                      participant={participant}
-                      onRemove={() =>
-                        invite.mutate({ agentId: agent.id, action: "remove" })
-                      }
-                      sendControl={(control) =>
-                        sendControl(
-                          new TextEncoder().encode(JSON.stringify(control)),
-                          { topic: DataTopic.AgentControl, reliable: true },
-                        )
-                      }
-                    />
-                  ) : null // non-hosts already see "in call" in the header
-                ) : isHost ? (
+                  <AgentControls
+                    withCaption
+                    agentId={agent.id}
+                    participant={participant}
+                    disabled={!canControl}
+                    onRemove={() =>
+                      invite.mutate(
+                        { agentId: agent.id, action: "remove" },
+                        // Announced only once it actually happened — a
+                        // removal the server refused must not be reported
+                        // to the room as done.
+                        {
+                          onSuccess: () =>
+                            sendControl(
+                              { type: "remove", agentId: agent.id },
+                              agent.name,
+                            ),
+                        },
+                      )
+                    }
+                    sendControl={(control) => sendControl(control, agent.name)}
+                  />
+                ) : canInvite ? (
                   <div className="join w-full">
                     <select
                       className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
@@ -167,13 +173,13 @@ export function AgentsPanel({ slug }: { slug: string }) {
           })}
         </ul>
 
-        {!isHost && (
+        {!canInvite && (
           <p className="px-4 pb-2 text-base-content/50 text-xs">
-            The meeting's organiser manages agents.
+            The meeting's organiser has reserved inviting agents.
           </p>
         )}
 
-        {isHost && <InviteByUrl slug={slug} />}
+        {canInvite && <InviteByUrl slug={slug} />}
 
         <StatsForNerds agents={agents} />
       </div>
@@ -295,9 +301,13 @@ function InviteByUrl({ slug }: { slug: string }) {
   }) => {
     setBusy(true)
     try {
+      const hostKey = readHostKey(slug)
       const res = await fetch(`/api/rooms/${slug}/agents`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...(hostKey ? { "x-host-key": hostKey } : {}),
+        },
         body: JSON.stringify(spec),
       })
       const data = (await res.json()) as { error?: string; name?: string }

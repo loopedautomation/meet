@@ -5,6 +5,7 @@ export const DataTopic = {
   AgentActivity: "agent-activity",
   AgentControl: "agent-control",
   Chat: "chat",
+  Doc: "doc",
   ScreenShare: "screen-share",
 } as const
 
@@ -128,14 +129,99 @@ export const agentControlSchema = z.object({
     // then returns to its usual policy (gated agents re-gate, open agents
     // are muted).
     "zap",
-    // Host-only: change how the agent takes turns for the rest of the
-    // meeting, overriding the registry default. Carries `policy`.
+    // Change how the agent takes turns for the rest of the meeting,
+    // overriding the registry default. Carries `policy`.
     "set-turn-policy",
+    // Not a control the bridge acts on — removal goes through the control
+    // API. Broadcast purely so the room can say who did it, like every
+    // other agent control.
+    "remove",
   ]),
   agentId: z.string(),
   policy: turnPolicySchema.optional(),
+  /**
+   * Who pressed the button. Optional so older clients still parse, and
+   * carried on the message rather than resolved from the sender identity:
+   * the receiving side would otherwise have to keep a roster to name
+   * someone who may already have left.
+   */
+  by: z.string().optional(),
+  byName: z.string().optional(),
 })
 export type AgentControl = z.infer<typeof agentControlSchema>
+
+/**
+ * What non-hosts are allowed to do with agents. Agent controls are shared
+ * ground by default — an agent talking over the room is everyone's problem,
+ * and making only the organiser able to mute it is how a meeting derails.
+ * A host who wants a tighter room can turn either off.
+ */
+export const roomSettingsSchema = z.object({
+  participantsCanControlAgents: z.boolean().default(true),
+  participantsCanInviteAgents: z.boolean().default(true),
+})
+export type RoomSettings = z.infer<typeof roomSettingsSchema>
+
+export const defaultRoomSettings: RoomSettings = {
+  participantsCanControlAgents: true,
+  participantsCanInviteAgents: true,
+}
+
+/**
+ * Room metadata, which is where settings live: unlike a data message it
+ * reaches participants who join later, and LiveKit pushes changes to
+ * everyone already in the room.
+ */
+export const roomMetadataSchema = z.object({
+  hostKey: z.string().optional(),
+  started: z.boolean().optional(),
+  startedAt: z.number().optional(),
+  settings: roomSettingsSchema.optional(),
+})
+export type RoomMetadata = z.infer<typeof roomMetadataSchema>
+
+/** Settings from raw room metadata, falling back to the defaults. */
+export function parseRoomSettings(raw: string | undefined): RoomSettings {
+  if (!raw) return defaultRoomSettings
+  try {
+    return roomSettingsSchema.parse(
+      roomMetadataSchema.parse(JSON.parse(raw)).settings ?? {},
+    )
+  } catch {
+    return defaultRoomSettings
+  }
+}
+
+/** How an agent control reads in the room's activity toast. */
+export function describeAgentControl(
+  control: AgentControl,
+  agentName: string,
+): string | null {
+  switch (control.type) {
+    case "mute":
+      return `muted ${agentName}`
+    case "unmute":
+      return `unmuted ${agentName}`
+    case "deafen":
+      return `deafened ${agentName}`
+    case "undeafen":
+      return `undeafened ${agentName}`
+    case "interrupt":
+      return `interrupted ${agentName}`
+    case "call-on":
+      return `called on ${agentName}`
+    case "zap":
+      return `zapped ${agentName}`
+    case "remove":
+      return `removed ${agentName} from the meeting`
+    case "set-turn-policy":
+      return control.policy
+        ? `set ${agentName}'s response mode to ${control.policy}`
+        : null
+    default:
+      return null
+  }
+}
 
 /** Events published by the bridge on the `agent-activity` data topic. */
 export const agentActivityEventSchema = z.discriminatedUnion("type", [
@@ -188,6 +274,57 @@ export const chatMessageSchema = z.object({
   at: z.number(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
+
+/**
+ * The meeting's shared markdown document, on the `doc` topic.
+ *
+ * Whole-document updates rather than character operations: this is a plan
+ * being written during a call, where the agent drafts and people edit
+ * between turns, not a Google Doc with six simultaneous typists. `rev`
+ * orders edits so a straggling broadcast can't resurrect stale text.
+ */
+export const sharedDocSchema = z.object({
+  text: z.string(),
+  /** Increments on every accepted edit; the primary ordering. */
+  rev: z.number().int().min(0),
+  /** Who last wrote, so the panel can say "Scout is drafting". */
+  by: z.string(),
+  byName: z.string(),
+  at: z.number(),
+})
+export type SharedDoc = z.infer<typeof sharedDocSchema>
+
+export const emptySharedDoc: SharedDoc = {
+  text: "",
+  rev: 0,
+  by: "",
+  byName: "",
+  at: 0,
+}
+
+/**
+ * Picks the winner between what we hold and what just arrived.
+ *
+ * Every peer runs this on the same pair and must reach the same answer, or
+ * the room's copies diverge silently — which is why the tie-breaks go all
+ * the way down to comparing identities rather than stopping at "whatever
+ * arrived last". Two people editing the same instant means one of them
+ * loses their keystroke; that's the accepted cost of not shipping a CRDT.
+ */
+export function mergeSharedDoc(
+  current: SharedDoc,
+  incoming: SharedDoc,
+): SharedDoc {
+  if (incoming.rev !== current.rev) {
+    return incoming.rev > current.rev ? incoming : current
+  }
+  if (incoming.at !== current.at) {
+    return incoming.at > current.at ? incoming : current
+  }
+  // Same revision, same millisecond: fall back to a stable comparison so
+  // every participant converges on one text instead of on their own.
+  return incoming.by > current.by ? incoming : current
+}
 
 /**
  * Only one screen share owns the stage. Starting a share broadcasts a

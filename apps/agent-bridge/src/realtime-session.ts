@@ -21,6 +21,13 @@ const TASK_ACK_MS = 8_000
 /** The tool the realtime model calls to post into the meeting chat. */
 export const CHAT_TOOL = "send_chat_message"
 
+/** The tools the realtime model calls to read and write the shared document. */
+export const READ_DOC_TOOL = "read_shared_doc"
+export const WRITE_DOC_TOOL = "write_shared_doc"
+
+/** The tool the realtime model calls to look at the shared screen. */
+export const LOOK_TOOL = "look_at_screen"
+
 const DEFAULT_HOST = "wss://api.openai.com/v1/realtime"
 
 export type RealtimeSessionOptions = {
@@ -38,6 +45,23 @@ export type RealtimeSessionOptions = {
   cancelWork?: () => boolean
   /** Post a message into the meeting chat on the agent's behalf. */
   sendChat?: (text: string) => void
+  /**
+   * The meeting's shared markdown document. Reading and writing are separate
+   * tools rather than one: writing replaces the whole document, so the model
+   * has to have read it first to avoid deleting what it didn't know about.
+   */
+  readDoc?: () => Promise<string>
+  writeDoc?: (text: string) => Promise<string>
+  /**
+   * Look at the screen someone is sharing and describe it. The realtime
+   * model has no eyes of its own here — this captures a frame and puts it
+   * in front of a vision-capable brain, resolving with what it saw.
+   *
+   * Omitted when nothing can see: vision turned off, or a webhook brain
+   * that drops images. The tool is then not offered at all, so the model
+   * can't promise a look it cannot take.
+   */
+  lookAtScreen?: () => Promise<string>
   /** Speak these 24 kHz mono PCM16 bytes into the room. */
   onAudio: (pcm: Uint8Array) => void
   /** The human started talking over us — cut off whatever is still playing. */
@@ -217,6 +241,62 @@ export class RealtimeSession {
                 required: ["text"],
               },
             },
+            ...(this.#opts.readDoc && this.#opts.writeDoc
+              ? [
+                  {
+                    type: "function",
+                    name: READ_DOC_TOOL,
+                    description:
+                      "Read the meeting's shared markdown document — the notes and " +
+                      "plan everyone in the room can see. Read it before writing, " +
+                      "and whenever someone refers to 'the doc', 'the notes' or " +
+                      "'the plan'.",
+                    parameters: { type: "object", properties: {} },
+                  },
+                  {
+                    type: "function",
+                    name: WRITE_DOC_TOOL,
+                    description:
+                      "Replace the meeting's shared markdown document. This " +
+                      "overwrites it entirely, so read it first and send back the " +
+                      "full document with your changes folded in — never just the " +
+                      "part you added, or you will delete everyone else's work. " +
+                      "Use it when asked to write up, capture, or restructure what " +
+                      "was discussed. Say what you changed in a few words out loud; " +
+                      "don't read the document back.",
+                    parameters: {
+                      type: "object",
+                      properties: {
+                        text: {
+                          type: "string",
+                          description:
+                            "The complete new document, in markdown.",
+                        },
+                      },
+                      required: ["text"],
+                    },
+                  },
+                ]
+              : []),
+            ...(this.#opts.lookAtScreen
+              ? [
+                  {
+                    type: "function",
+                    name: LOOK_TOOL,
+                    description:
+                      "Look at the screen someone is sharing right now and get a " +
+                      "description of what's on it. You cannot see the share any " +
+                      "other way, so use this for ANY question about what is on " +
+                      "screen, what someone is pointing at, an error they're " +
+                      "showing you, or what to do next in what they're doing — and " +
+                      "never guess at screen contents without calling it. It takes " +
+                      "a moment, so say something short first ('let me look'). " +
+                      "Each call sees the screen as it is at that moment: call it " +
+                      "again rather than relying on what you saw earlier.",
+                    parameters: { type: "object", properties: {} },
+                  },
+                ]
+              : []),
           ],
         },
       })
@@ -302,6 +382,14 @@ export class RealtimeSession {
           })
         } else if (event.name === CANCEL_TOOL) {
           this.#cancelTask(String(event.call_id))
+        } else if (event.name === READ_DOC_TOOL) {
+          void this.#docTool(String(event.call_id), () => this.#readDocText())
+        } else if (event.name === WRITE_DOC_TOOL) {
+          void this.#docTool(String(event.call_id), () =>
+            this.#writeDocText(String(event.arguments)),
+          )
+        } else if (event.name === LOOK_TOOL) {
+          void this.#lookAtScreen(String(event.call_id))
         } else {
           void this.#delegate({
             call_id: String(event.call_id),
@@ -398,6 +486,62 @@ export class RealtimeSession {
           ? "Stopped. The task will not finish."
           : "There was no task running.",
       },
+    })
+    this.#send({ type: "response.create" })
+  }
+
+  async #readDocText(): Promise<string> {
+    const text = await this.#opts.readDoc?.()
+    return text?.trim()
+      ? `The shared document currently reads:\n\n${text}`
+      : "The shared document is empty."
+  }
+
+  async #writeDocText(rawArguments: string): Promise<string> {
+    const { text } = JSON.parse(rawArguments) as { text?: string }
+    if (typeof text !== "string") return "No document text was provided."
+    return (
+      (await this.#opts.writeDoc?.(text)) ?? "You couldn't write the document."
+    )
+  }
+
+  /**
+   * The model asked to look at the shared screen. Unlike a chat post this
+   * does force a response — the person asked a question and is waiting on
+   * the answer.
+   */
+  async #lookAtScreen(callId: string) {
+    let output: string
+    try {
+      output = await (this.#opts.lookAtScreen?.() ??
+        Promise.resolve("You can't see the screen right now."))
+    } catch (err) {
+      // Reported to the model rather than swallowed, so it can say the look
+      // failed instead of inventing what it would have seen.
+      output = `You tried to look at the screen but couldn't: ${(err as Error).message}`
+    }
+    this.#send({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: callId, output },
+    })
+    this.#send({ type: "response.create" })
+  }
+
+  /**
+   * Shared plumbing for the document tools: report the result and let the
+   * model speak. Failures come back as text rather than silence, so it can
+   * say the write didn't land instead of claiming it did.
+   */
+  async #docTool(callId: string, run: () => Promise<string>) {
+    let output: string
+    try {
+      output = await run()
+    } catch (err) {
+      output = `That didn't work: ${(err as Error).message}`
+    }
+    this.#send({
+      type: "conversation.item.create",
+      item: { type: "function_call_output", call_id: callId, output },
     })
     this.#send({ type: "response.create" })
   }

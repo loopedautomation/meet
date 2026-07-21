@@ -4,7 +4,7 @@ import type { AgentActivityEvent, AgentState, TurnPolicy } from "@meet/shared"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
 import type { AgentEntry } from "./registry.js"
-import type { ScreenCapture } from "./screen-capture.js"
+import { attachScreenFrame, type ScreenCapture } from "./screen-capture.js"
 
 export type BridgeCallbacks = {
   publishActivity: (event: AgentActivityEvent) => void
@@ -141,16 +141,9 @@ export class LoopedVoiceAgent extends voice.Agent {
     }
 
     // A live screenshare rides along as a frame, so the agent can see it.
-    let images: { mediaType: string; data: string }[] | undefined
-    const capture = this.#screen?.active
-      ? await this.#screen.latestJpeg().catch(() => null)
-      : null
-    if (capture) {
-      images = [{ mediaType: capture.mediaType, data: capture.data }]
-      text = `[A current frame of ${capture.sharerName}'s shared screen is attached.]\n${text}`
-    }
+    const attached = await attachScreenFrame(this.#screen, text)
 
-    const iterator = brain.runTurn(text, images)
+    const iterator = brain.runTurn(attached.text, attached.images)
     return new ReadableStream<string>({
       async pull(controller) {
         try {
