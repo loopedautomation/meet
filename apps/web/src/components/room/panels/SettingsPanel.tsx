@@ -3,7 +3,7 @@
 import { useMediaDeviceSelect } from "@livekit/components-react"
 import type { RoomSettings } from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Lock, Moon, Sun } from "lucide-react"
+import { Check, ChevronDown, Lock, Moon, Sun } from "lucide-react"
 import { useEffect, useState } from "react"
 import { toast } from "react-toastify"
 import { useAgentPermissions } from "@/hooks/useRoomSettings"
@@ -155,6 +155,14 @@ export function SettingsPanel({ slug }: { slug: string }) {
   )
 }
 
+// A native <select> can't be reliably truncated cross-browser: neither its
+// closed-value text nor its browser/OS-rendered option popup respect CSS
+// text-overflow, and on this stack it'll happily render past its own
+// `width` for a long device name (confirmed — capping the option text alone
+// doesn't stop the closed box itself from overflowing). A DaisyUI dropdown
+// gives full control over both, same pattern as the toolbar's own device
+// menu (see `DeviceMenu` in ControlBar.tsx), where plain truncation on a
+// regular `<span>` just works.
 function DeviceSelect({
   kind,
   label,
@@ -169,28 +177,50 @@ function DeviceSelect({
 
   if (devices.length === 0) return null
 
+  // activeDeviceId doesn't always match a real deviceId (e.g. video starts
+  // as LiveKit's "default" sentinel, which browsers don't expose as an
+  // actual camera entry — only audio in/out get a real "default" device).
+  // A native <select> in that situation just shows its first <option>
+  // rather than going blank; fall back the same way here.
+  const activeLabel =
+    (devices.find((d) => d.deviceId === activeDeviceId) ?? devices[0])
+      .label || label
+
   return (
-    <label className="flex min-w-0 flex-col gap-1">
+    <div className="flex min-w-0 flex-col gap-1">
       <span className="text-base-content/70 text-sm">{label}</span>
-      {/* Device labels are long ("Studio Display Microphone (…)") — keep the
-          select at the panel width and truncate rather than overflow. */}
-      <select
-        className="select select-sm w-full max-w-full truncate"
-        value={activeDeviceId}
-        onChange={(e) => {
-          void setActiveMediaDevice(e.target.value)
-          try {
-            localStorage.setItem(persistKey, e.target.value)
-          } catch {}
-        }}
-      >
-        {devices.map((d) => (
-          <option key={d.deviceId} value={d.deviceId}>
-            {d.label || label}
-          </option>
-        ))}
-      </select>
-    </label>
+      <div className="dropdown dropdown-bottom w-full">
+        <button
+          type="button"
+          tabIndex={0}
+          className="btn btn-sm w-full min-w-0 justify-between border-base-300 bg-base-100 font-normal"
+        >
+          <span className="min-w-0 truncate">{activeLabel}</span>
+          <ChevronDown className="size-3.5 shrink-0 opacity-60" />
+        </button>
+        <ul className="menu dropdown-content z-30 mt-1 w-full max-w-full rounded-box bg-base-100 p-2 shadow-lg">
+          {devices.map((d) => (
+            <li key={d.deviceId} className="min-w-0">
+              <button
+                type="button"
+                className={d.deviceId === activeDeviceId ? "menu-active" : ""}
+                onClick={() => {
+                  void setActiveMediaDevice(d.deviceId)
+                  try {
+                    localStorage.setItem(persistKey, d.deviceId)
+                  } catch {}
+                }}
+              >
+                <span className="min-w-0 truncate">{d.label || label}</span>
+                {d.deviceId === activeDeviceId && (
+                  <Check className="size-4 shrink-0 text-success" />
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
   )
 }
 
