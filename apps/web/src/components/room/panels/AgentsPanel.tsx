@@ -55,7 +55,10 @@ export function AgentsPanel({ slug }: { slug: string }) {
     .map(([id, p]) => ({
       id: id as string,
       name: p.name || (id as string),
-      description: "Invited by URL",
+      // The agent's own description, from its hello frame; fall back for
+      // agents on an older framework that don't report one.
+      description:
+        parseParticipantMeta(p.metadata)?.description ?? "Invited by URL",
     }))
   const allAgents = [...agents, ...dynamicAgents]
 
@@ -288,7 +291,6 @@ function forgetAgent(url: string): RecentAgent[] {
 function InviteByUrl({ slug }: { slug: string }) {
   const [url, setUrl] = useState("")
   const [token, setToken] = useState("")
-  const [name, setName] = useState("")
   const [voice, setVoice] = useState<string>(AGENT_VOICES[0])
   const [busy, setBusy] = useState(false)
   const [recent, setRecent] = useState<RecentAgent[]>(readRecentAgents)
@@ -296,7 +298,6 @@ function InviteByUrl({ slug }: { slug: string }) {
   const inviteAgent = async (spec: {
     url: string
     token: string
-    name?: string
     voice?: string
   }) => {
     setBusy(true)
@@ -333,17 +334,9 @@ function InviteByUrl({ slug }: { slug: string }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!url.trim()) return
-    if (
-      await inviteAgent({
-        url: url.trim(),
-        token: token.trim(),
-        name: name.trim() || undefined,
-        voice,
-      })
-    ) {
+    if (await inviteAgent({ url: url.trim(), token: token.trim(), voice })) {
       setUrl("")
       setToken("")
-      setName("")
     }
   }
 
@@ -392,12 +385,6 @@ function InviteByUrl({ slug }: { slug: string }) {
         type="password"
         value={token}
         onChange={(e) => setToken(e.target.value)}
-      />
-      <input
-        className="input input-sm w-full"
-        placeholder="Name (optional)"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
       />
       <select
         className="select select-sm w-full border border-base-300"

@@ -74,6 +74,9 @@ export const participantMetaSchema = z.object({
   // participants have knocked and sit in the waiting room until admitted.
   kind: z.enum(["human", "agent", "service", "waiting"]),
   agentId: z.string().optional(),
+  // An agent's self-reported description, for URL-invited agents that aren't
+  // in the registry — the only way the panel can show what they are.
+  description: z.string().optional(),
   service: z.string().optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
