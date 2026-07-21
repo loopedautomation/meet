@@ -26,7 +26,7 @@ import type { Brain } from "./looped-webhook.js"
 import { postDebugEvent } from "./meeting-context.js"
 import { REALTIME_SAMPLE_RATE, RealtimeSession } from "./realtime-session.js"
 import type { AgentEntry } from "./registry.js"
-import type { ScreenCapture } from "./screen-capture.js"
+import { attachScreenFrame, type ScreenCapture } from "./screen-capture.js"
 
 /** How long a zapped agent responds freely before re-gating/muting. */
 const ZAP_WINDOW_MS = 30_000
@@ -35,7 +35,11 @@ const ZAP_WINDOW_MS = 30_000
 const MIX_INTERVAL_MS = 50
 const SAMPLES_PER_MIX = (REALTIME_SAMPLE_RATE / 1000) * MIX_INTERVAL_MS
 
-const instructions = (entry: AgentEntry, context?: string) =>
+const instructions = (
+  entry: AgentEntry,
+  canSeeScreens: boolean,
+  context?: string,
+) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting ` +
   "with several people. You are a guest, not the host: most of the " +
   "conversation is between the humans and is not for you. Stay silent unless " +
@@ -64,6 +68,16 @@ const instructions = (entry: AgentEntry, context?: string) =>
   "only given the floor when someone addresses you by name or calls on you " +
   "after you raise your hand, and between turns you may be asked silently " +
   "whether you want the floor — answer those checks honestly and sparingly." +
+  (canSeeScreens
+    ? " You cannot see the meeting: you hear it. If someone shares their " +
+      "screen and asks about it — what's on it, what an error says, what " +
+      "they're pointing at — call look_at_screen and answer from what it " +
+      "returns. Never describe or guess at anything on a screen you " +
+      "haven't just looked at, and look again rather than trusting an " +
+      "earlier look, since the screen changes as they work."
+    : " You cannot see anything: not the participants, not their screens. " +
+      "If someone asks about a shared screen, say plainly that you can't " +
+      "see it and ask them to describe it — never guess.") +
   (context ? `\n\n${context}` : "")
 
 /**
@@ -110,6 +124,11 @@ export async function runRealtimeAgent(opts: {
     console.warn(`[${entry.id}] barge-in disabled: no VAD available`)
   }
 
+  // Vision needs both halves: a deployment that permits it, and a brain that
+  // can actually receive an image. Webhook brains drop images silently, so
+  // an agent on one is better told it has no eyes than left to guess.
+  const canSeeScreens = screen.enabled && entry.brain.kind === "tty"
+
   // ---- outbound audio: session -> room ------------------------------------
   const source = new AudioSource(REALTIME_SAMPLE_RATE, 1)
   const track = LocalAudioTrack.createAudioTrack(`${entry.id}-voice`, source)
@@ -136,6 +155,11 @@ export async function runRealtimeAgent(opts: {
         bargeIn.enabled && vad
           ? `silero vad, ${bargeIn.minSpeechMs}ms sustained`
           : "off (manual interrupt only)",
+      vision: canSeeScreens
+        ? "screenshare frames on demand (look_at_screen)"
+        : screen.enabled
+          ? "off (brain is webhook; images are dropped)"
+          : "off (AGENT_SCREEN_VISION)",
       "noise suppression": "room transcriber (gtcrn)",
     } as Record<string, string>,
     latencyMs: {} as Record<string, number>,
@@ -155,16 +179,7 @@ export async function runRealtimeAgent(opts: {
     const startedAt = Date.now()
     workInFlight++
     callbacks.setState("thinking")
-    let input = request
-    const capture = screen.active
-      ? await screen.latestJpeg().catch(() => null)
-      : null
-    const images = capture
-      ? [{ mediaType: capture.mediaType, data: capture.data }]
-      : undefined
-    if (capture) {
-      input = `[A current frame of ${capture.sharerName}'s shared screen is attached.]\n${input}`
-    }
+    const { text: input, images } = await attachScreenFrame(screen, request)
     try {
       let reply = ""
       // The brain's tool activity streams to the room's activity feed, but
@@ -199,6 +214,31 @@ export async function runRealtimeAgent(opts: {
       publishStats()
       callbacks.setState(state.muted ? "muted" : "listening")
     }
+  }
+
+  /**
+   * Answer "what's on my screen?" — the question that used to get a
+   * confident guess. The realtime model can't see, so the frame goes to the
+   * brain (which can) and its description comes back as the tool's result.
+   */
+  const describeScreen = async (): Promise<string> => {
+    const { text, images } = await attachScreenFrame(
+      screen,
+      "Describe what is currently on the shared screen, in a couple of " +
+        "sentences someone could act on. Lead with whatever they are most " +
+        "likely asking about — an error, a diff, a chart, the active window.",
+    )
+    if (!images) return "Nobody is sharing their screen at the moment."
+    let description = ""
+    for await (const frame of brain.runTurn(text, images)) {
+      publishBrainActivity(entry.id, frame, callbacks)
+      if (frame.type === "assistant") {
+        description += (description ? "\n" : "") + frame.content
+      } else if (frame.type === "error") {
+        throw new Error(frame.error)
+      }
+    }
+    return description || "You couldn't make out what's on the screen."
   }
 
   // captureFrame is async and chunks internally — concurrent calls interleave
@@ -240,7 +280,7 @@ export async function runRealtimeAgent(opts: {
     model: realtime.model,
     voice: realtime.voice,
     apiKey,
-    instructions: instructions(entry, opts.context),
+    instructions: instructions(entry, canSeeScreens, opts.context),
     delegate,
     cancelWork: () => {
       if (workInFlight === 0 || !brain.abortTurn) return false
@@ -250,6 +290,22 @@ export async function runRealtimeAgent(opts: {
     sendChat: callbacks.publishChat,
     readDoc,
     writeDoc,
+    // Offered only when a look could actually succeed. A webhook brain
+    // drops images on the floor, so an agent on one must not be told it
+    // can see — it would answer confidently about a screen it never saw.
+    lookAtScreen: canSeeScreens
+      ? async () => {
+          if (!screen.active) {
+            return "Nobody is sharing their screen at the moment."
+          }
+          callbacks.setState("thinking")
+          try {
+            return await describeScreen()
+          } finally {
+            callbacks.setState(state.muted ? "muted" : "listening")
+          }
+        }
+      : undefined,
     gate: {
       // Substring, not word-boundary: STT often renders the name with
       // possessives or punctuation attached ("Scout's", "scout?").
