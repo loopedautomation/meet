@@ -21,6 +21,7 @@ export type DynamicAgentSpec = {
   url: string
   token: string
   name: string
+  description?: string
   voice?: string
 }
 
@@ -74,18 +75,21 @@ export function normalizeAgentUrl(input: string): string | null {
   return parsed.toString()
 }
 
+export type ProbedAgent = { name: string; description?: string }
+
 /**
  * Validate a pasted agent URL by performing the TTY handshake: connect with
  * the bearer subprotocol and wait for the `hello` frame, which carries the
- * agent's handle.
+ * agent's own name and description (falling back to `handle` for agents on a
+ * framework version that predates those fields).
  */
 export async function probeAgent(
   url: string,
   token: string,
-): Promise<{ name: string } | { error: string }> {
+): Promise<ProbedAgent | { error: string }> {
   return new Promise((resolve) => {
     let settled = false
-    const done = (result: { name: string } | { error: string }) => {
+    const done = (result: ProbedAgent | { error: string }) => {
       if (settled) return
       settled = true
       clearTimeout(timer)
@@ -110,9 +114,15 @@ export async function probeAgent(
         const frame = JSON.parse(String(raw.data)) as {
           type?: string
           handle?: string
+          name?: string
+          description?: string
         }
         if (frame.type === "hello") {
-          done({ name: frame.handle || "Agent" })
+          const description = frame.description?.trim()
+          done({
+            name: frame.name?.trim() || frame.handle || "Agent",
+            ...(description ? { description } : {}),
+          })
         }
       } catch {}
     }

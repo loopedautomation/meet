@@ -74,6 +74,9 @@ export const participantMetaSchema = z.object({
   // participants have knocked and sit in the waiting room until admitted.
   kind: z.enum(["human", "agent", "service", "waiting"]),
   agentId: z.string().optional(),
+  // An agent's self-reported description, for URL-invited agents that aren't
+  // in the registry — the only way the panel can show what they are.
+  description: z.string().optional(),
   service: z.string().optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
@@ -361,6 +364,13 @@ export const tokenRequestSchema = z.object({
   rejoinToken: z.string().optional(),
   /** The creator's key from room creation — starts the meeting on arrival. */
   hostKey: z.string().optional(),
+  /**
+   * Explicit "start the meeting" intent from the waiting screen, for a host
+   * whose browser doesn't hold the hostKey (a different device, incognito, or
+   * cleared storage). Honoured only for an otherwise-empty room, so it starts
+   * the meeting without letting anyone barge into one already in progress.
+   */
+  startAnyway: z.boolean().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 

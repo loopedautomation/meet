@@ -32,6 +32,7 @@ import {
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { Modal } from "@/components/ui/Modal"
 import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
 import {
   supportsVoiceIsolation,
@@ -58,6 +59,9 @@ export function ControlBar({
     localParticipant,
   } = useLocalParticipant()
   const [copied, setCopied] = useState(false)
+  // Guard the destructive leave action behind a confirm — a stray click on the
+  // red button shouldn't drop you out of the call and back through the lobby.
+  const [confirmLeave, setConfirmLeave] = useState(false)
   const openPanel = useStore($openPanel)
   const participants = useParticipants()
   const waitingCount = participants.filter(
@@ -281,7 +285,7 @@ export function ControlBar({
         >
           <button
             type="button"
-            className={`btn btn-circle ${handRaised ? "btn-success" : "btn-neutral"}`}
+            className={`btn btn-circle ${handRaised ? "btn-warning" : "btn-neutral"}`}
             onClick={toggleHand}
             aria-label={handRaised ? "Lower hand" : "Raise hand"}
           >
@@ -292,13 +296,41 @@ export function ControlBar({
           <button
             type="button"
             className="btn btn-circle btn-error"
-            onClick={() => room.disconnect()}
+            onClick={() => setConfirmLeave(true)}
             aria-label="Leave meeting"
           >
             <LogOut className="size-5" />
           </button>
         </div>
       </div>
+
+      <Modal isOpen={confirmLeave} onClose={() => setConfirmLeave(false)}>
+        <h3 className="font-semibold text-lg">Leave this meeting?</h3>
+        <p className="py-2 text-base-content/70 text-sm">
+          You'll be disconnected from the call and will need to rejoin to come
+          back.
+        </p>
+        <div className="modal-action">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => setConfirmLeave(false)}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="btn btn-error btn-brutalist"
+            onClick={() => {
+              setConfirmLeave(false)
+              void room.disconnect()
+            }}
+          >
+            <LogOut className="size-4" />
+            Leave
+          </button>
+        </div>
+      </Modal>
 
       <div className="flex items-center gap-1">
         {/* Agents first — it's the most frequently used panel. */}
@@ -456,7 +488,9 @@ function DeviceMenu({
           <li key={d.deviceId}>
             <button
               type="button"
-              className={d.deviceId === activeDeviceId ? "active" : ""}
+              // DaisyUI v5 highlights the active menu row with `menu-active`
+              // (renamed from `active` in v4).
+              className={d.deviceId === activeDeviceId ? "menu-active" : ""}
               onClick={() => {
                 void setActiveMediaDevice(d.deviceId)
                 try {
@@ -467,6 +501,9 @@ function DeviceMenu({
               <span className="truncate">
                 {d.label || (kind === "audioinput" ? "Microphone" : "Camera")}
               </span>
+              {d.deviceId === activeDeviceId && (
+                <Check className="size-4 shrink-0 text-success" />
+              )}
             </button>
           </li>
         ))}

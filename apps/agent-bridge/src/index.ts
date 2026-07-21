@@ -104,14 +104,22 @@ app.post("/rooms/:room/agents", async (c) => {
   const spec: DynamicAgentSpec = {
     url,
     token: body.token ?? "",
+    // The agent names itself in its hello frame; a pasted name still wins if
+    // one is given, but the UI no longer asks for one.
     name: body.name?.trim() || probe.name,
+    ...(probe.description ? { description: probe.description } : {}),
     voice: body.voice,
   }
   const id = registerDynamicAgent(spec)
   await dispatch.createDispatch(room, "looped-bridge", {
     metadata: JSON.stringify({ agentId: id }),
   })
-  return c.json({ ok: true, id, name: spec.name })
+  return c.json({
+    ok: true,
+    id,
+    name: spec.name,
+    description: spec.description,
+  })
 })
 
 // ---- transcript store ------------------------------------------------------

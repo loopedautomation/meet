@@ -89,6 +89,7 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
       {
         id: agentId,
         name: spec.name,
+        description: spec.description,
         greeting: `Hi, I'm ${spec.name}.`,
         turn_policy: "open",
         brain: { kind: "tty", url: spec.url, token_env: "" },
@@ -111,7 +112,14 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
 /** Accept dispatches with an agent-scoped identity and metadata. */
 export async function acceptRequest(request: JobRequest): Promise<void> {
   const entry = entryFromMetadata(request.job.metadata)
-  const meta: ParticipantMeta = { kind: "agent", agentId: entry.id }
+  // Carry the description in participant metadata so every client can show
+  // what a URL-invited agent is, not just the person who invited it — its
+  // name is already the participant name, but description has no other home.
+  const meta: ParticipantMeta = {
+    kind: "agent",
+    agentId: entry.id,
+    ...(entry.description ? { description: entry.description } : {}),
+  }
   await request.accept(entry.name, `agent-${entry.id}`, JSON.stringify(meta), {
     [AGENT_STATE_ATTRIBUTE]: "listening" satisfies AgentState,
   })
