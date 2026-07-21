@@ -45,9 +45,15 @@ export function RoomClient({
   const [awaitingStart, setAwaitingStart] = useState<JoinPreferences | null>(
     null,
   )
+  // True while a manual "start the meeting" request is in flight.
+  const [starting, setStarting] = useState(false)
 
   const handleJoin = useCallback(
-    async (prefs: JoinPreferences, rejoinToken?: string) => {
+    async (
+      prefs: JoinPreferences,
+      rejoinToken?: string,
+      startAnyway = false,
+    ) => {
       setAdmitted(false)
       let hostKey: string | undefined
       try {
@@ -61,6 +67,7 @@ export function RoomClient({
             displayName: prefs.displayName,
             rejoinToken,
             hostKey,
+            startAnyway,
           }),
         })
         if (res.status === 404) {
@@ -162,6 +169,15 @@ export function RoomClient({
   }, [awaitingStart, session, handleJoin])
 
   if (awaitingStart && !session) {
+    const startNow = () => {
+      setStarting(true)
+      // startAnyway=true: honoured server-side only for an empty room, so this
+      // opens the meeting for a host without the local hostKey without letting
+      // anyone barge into a call already in progress.
+      handleJoin(awaitingStart, undefined, true).finally(() =>
+        setStarting(false),
+      )
+    }
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="animate-pulse font-medium text-lg">
@@ -169,6 +185,18 @@ export function RoomClient({
         </p>
         <p className="text-base-content/60 text-sm">
           You'll join automatically once the host arrives.
+        </p>
+        <button
+          type="button"
+          className="btn btn-primary btn-brutalist mt-3"
+          onClick={startNow}
+          disabled={starting}
+        >
+          {starting && <span className="loading loading-spinner loading-sm" />}
+          Start the meeting
+        </button>
+        <p className="text-base-content/50 text-xs">
+          If you're the host, start it now.
         </p>
       </main>
     )

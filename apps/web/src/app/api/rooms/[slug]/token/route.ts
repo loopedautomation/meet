@@ -57,21 +57,41 @@ export async function POST(request: Request, { params }: Params) {
     existing = [recreated]
   }
 
-  // The meeting starts when its creator arrives. Room metadata carries the
-  // hostKey minted at creation plus a started flag; only a request presenting
-  // the key flips it. Everyone earlier gets 425 and the client polls.
-  // (Rooms without metadata predate this gate — treat them as started.)
   const room = existing[0]
   let roomMeta: { hostKey?: string; started?: boolean; startedAt?: number } = {}
   try {
     roomMeta = JSON.parse(room.metadata || "{}")
   } catch {}
   const isCreator = !!roomMeta.hostKey && body.data.hostKey === roomMeta.hostKey
+
+  // Count humans already inside — a lingering transcriber or agent must never
+  // count, so joining "alone with the transcriber" still reads as an empty
+  // room. Both the start gate and the waiting-room fallback below key off it.
+  let participantCount = 0
+  try {
+    participantCount = (await roomService().listParticipants(slug)).filter(
+      (p) => parseParticipantMeta(p.metadata)?.kind === "human",
+    ).length
+  } catch {
+    participantCount = 0
+  }
+
+  // The meeting starts when its creator arrives — a request presenting the
+  // hostKey minted at creation, which flips the started flag. But that key
+  // lives only in the creating browser's localStorage, so a host opening the
+  // link elsewhere (another device, incognito, cleared storage) can't present
+  // it; without a fallback only a key holder could ever start it, deadlocking
+  // the room. So the waiting screen offers a manual start, which we honour for
+  // an otherwise-empty room — it opens the meeting without letting anyone
+  // barge into one already under way. Everyone else gets 425 and polls.
+  // (Rooms without metadata predate this gate — treat them as started.)
   const started = roomMeta.started !== false
-  if (!started && !isCreator) {
+  const canStart =
+    isCreator || (!!body.data.startAnyway && participantCount === 0)
+  if (!started && !canStart) {
     return NextResponse.json({ notStarted: true }, { status: 425 })
   }
-  if (!started && isCreator) {
+  if (!started && canStart) {
     // Stamp the start moment: the call timer anchors here, so a meeting
     // that reconvenes in a reused (not yet GC'd) room starts from 0:00
     // instead of inheriting the room's creation time.
@@ -85,16 +105,6 @@ export async function POST(request: Request, { params }: Params) {
   // into an empty room) enters directly; everyone after knocks — they join
   // with a restricted token (no publish/subscribe/data) and "waiting"
   // metadata until someone inside admits them (see ../admit/route.ts).
-  // Only humans count: a lingering transcriber or agent must never claim
-  // host, and joining "alone with the transcriber" should still unmute.
-  let participantCount = 0
-  try {
-    participantCount = (await roomService().listParticipants(slug)).filter(
-      (p) => parseParticipantMeta(p.metadata)?.kind === "human",
-    ).length
-  } catch {
-    participantCount = 0
-  }
   const isHost = isCreator || participantCount === 0
   let waiting = !isHost
 
