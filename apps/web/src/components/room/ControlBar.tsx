@@ -374,11 +374,22 @@ function DeviceMenu({
   persistKey: string
   children?: React.ReactNode
 }) {
+  const dropdownRef = useRef<HTMLDivElement>(null)
   const { devices, activeDeviceId, setActiveMediaDevice } =
     useMediaDeviceSelect({ kind })
 
+  const closeDropdown = () => {
+    const activeElement = document.activeElement
+    if (
+      activeElement instanceof HTMLElement &&
+      dropdownRef.current?.contains(activeElement)
+    ) {
+      activeElement.blur()
+    }
+  }
+
   return (
-    <div className="dropdown dropdown-bottom">
+    <div ref={dropdownRef} className="dropdown dropdown-bottom">
       <button
         type="button"
         tabIndex={0}
@@ -398,6 +409,7 @@ function DeviceMenu({
                 try {
                   localStorage.setItem(persistKey, d.deviceId)
                 } catch {}
+                closeDropdown()
               }}
             >
               <span className="truncate">
