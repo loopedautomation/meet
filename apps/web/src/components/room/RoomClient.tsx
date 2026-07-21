@@ -9,6 +9,7 @@ import { toast } from "react-toastify"
 import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
+import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
 import { $isHost } from "@/stores/host"
 
 const queryClient = new QueryClient()
@@ -201,6 +202,15 @@ export function RoomClient({
       token={session.token.token}
       serverUrl={session.token.serverUrl}
       options={{
+        // Keep the browser DSP on and layer enhanced voice isolation on top
+        // per the saved preference; where unsupported the extra flag is simply
+        // ignored. Set as a capture default so unmuting inherits it too.
+        audioCaptureDefaults: {
+          voiceIsolation: readVoiceIsolationPref(),
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         videoCaptureDefaults: portraitCapture
           ? { resolution: { width: 720, height: 1280 } }
           : undefined,
