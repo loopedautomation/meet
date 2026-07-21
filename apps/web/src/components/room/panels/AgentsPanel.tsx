@@ -35,6 +35,13 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const [modes, setModes] = useState<Record<string, AgentMode | "">>({})
   // Accordion: one card open at a time; collapsed rows are just icon + name.
   const [expanded, setExpanded] = useState<string | null>(null)
+  // Recently invited URL agents, remembered per browser. Lifted out of the
+  // invite form so they can render as cards in the list alongside registry
+  // agents rather than as a cramped strip of buttons.
+  const [recent, setRecent] = useState<RecentAgent[]>(readRecentAgents)
+  // The URL currently being (re-)invited, for the spinner. One invite runs at
+  // a time, so a single value covers both the form and the recent cards.
+  const [invitingUrl, setInvitingUrl] = useState<string | null>(null)
 
   const agentParticipants = new Map(
     participants
@@ -62,6 +69,57 @@ export function AgentsPanel({ slug }: { slug: string }) {
     }))
   const allAgents = [...agents, ...dynamicAgents]
 
+  // A recently invited agent that's back in the room already shows as an
+  // in-call card above; drop it from "Recently invited" so it isn't listed
+  // twice. Name is the only thing a stored invite and a live participant share.
+  const inRoomNames = new Set(
+    [...agentParticipants.values()].map((p) => (p.name || "").toLowerCase()),
+  )
+  const recentlyInvited = recent.filter(
+    (a) => !inRoomNames.has(a.name.toLowerCase()),
+  )
+
+  const inviteByUrl = async (spec: {
+    url: string
+    token: string
+    voice?: string
+  }): Promise<boolean> => {
+    setInvitingUrl(spec.url)
+    try {
+      const hostKey = readHostKey(slug)
+      const res = await fetch(`/api/rooms/${slug}/agents`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(hostKey ? { "x-host-key": hostKey } : {}),
+        },
+        body: JSON.stringify(spec),
+      })
+      const data = (await res.json()) as { error?: string; name?: string }
+      if (!res.ok) throw new Error(data.error ?? "invite failed")
+      setRecent(
+        rememberAgent({
+          url: spec.url,
+          token: spec.token,
+          name: data.name || spec.url,
+          voice: spec.voice,
+          at: Date.now(),
+        }),
+      )
+      return true
+    } catch (err) {
+      toast.error((err as Error).message)
+      return false
+    } finally {
+      setInvitingUrl(null)
+    }
+  }
+
+  // The registry-empty hint is only true when there's genuinely nothing to
+  // show — recently invited agents count as something.
+  const nothingToShow =
+    !isLoading && allAgents.length === 0 && recentlyInvited.length === 0
+
   return (
     // Two scroll regions: the agent list (with invite + stats) takes the
     // flexible space; the activity feed keeps a bounded strip at the bottom.
@@ -73,7 +131,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
           {isLoading && (
             <li className="text-base-content/50 text-sm">Loading agents…</li>
           )}
-          {!isLoading && allAgents.length === 0 && (
+          {nothingToShow && (
             <li className="text-base-content/50 text-sm">
               No agents registered. Add them to agent-registry.yaml.
             </li>
@@ -82,35 +140,15 @@ export function AgentsPanel({ slug }: { slug: string }) {
             const participant = agentParticipants.get(agent.id)
             const open = expanded === agent.id
             return (
-              <li
+              <AgentCard
                 key={agent.id}
-                className="flex flex-col gap-2 rounded-field bg-base-200 p-3"
+                name={agent.name}
+                description={agent.description}
+                inCall={!!participant}
+                open={open}
+                onToggle={() => setExpanded(open ? null : agent.id)}
               >
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-3 text-left"
-                  aria-expanded={open}
-                  onClick={() => setExpanded(open ? null : agent.id)}
-                >
-                  <Bot className="size-5 shrink-0 text-primary" />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-medium text-sm">{agent.name}</p>
-                    {open && agent.description && (
-                      <p className="text-base-content/60 text-xs">
-                        {agent.description}
-                      </p>
-                    )}
-                  </div>
-                  {participant && (
-                    <span className="badge badge-ghost badge-sm shrink-0">
-                      in call
-                    </span>
-                  )}
-                  <ChevronDown
-                    className={`size-4 shrink-0 text-base-content/40 transition-transform ${open ? "rotate-180" : ""}`}
-                  />
-                </button>
-                {!open ? null : participant ? (
+                {participant ? (
                   <AgentControls
                     withCaption
                     agentId={agent.id}
@@ -171,10 +209,66 @@ export function AgentsPanel({ slug }: { slug: string }) {
                     </button>
                   </div>
                 ) : null}
-              </li>
+              </AgentCard>
             )
           })}
         </ul>
+
+        {/* Recently invited URL agents render as the same cards as the
+            registry, just grouped and with a re-invite action. */}
+        {canInvite && recentlyInvited.length > 0 && (
+          <div className="px-4 pb-2">
+            <p className="pb-2 font-medium text-base-content/60 text-xs uppercase tracking-wide">
+              Recently invited
+            </p>
+            <ul className="space-y-2">
+              {recentlyInvited.map((a) => {
+                const open = expanded === `recent:${a.url}`
+                return (
+                  <AgentCard
+                    key={a.url}
+                    name={a.name}
+                    description={a.url}
+                    inCall={false}
+                    open={open}
+                    onToggle={() =>
+                      setExpanded(open ? null : `recent:${a.url}`)
+                    }
+                  >
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm flex-1 gap-1"
+                        disabled={invitingUrl !== null}
+                        onClick={() =>
+                          inviteByUrl({
+                            url: a.url,
+                            token: a.token,
+                            voice: a.voice,
+                          })
+                        }
+                      >
+                        {invitingUrl === a.url ? (
+                          <span className="loading loading-spinner loading-xs" />
+                        ) : (
+                          <Plus className="size-4" />
+                        )}
+                        Invite
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-sm"
+                        onClick={() => setRecent(forgetAgent(a.url))}
+                      >
+                        Forget
+                      </button>
+                    </div>
+                  </AgentCard>
+                )
+              })}
+            </ul>
+          </div>
+        )}
 
         {!canInvite && (
           <p className="px-4 pb-2 text-base-content/50 text-xs">
@@ -182,7 +276,9 @@ export function AgentsPanel({ slug }: { slug: string }) {
           </p>
         )}
 
-        {canInvite && <InviteByUrl slug={slug} />}
+        {canInvite && (
+          <InviteByUrl inviteByUrl={inviteByUrl} invitingUrl={invitingUrl} />
+        )}
 
         <StatsForNerds agents={agents} />
       </div>
@@ -192,6 +288,55 @@ export function AgentsPanel({ slug }: { slug: string }) {
       </div>
       <ActivityFeed activity={activity} />
     </div>
+  )
+}
+
+/**
+ * One agent in the list: a collapsed icon-and-name row that expands to show
+ * its controls (in call) or an invite action (not). Shared by registry,
+ * in-room URL, and recently invited agents so all three read identically.
+ */
+function AgentCard({
+  name,
+  description,
+  inCall,
+  open,
+  onToggle,
+  children,
+}: {
+  name: string
+  description?: string
+  inCall: boolean
+  open: boolean
+  onToggle: () => void
+  children?: React.ReactNode
+}) {
+  return (
+    <li className="flex flex-col gap-2 rounded-field bg-base-200 p-3">
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 text-left"
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        <Bot className="size-5 shrink-0 text-primary" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate font-medium text-sm">{name}</p>
+          {open && description && (
+            <p className="break-words text-base-content/60 text-xs">
+              {description}
+            </p>
+          )}
+        </div>
+        {inCall && (
+          <span className="badge badge-ghost badge-sm shrink-0">in call</span>
+        )}
+        <ChevronDown
+          className={`size-4 shrink-0 text-base-content/40 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && children}
+    </li>
   )
 }
 
@@ -288,53 +433,26 @@ function forgetAgent(url: string): RecentAgent[] {
 }
 
 /** Bring any looped agent into the call by its TTY URL — no registration. */
-function InviteByUrl({ slug }: { slug: string }) {
-  const [url, setUrl] = useState("")
-  const [token, setToken] = useState("")
-  const [voice, setVoice] = useState<string>(AGENT_VOICES[0])
-  const [busy, setBusy] = useState(false)
-  const [recent, setRecent] = useState<RecentAgent[]>(readRecentAgents)
-
-  const inviteAgent = async (spec: {
+function InviteByUrl({
+  inviteByUrl,
+  invitingUrl,
+}: {
+  inviteByUrl: (spec: {
     url: string
     token: string
     voice?: string
-  }) => {
-    setBusy(true)
-    try {
-      const hostKey = readHostKey(slug)
-      const res = await fetch(`/api/rooms/${slug}/agents`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(hostKey ? { "x-host-key": hostKey } : {}),
-        },
-        body: JSON.stringify(spec),
-      })
-      const data = (await res.json()) as { error?: string; name?: string }
-      if (!res.ok) throw new Error(data.error ?? "invite failed")
-      setRecent(
-        rememberAgent({
-          url: spec.url,
-          token: spec.token,
-          name: data.name || spec.url,
-          voice: spec.voice,
-          at: Date.now(),
-        }),
-      )
-      return true
-    } catch (err) {
-      toast.error((err as Error).message)
-      return false
-    } finally {
-      setBusy(false)
-    }
-  }
+  }) => Promise<boolean>
+  invitingUrl: string | null
+}) {
+  const [url, setUrl] = useState("")
+  const [token, setToken] = useState("")
+  const [voice, setVoice] = useState<string>(AGENT_VOICES[0])
+  const busy = invitingUrl !== null
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!url.trim()) return
-    if (await inviteAgent({ url: url.trim(), token: token.trim(), voice })) {
+    if (await inviteByUrl({ url: url.trim(), token: token.trim(), voice })) {
       setUrl("")
       setToken("")
     }
@@ -345,34 +463,6 @@ function InviteByUrl({ slug }: { slug: string }) {
       <p className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
         Invite by URL
       </p>
-      {recent.length > 0 && (
-        <ul className="space-y-1">
-          {recent.map((a) => (
-            <li key={a.url} className="flex items-center gap-1">
-              <button
-                type="button"
-                className="btn btn-ghost btn-xs min-w-0 flex-1 justify-start gap-1 font-normal"
-                disabled={busy}
-                title={a.url}
-                onClick={() =>
-                  inviteAgent({ url: a.url, token: a.token, voice: a.voice })
-                }
-              >
-                <Plus className="size-3 shrink-0" />
-                <span className="truncate">{a.name}</span>
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-xs btn-circle text-base-content/40"
-                aria-label={`Forget ${a.name}`}
-                onClick={() => setRecent(forgetAgent(a.url))}
-              >
-                ×
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
       <input
         className="input input-sm w-full"
         placeholder="your-agent.lpd.sh"
