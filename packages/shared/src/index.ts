@@ -364,6 +364,13 @@ export const tokenRequestSchema = z.object({
   rejoinToken: z.string().optional(),
   /** The creator's key from room creation — starts the meeting on arrival. */
   hostKey: z.string().optional(),
+  /**
+   * Explicit "start the meeting" intent from the waiting screen, for a host
+   * whose browser doesn't hold the hostKey (a different device, incognito, or
+   * cleared storage). Honoured only for an otherwise-empty room, so it starts
+   * the meeting without letting anyone barge into one already in progress.
+   */
+  startAnyway: z.boolean().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 
