@@ -44,7 +44,9 @@ import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = {
   agentId: string
-  mode?: "realtime" | "gemini" | "pipeline"
+  // "pipeline" is the OpenAI STT/TTS pipeline; "elevenlabs" the same
+  // pipeline speaking through ElevenLabs.
+  mode?: "realtime" | "gemini" | "pipeline" | "elevenlabs"
   voice?: string
 }
 
@@ -68,7 +70,30 @@ function applyMode(
   mode?: DispatchMeta["mode"],
 ): ResolvedEntry {
   if (mode === "pipeline") {
-    return entry.realtime ? { ...entry, realtime: undefined } : entry
+    // The OpenAI pipeline, explicitly — an agent whose registry pipeline is
+    // ElevenLabs still converts, or the mode choice would silently not take.
+    const tts =
+      entry.tts.provider === "openai"
+        ? entry.tts
+        : ({
+            provider: "openai",
+            model: "gpt-4o-mini-tts",
+            voice: "alloy",
+          } as const)
+    return { ...entry, realtime: undefined, tts }
+  }
+  if (mode === "elevenlabs") {
+    const tts =
+      entry.tts.provider === "elevenlabs"
+        ? entry.tts
+        : ({
+            provider: "elevenlabs",
+            model: process.env.ELEVENLABS_MODEL ?? "eleven_turbo_v2_5",
+            // Registry entries pick their own voice id; the override default
+            // has to name one, since ElevenLabs has no generic fallback.
+            voice: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
+          } as const)
+    return { ...entry, realtime: undefined, tts }
   }
   if (mode === "realtime" && entry.realtime?.provider !== "openai") {
     const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
@@ -83,14 +108,22 @@ function applyMode(
       },
     }
   }
-  if (mode === "gemini" && entry.realtime?.provider !== "gemini") {
+  if (mode === "gemini") {
     return {
       ...entry,
-      realtime: {
-        provider: "gemini" as const,
-        model: process.env.GEMINI_REALTIME_MODEL ?? GEMINI_LIVE_DEFAULT_MODEL,
-        voice: "Puck",
-      },
+      // Gemini Live cannot be gated (it always auto-responds), so choosing
+      // it is also choosing an open floor — a gated registry policy would
+      // otherwise kill the job at startup.
+      turn_policy: "open",
+      realtime:
+        entry.realtime?.provider === "gemini"
+          ? entry.realtime
+          : {
+              provider: "gemini" as const,
+              model:
+                process.env.GEMINI_REALTIME_MODEL ?? GEMINI_LIVE_DEFAULT_MODEL,
+              voice: "Puck",
+            },
     }
   }
   return entry

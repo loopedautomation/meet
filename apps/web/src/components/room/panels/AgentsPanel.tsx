@@ -36,10 +36,12 @@ function voiceOptions(
 ): readonly string[] | null {
   if (mode === "gemini") return GEMINI_VOICES
   if (mode === "realtime") return AGENT_VOICES
+  if (mode === "elevenlabs") return null
   if (mode === "" && agent.realtimeProvider) {
     return agent.realtimeProvider === "gemini" ? GEMINI_VOICES : AGENT_VOICES
   }
-  return agent.ttsProvider === "elevenlabs" ? null : OPENAI_TTS_VOICES
+  if (mode === "" && agent.ttsProvider === "elevenlabs") return null
+  return OPENAI_TTS_VOICES
 }
 
 export function AgentsPanel({ slug }: { slug: string }) {
@@ -214,7 +216,8 @@ export function AgentsPanel({ slug }: { slug: string }) {
                       <option value="">Default</option>
                       <option value="realtime">Realtime mini</option>
                       <option value="gemini">Gemini Live</option>
-                      <option value="pipeline">STT + TTS</option>
+                      <option value="pipeline">OpenAI STT</option>
+                      <option value="elevenlabs">ElevenLabs STT</option>
                     </select>
                     {(() => {
                       const options = voiceOptions(agent, modes[agent.id] ?? "")
