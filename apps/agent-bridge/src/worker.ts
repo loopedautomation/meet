@@ -25,6 +25,7 @@ import {
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
 import { getDynamicAgent } from "./dynamic.js"
+import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import {
@@ -41,7 +42,11 @@ import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
 import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
 
-type DispatchMeta = { agentId: string; mode?: "realtime" | "pipeline" }
+type DispatchMeta = {
+  agentId: string
+  mode?: "realtime" | "gemini" | "pipeline"
+  voice?: string
+}
 
 /** How long a zapped agent answers freely before its policy resumes. */
 const ZAP_WINDOW_MS = 30_000
@@ -62,10 +67,10 @@ function applyMode(
   entry: ResolvedEntry,
   mode?: DispatchMeta["mode"],
 ): ResolvedEntry {
-  if (mode === "pipeline" && entry.realtime) {
-    return { ...entry, realtime: undefined }
+  if (mode === "pipeline") {
+    return entry.realtime ? { ...entry, realtime: undefined } : entry
   }
-  if (mode === "realtime" && !entry.realtime) {
+  if (mode === "realtime" && entry.realtime?.provider !== "openai") {
     const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
       ? entry.tts.voice
       : "marin"
@@ -78,11 +83,34 @@ function applyMode(
       },
     }
   }
+  if (mode === "gemini" && entry.realtime?.provider !== "gemini") {
+    return {
+      ...entry,
+      realtime: {
+        provider: "gemini" as const,
+        model: process.env.GEMINI_REALTIME_MODEL ?? GEMINI_LIVE_DEFAULT_MODEL,
+        voice: "Puck",
+      },
+    }
+  }
   return entry
 }
 
+/**
+ * Per-invite voice override, applied after the mode is resolved so it lands
+ * on whichever layer actually speaks: the realtime model's voice or the
+ * pipeline's TTS voice.
+ */
+function applyVoice(entry: ResolvedEntry, voice?: string): ResolvedEntry {
+  if (!voice) return entry
+  if (entry.realtime) {
+    return { ...entry, realtime: { ...entry.realtime, voice } }
+  }
+  return { ...entry, tts: { ...entry.tts, voice } }
+}
+
 function entryFromMetadata(metadata: string): ResolvedEntry {
-  const { agentId, mode } = JSON.parse(metadata) as DispatchMeta
+  const { agentId, mode, voice } = JSON.parse(metadata) as DispatchMeta
   if (agentId.startsWith("dyn-")) {
     const spec = getDynamicAgent(agentId)
     if (!spec) throw new Error(`unknown dynamic agent: ${agentId}`)
@@ -108,7 +136,7 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
   }
   const entry = loadRegistry().find((a) => a.id === agentId)
   if (!entry) throw new Error(`unknown agent: ${agentId}`)
-  return applyMode(entry, mode)
+  return applyVoice(applyMode(entry, mode), voice)
 }
 
 /** Accept dispatches with an agent-scoped identity and metadata. */
