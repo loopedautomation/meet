@@ -265,17 +265,17 @@ function CameraSettingsPreview() {
   )
 }
 
-const METER_SEGMENTS = 14
+const METER_SEGMENTS = 32
 /** How many top-end segments render in the darker purple when lit. */
-const METER_PEAK_SEGMENTS = 4
+const METER_PEAK_SEGMENTS = 7
 
 /**
- * Segmented level meter: little rectangles lighting up left to right —
+ * Segmented level meter: thin vertical bars lighting up left to right —
  * light purple through the body, dark purple at the loud end.
  */
 function MicMeter({ level }: { level: number }) {
   return (
-    <div className="flex flex-1 items-center gap-0.5">
+    <div className="flex w-full items-center gap-[3px]">
       {Array.from({ length: METER_SEGMENTS }, (_, i) => {
         const lit = level >= (i + 1) / METER_SEGMENTS
         const peak = i >= METER_SEGMENTS - METER_PEAK_SEGMENTS
@@ -283,7 +283,7 @@ function MicMeter({ level }: { level: number }) {
           <span
             // biome-ignore lint/suspicious/noArrayIndexKey: fixed-size meter
             key={i}
-            className={`h-3 flex-1 rounded-[2px] transition-colors duration-75 ${
+            className={`h-4 min-w-0 flex-1 rounded-[1px] transition-colors duration-75 ${
               lit ? (peak ? "bg-primary" : "bg-secondary") : "bg-base-300"
             }`}
           />
