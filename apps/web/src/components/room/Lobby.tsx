@@ -7,6 +7,7 @@ import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import type { JoinPreferences } from "@/components/room/RoomClient"
 import { useMediaPreview } from "@/hooks/useMediaPreview"
+import { readDevicePref, setDevicePref } from "@/stores/devicePrefs"
 
 function readStoredString(key: string): string {
   if (typeof window === "undefined") return ""
@@ -62,6 +63,29 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
     videoDeviceId,
     videoRef,
   })
+
+  // Restore a previously chosen device — but only once it's confirmed present,
+  // so a stale id (a device since unplugged) can't fail the preview's exact
+  // getUserMedia. The initial acquire runs on the OS default; this switches to
+  // the saved device after enumeration. Runs once per kind, when its list lands.
+  const audioRestored = useRef(false)
+  const videoRestored = useRef(false)
+  useEffect(() => {
+    if (!audioRestored.current && mics.length > 0) {
+      const saved = readDevicePref("audioinput")
+      if (saved && mics.some((m) => m.deviceId === saved)) {
+        setAudioDeviceId(saved)
+      }
+      audioRestored.current = true
+    }
+    if (!videoRestored.current && cameras.length > 0) {
+      const saved = readDevicePref("videoinput")
+      if (saved && cameras.some((c) => c.deviceId === saved)) {
+        setVideoDeviceId(saved)
+      }
+      videoRestored.current = true
+    }
+  }, [mics, cameras])
 
   useEffect(() => {
     if (mediaError) toast.error(mediaError)
@@ -164,7 +188,11 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
               <select
                 className="select w-full"
                 value={audioDeviceId ?? ""}
-                onChange={(e) => setAudioDeviceId(e.target.value || undefined)}
+                onChange={(e) => {
+                  const id = e.target.value || undefined
+                  setAudioDeviceId(id)
+                  setDevicePref("audioinput", id ?? "")
+                }}
               >
                 <option value="">Default microphone</option>
                 {mics.map((d) => (
@@ -182,7 +210,11 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
               <select
                 className="select w-full"
                 value={videoDeviceId ?? ""}
-                onChange={(e) => setVideoDeviceId(e.target.value || undefined)}
+                onChange={(e) => {
+                  const id = e.target.value || undefined
+                  setVideoDeviceId(id)
+                  setDevicePref("videoinput", id ?? "")
+                }}
               >
                 <option value="">Default camera</option>
                 {cameras.map((d) => (

@@ -14,6 +14,7 @@ import {
   $pauseCameraOnBackground,
   setPauseCameraOnBackground,
 } from "@/stores/camera"
+import { setDevicePref } from "@/stores/devicePrefs"
 import { $theme, setTheme } from "@/stores/theme"
 import { $voiceIsolation, setVoiceIsolation } from "@/stores/voiceIsolation"
 
@@ -178,10 +179,18 @@ function DeviceSelect({
         className="select select-sm w-full max-w-full truncate"
         value={activeDeviceId}
         onChange={(e) => {
-          void setActiveMediaDevice(e.target.value)
-          try {
-            localStorage.setItem(persistKey, e.target.value)
-          } catch {}
+          const id = e.target.value
+          if (kind === "audiooutput") {
+            // Speaker choice isn't governed by the sticky-device guard.
+            try {
+              localStorage.setItem(persistKey, id)
+            } catch {}
+          } else {
+            // Keep the shared pin in sync (and persisted) so useStickyDevices
+            // honours this change instead of re-asserting the old device.
+            setDevicePref(kind, id)
+          }
+          void setActiveMediaDevice(id)
         }}
       >
         {devices.map((d) => (
