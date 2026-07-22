@@ -358,23 +358,27 @@ function CameraSettingsPreview({
     )
   }
   return (
-    // biome-ignore lint/a11y/useMediaCaption: local camera preview
-    <video
-      ref={videoRef}
-      autoPlay
-      muted
-      playsInline
-      className="aspect-video w-full rounded-field bg-base-300 object-cover"
-      // Quarter turns scale up to keep covering the 16:9 preview box.
-      style={{
-        transform: [
-          videoTransformCss(transform, true),
-          transform.rotation % 180 !== 0 ? "scale(1.78)" : undefined,
-        ]
-          .filter(Boolean)
-          .join(" "),
-      }}
-    />
+    // Fixed frame: the video transforms *inside* this box and the overflow
+    // clips, so a quarter-turned preview can't sprawl over the panel.
+    <div className="aspect-video w-full overflow-hidden rounded-field bg-base-300">
+      {/* biome-ignore lint/a11y/useMediaCaption: local camera preview */}
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        className="size-full object-cover"
+        // Quarter turns scale up to keep covering the 16:9 frame.
+        style={{
+          transform: [
+            videoTransformCss(transform, true),
+            transform.rotation % 180 !== 0 ? "scale(1.78)" : undefined,
+          ]
+            .filter(Boolean)
+            .join(" "),
+        }}
+      />
+    </div>
   )
 }
 
