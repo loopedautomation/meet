@@ -38,12 +38,22 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Modal } from "@/components/ui/Modal"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
-import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
+import { useCameraEffect } from "@/hooks/useCameraEffect"
 import { useIncomingVideo } from "@/hooks/useIncomingVideo"
+import { useMeetingSounds } from "@/hooks/useMeetingSounds"
+import { usePushToTalk } from "@/hooks/usePushToTalk"
 import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
-import { $blur } from "@/stores/blur"
-import { $incomingVideoOff } from "@/stores/incomingVideo"
+import { $cameraEffect } from "@/stores/cameraEffect"
+import {
+  $incomingVideoOff,
+  setIncomingVideoOff,
+} from "@/stores/incomingVideo"
+import {
+  $autoDataSaver,
+  $meetingSounds,
+  $pushToTalk,
+} from "@/stores/preferences"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $videoTransform } from "@/stores/videoTransform"
 import { $openPanel, togglePanel } from "@/stores/panels"
@@ -75,14 +85,18 @@ export function ControlBar({
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
   ).length
 
-  const blur = useStore($blur)
-  useBackgroundBlur(blur)
+  const cameraEffect = useStore($cameraEffect)
+  useCameraEffect(cameraEffect)
 
   const voiceIsolation = useStore($voiceIsolation)
   useVoiceIsolation(voiceIsolation)
 
   const incomingVideoOff = useStore($incomingVideoOff)
   useIncomingVideo(incomingVideoOff)
+
+  usePushToTalk(useStore($pushToTalk))
+  useMeetingSounds(useStore($meetingSounds))
+  const autoDataSaver = useStore($autoDataSaver)
 
   // Keep the chosen mic/camera pinned against OS auto-switching on hot-plug.
   useStickyDevices()
@@ -110,10 +124,18 @@ export function ControlBar({
       quality !== lastQuality.current &&
       (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost)
     ) {
-      toast.warning("Your connection is unstable — call quality may suffer.")
+      // Auto data-saver: a degrading link sheds incoming video by itself.
+      if (autoDataSaver && !$incomingVideoOff.get()) {
+        setIncomingVideoOff(true)
+        toast.info(
+          "Connection is unstable — incoming video turned off to save bandwidth (Settings > Connection to undo).",
+        )
+      } else {
+        toast.warning("Your connection is unstable — call quality may suffer.")
+      }
     }
     lastQuality.current = quality
-  }, [quality])
+  }, [quality, autoDataSaver])
 
   const toggle = (
     action: () => Promise<unknown>,

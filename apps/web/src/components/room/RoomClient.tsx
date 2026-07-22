@@ -11,6 +11,12 @@ import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
 import { readDevicePref } from "@/stores/devicePrefs"
+import {
+  $autoGain,
+  $sendQuality,
+  SEND_QUALITY_RESOLUTION,
+  type SendQuality,
+} from "@/stores/preferences"
 import { $isHost } from "@/stores/host"
 
 const queryClient = new QueryClient()
@@ -248,13 +254,22 @@ export function RoomClient({
           voiceIsolation: readVoiceIsolationPref(),
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: $autoGain.get(),
         },
         videoCaptureDefaults: {
           deviceId: videoDeviceId,
-          ...(portraitCapture
-            ? { resolution: { width: 720, height: 1280 } }
-            : {}),
+          // Send-quality cap wins over the portrait default: it exists for
+          // uplink-poor connections, which phones often are.
+          ...($sendQuality.get() !== "auto"
+            ? {
+                resolution:
+                  SEND_QUALITY_RESOLUTION[
+                    $sendQuality.get() as Exclude<SendQuality, "auto">
+                  ],
+              }
+            : portraitCapture
+              ? { resolution: { width: 720, height: 1280 } }
+              : {}),
         },
       }}
       // Waiting participants join without media; on admission WaitingRoom

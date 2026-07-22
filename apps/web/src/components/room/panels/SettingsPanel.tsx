@@ -1,6 +1,9 @@
 "use client"
 
-import { useMediaDeviceSelect } from "@livekit/components-react"
+import {
+  useMediaDeviceSelect,
+  useRoomContext,
+} from "@livekit/components-react"
 import {
   type RoomSettings,
   serializeVideoTransform,
@@ -29,7 +32,29 @@ import {
 } from "@/stores/videoTransform"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { readHostKey } from "@/lib/hostKey"
-import { $blur, setBlur } from "@/stores/blur"
+import { MicTest, SpeakerTest } from "@/components/room/panels/DeviceTests"
+import { BACKGROUNDS, type CameraEffect } from "@/lib/backgrounds"
+import { applyAutoGain, applySendQuality } from "@/lib/liveConstraints"
+import { $cameraEffect, setCameraEffect } from "@/stores/cameraEffect"
+import {
+  $autoDataSaver,
+  $autoGain,
+  $joinCameraOff,
+  $joinMuted,
+  $meetingSounds,
+  $mirrorSelf,
+  $pushToTalk,
+  $sendQuality,
+  type SendQuality,
+  setAutoDataSaver,
+  setAutoGain,
+  setJoinCameraOff,
+  setJoinMuted,
+  setMeetingSounds,
+  setMirrorSelf,
+  setPushToTalk,
+  setSendQuality,
+} from "@/stores/preferences"
 import {
   $pauseCameraOnBackground,
   setPauseCameraOnBackground,
@@ -43,11 +68,20 @@ import { $theme, setTheme } from "@/stores/theme"
 import { $voiceIsolation, setVoiceIsolation } from "@/stores/voiceIsolation"
 
 export function SettingsPanel({ slug }: { slug: string }) {
+  const room = useRoomContext()
   const theme = useStore($theme)
-  const blur = useStore($blur)
+  const cameraEffect = useStore($cameraEffect)
   const voiceIsolation = useStore($voiceIsolation)
   const pauseOnBackground = useStore($pauseCameraOnBackground)
   const incomingVideoOff = useStore($incomingVideoOff)
+  const autoGain = useStore($autoGain)
+  const pushToTalk = useStore($pushToTalk)
+  const sendQuality = useStore($sendQuality)
+  const mirrorSelf = useStore($mirrorSelf)
+  const joinMuted = useStore($joinMuted)
+  const joinCameraOff = useStore($joinCameraOff)
+  const meetingSounds = useStore($meetingSounds)
+  const autoDataSaver = useStore($autoDataSaver)
 
   return (
     <div className="flex flex-col gap-6 p-4">
@@ -88,6 +122,7 @@ export function SettingsPanel({ slug }: { slug: string }) {
           persistKey="audioDeviceId"
         />
         <MicLevel />
+        <MicTest />
         {supportsVoiceIsolation() && (
           <label className="flex cursor-pointer items-center justify-between gap-4">
             <span className="flex flex-col">
@@ -106,14 +141,63 @@ export function SettingsPanel({ slug }: { slug: string }) {
             />
           </label>
         )}
-        <CameraSetting />
-        <label className="flex cursor-pointer items-center justify-between">
-          <span className="text-sm">Background blur</span>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="flex flex-col">
+            <span className="text-sm">Auto gain control</span>
+            <span className="text-base-content/60 text-xs">
+              Lets the browser level your volume automatically. Turn it off if
+              you use an audio interface and set your own gain.
+            </span>
+          </span>
           <input
             type="checkbox"
             className="toggle toggle-primary"
-            checked={blur}
-            onChange={(e) => setBlur(e.target.checked)}
+            checked={autoGain}
+            onChange={(e) => {
+              setAutoGain(e.target.checked)
+              void applyAutoGain(room, e.target.checked).catch(() => undefined)
+            }}
+          />
+        </label>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="flex flex-col">
+            <span className="text-sm">Push to talk</span>
+            <span className="text-base-content/60 text-xs">
+              While muted, hold Space to speak; release to re-mute.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={pushToTalk}
+            onChange={(e) => setPushToTalk(e.target.checked)}
+          />
+        </label>
+        <CameraSetting />
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className="text-base-content/70 text-sm">Camera effect</span>
+          <Select
+            value={cameraEffect}
+            onChange={(e) => setCameraEffect(e.target.value as CameraEffect)}
+            options={[
+              { value: "none", label: "None" },
+              { value: "blur", label: "Background blur" },
+              ...BACKGROUNDS.map((b) => ({ value: b.id, label: b.label })),
+            ]}
+          />
+        </label>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="flex flex-col">
+            <span className="text-sm">Mirror my video</span>
+            <span className="text-base-content/60 text-xs">
+              Only your self-view — everyone else always sees you unmirrored.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={mirrorSelf}
+            onChange={(e) => setMirrorSelf(e.target.checked)}
           />
         </label>
         <DeviceSelect
@@ -121,6 +205,45 @@ export function SettingsPanel({ slug }: { slug: string }) {
           label="Select speaker"
           persistKey="audioOutputDeviceId"
         />
+        <SpeakerTest />
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
+          Meeting
+        </h3>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="text-sm">Always join muted</span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={joinMuted}
+            onChange={(e) => setJoinMuted(e.target.checked)}
+          />
+        </label>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="text-sm">Always join with camera off</span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={joinCameraOff}
+            onChange={(e) => setJoinCameraOff(e.target.checked)}
+          />
+        </label>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="flex flex-col">
+            <span className="text-sm">Meeting sounds</span>
+            <span className="text-base-content/60 text-xs">
+              Chimes when people join or leave, and a pop for chat messages.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={meetingSounds}
+            onChange={(e) => setMeetingSounds(e.target.checked)}
+          />
+        </label>
       </section>
 
       <NetworkSection />
@@ -142,6 +265,40 @@ export function SettingsPanel({ slug }: { slug: string }) {
             className="toggle toggle-primary"
             checked={incomingVideoOff}
             onChange={(e) => setIncomingVideoOff(e.target.checked)}
+          />
+        </label>
+        <label className="flex cursor-pointer items-center justify-between gap-4">
+          <span className="flex flex-col">
+            <span className="text-sm">Data saver automatically</span>
+            <span className="text-base-content/60 text-xs">
+              When your connection degrades, turn off incoming video for you
+              without asking.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="toggle toggle-primary"
+            checked={autoDataSaver}
+            onChange={(e) => setAutoDataSaver(e.target.checked)}
+          />
+        </label>
+        <label className="flex min-w-0 flex-col gap-1">
+          <span className="text-base-content/70 text-sm">
+            Video quality I send
+          </span>
+          <Select
+            value={sendQuality}
+            onChange={(e) => {
+              const q = e.target.value as SendQuality
+              setSendQuality(q)
+              void applySendQuality(room, q).catch(() => undefined)
+            }}
+            options={[
+              { value: "auto", label: "Auto (best available)" },
+              { value: "720p", label: "720p" },
+              { value: "360p", label: "360p — data saver" },
+              { value: "180p", label: "180p — minimum" },
+            ]}
           />
         </label>
       </section>

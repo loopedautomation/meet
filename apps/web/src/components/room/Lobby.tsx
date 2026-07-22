@@ -10,6 +10,7 @@ import type { JoinPreferences } from "@/components/room/RoomClient"
 import { useMediaPreview } from "@/hooks/useMediaPreview"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { readDevicePref, setDevicePref } from "@/stores/devicePrefs"
+import { $joinCameraOff, $joinMuted } from "@/stores/preferences"
 
 function readStoredString(key: string): string {
   if (typeof window === "undefined") return ""
@@ -43,8 +44,11 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
   const [restored, setRestored] = useState(false)
   useEffect(() => {
     setDisplayName(readStoredString("displayName"))
-    setAudioEnabled(readStoredToggle("audioEnabled"))
-    setVideoEnabled(readStoredToggle("videoEnabled"))
+    // "Always join muted / camera off" beats last call's state.
+    setAudioEnabled($joinMuted.get() ? false : readStoredToggle("audioEnabled"))
+    setVideoEnabled(
+      $joinCameraOff.get() ? false : readStoredToggle("videoEnabled"),
+    )
     setRestored(true)
   }, [])
   useEffect(() => {

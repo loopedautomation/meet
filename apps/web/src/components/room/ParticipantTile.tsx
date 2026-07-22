@@ -16,6 +16,8 @@ import {
   VIDEO_TRANSFORM_ATTRIBUTE,
   videoTransformCss,
 } from "@meet/shared"
+import { useStore } from "@nanostores/react"
+import { $mirrorSelf } from "@/stores/preferences"
 import { ConnectionQuality, Track } from "livekit-client"
 import { Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -80,10 +82,12 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   const transform = parseVideoTransform(attributes?.[VIDEO_TRANSFORM_ATTRIBUTE])
   const quarterTurned = transform.rotation % 180 !== 0
   const portrait = quarterTurned ? ratio >= 1 : ratio < 1
+  // Only the self-view mirrors, and only when the preference says so.
+  const mirrorSelf = useStore($mirrorSelf)
 
   return (
     <div
-      className={`relative overflow-hidden rounded-box transition-shadow ${
+      className={`relative select-none overflow-hidden rounded-box transition-shadow ${
         participant.isLocal
           ? "bg-[color-mix(in_oklch,var(--color-primary)_20%,var(--color-base-300))] ring-1 ring-primary/40"
           : "bg-base-300"
@@ -106,7 +110,7 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
           // content is scaled up by the source aspect to keep covering it.
           style={{
             transform: [
-              videoTransformCss(transform, participant.isLocal),
+              videoTransformCss(transform, participant.isLocal && mirrorSelf),
               quarterTurned
                 ? `scale(${(ratio >= 1 ? ratio : 1 / ratio).toFixed(3)})`
                 : undefined,
