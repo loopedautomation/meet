@@ -25,7 +25,6 @@ import {
   MonitorUp,
   ScrollText,
   Settings,
-  Sparkles,
   Users,
   Video,
   VideoOff,
@@ -34,13 +33,10 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Modal } from "@/components/ui/Modal"
 import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
-import {
-  supportsVoiceIsolation,
-  useVoiceIsolation,
-} from "@/hooks/useVoiceIsolation"
-import { $blur, setBlur } from "@/stores/blur"
+import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
+import { $blur } from "@/stores/blur"
 import { $openPanel, togglePanel } from "@/stores/panels"
-import { $voiceIsolation, setVoiceIsolation } from "@/stores/voiceIsolation"
+import { $voiceIsolation } from "@/stores/voiceIsolation"
 
 export function ControlBar({
   slug,
@@ -204,21 +200,9 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="audioinput" persistKey="audioDeviceId">
-            {supportsVoiceIsolation() && (
-              <li>
-                <button
-                  type="button"
-                  className="whitespace-nowrap"
-                  onClick={() => setVoiceIsolation(!voiceIsolation)}
-                >
-                  <Sparkles className="size-4" />
-                  Enhanced noise removal
-                  {voiceIsolation && <Check className="size-4 text-success" />}
-                </button>
-              </li>
-            )}
-          </DeviceMenu>
+          {/* Noise removal and blur live in Settings — these menus are for
+              picking devices only. */}
+          <DeviceMenu kind="audioinput" persistKey="audioDeviceId" />
         </div>
         <div className="join">
           <div
@@ -240,19 +224,7 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="videoinput" persistKey="videoDeviceId">
-            <li>
-              <button
-                type="button"
-                className="whitespace-nowrap"
-                onClick={() => setBlur(!blur)}
-              >
-                <Sparkles className="size-4" />
-                Blur background
-                {blur && <Check className="size-4 text-success" />}
-              </button>
-            </li>
-          </DeviceMenu>
+          <DeviceMenu kind="videoinput" persistKey="videoDeviceId" />
         </div>
         <div
           className="tooltip tooltip-bottom"
