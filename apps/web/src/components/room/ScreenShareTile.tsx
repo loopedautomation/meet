@@ -85,6 +85,22 @@ export function ScreenShareTile({ trackRef }: { trackRef: TrackReference }) {
 
   const endDrag = () => setDragging(false)
 
+  // Rendering the sharer's own screen back to them nests the meeting window
+  // inside itself, producing an infinite-recursion "hall of mirrors" effect.
+  // Show them a placeholder instead; everyone else still sees the real feed.
+  if (trackRef.participant.isLocal) {
+    return (
+      <div className="flex size-full flex-col items-center justify-center gap-1 rounded-box bg-base-300 text-center">
+        <p className="font-medium text-base-content">
+          You're presenting your screen
+        </p>
+        <p className="text-base-content/70 text-sm">
+          Others can see your shared screen.
+        </p>
+      </div>
+    )
+  }
+
   return (
     <div
       ref={containerRef}
