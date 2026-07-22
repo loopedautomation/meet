@@ -4,6 +4,9 @@ import { useParticipants } from "@livekit/components-react"
 import {
   AGENT_VOICES,
   type AgentActivityEvent,
+  type AgentInfo,
+  GEMINI_VOICES,
+  OPENAI_TTS_VOICES,
   parseParticipantMeta,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
@@ -21,6 +24,23 @@ import { useSendAgentControl } from "@/hooks/useSendAgentControl"
 import { readHostKey } from "@/lib/hostKey"
 import { $agentActivity, $agentStats } from "@/stores/roomData"
 
+/**
+ * The voices offerable for an invite: the namespace follows the effective
+ * mode's speaking provider. A realtime override on a pipeline-default agent
+ * runs on OpenAI realtime (the worker's conversion), hence AGENT_VOICES.
+ * Null means no picker: ElevenLabs voices are account-specific ids.
+ */
+function voiceOptions(
+  agent: AgentInfo,
+  mode: AgentMode | "",
+): readonly string[] | null {
+  const effective = mode || (agent.realtimeProvider ? "realtime" : "pipeline")
+  if (effective === "realtime") {
+    return agent.realtimeProvider === "gemini" ? GEMINI_VOICES : AGENT_VOICES
+  }
+  return agent.ttsProvider === "elevenlabs" ? null : OPENAI_TTS_VOICES
+}
+
 export function AgentsPanel({ slug }: { slug: string }) {
   const { data: agents = [], isLoading } = useAgents()
   const participants = useParticipants()
@@ -33,6 +53,9 @@ export function AgentsPanel({ slug }: { slug: string }) {
   // Per-agent interaction-mode choice ("" = the agent's registry default).
   // Meeting-level, not agent-level: any brain can front realtime or pipeline.
   const [modes, setModes] = useState<Record<string, AgentMode | "">>({})
+  // Per-agent voice override ("" = the agent's default). The valid list
+  // depends on the effective mode and provider, so a mode change resets it.
+  const [voices, setVoices] = useState<Record<string, string>>({})
   // Accordion: one card open at a time; collapsed rows are just icon + name.
   const [expanded, setExpanded] = useState<string | null>(null)
   // Recently invited URL agents, remembered per browser. Lifted out of the
@@ -59,7 +82,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const registryIds = new Set(agents.map((a) => a.id))
   const dynamicAgents = [...agentParticipants.entries()]
     .filter(([id]) => id && !registryIds.has(id))
-    .map(([id, p]) => ({
+    .map(([id, p]): AgentInfo => ({
       id: id as string,
       name: p.name || (id as string),
       // The agent's own description, from its hello frame; fall back for
@@ -176,18 +199,47 @@ export function AgentsPanel({ slug }: { slug: string }) {
                     <select
                       className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
                       value={modes[agent.id] ?? ""}
-                      onChange={(e) =>
+                      onChange={(e) => {
                         setModes((m) => ({
                           ...m,
                           [agent.id]: e.target.value as AgentMode | "",
                         }))
-                      }
+                        // The mode decides which provider speaks, and voice
+                        // names don't carry across providers — back to default.
+                        setVoices((v) => ({ ...v, [agent.id]: "" }))
+                      }}
                       aria-label="Interaction mode"
                     >
                       <option value="">Default</option>
                       <option value="realtime">Realtime</option>
                       <option value="pipeline">STT + TTS</option>
                     </select>
+                    {(() => {
+                      const options = voiceOptions(agent, modes[agent.id] ?? "")
+                      // ElevenLabs voices are account-specific ids, not an
+                      // enumerable list — the registry's choice stands.
+                      if (!options) return null
+                      return (
+                        <select
+                          className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
+                          value={voices[agent.id] ?? ""}
+                          onChange={(e) =>
+                            setVoices((v) => ({
+                              ...v,
+                              [agent.id]: e.target.value,
+                            }))
+                          }
+                          aria-label="Voice"
+                        >
+                          <option value="">Voice</option>
+                          {options.map((v) => (
+                            <option key={v} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      )
+                    })()}
                     <button
                       type="button"
                       className="btn btn-primary btn-sm join-item"
@@ -197,6 +249,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
                           agentId: agent.id,
                           action: "invite",
                           mode: modes[agent.id] || undefined,
+                          voice: voices[agent.id] || undefined,
                         })
                       }
                     >
