@@ -15,8 +15,8 @@ agents:
       token_env: SCOUT_TTY_TOKEN
     # Speech-to-speech interaction layer; tool work is delegated to the brain.
     # provider defaults to openai. For Google's Live API instead (needs
-    # GEMINI_API_KEY or GOOGLE_API_KEY; only turn_policy "open" — Gemini
-    # cannot be gated), use:
+    # GEMINI_API_KEY or GOOGLE_API_KEY; Gemini cannot be gated, so a Gemini
+    # invite runs the agent with an open turn policy), use:
     #   provider: gemini
     #   model: gemini-2.5-flash-native-audio-preview-12-2025  # the default
     #   voice: Puck  # or Charon, Kore, Fenrir, Aoede, ...
