@@ -563,7 +563,7 @@ export default defineAgent({
               type: "tool_result",
               agentId: entry.id,
               name: frame.name,
-              content: frame.content.slice(0, 2000),
+              content: frame.content.slice(0, 8000),
               durationMs: frame.durationMs,
               at,
             })

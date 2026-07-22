@@ -515,22 +515,40 @@ function ActivityFeed({ activity }: { activity: AgentActivityEvent[] }) {
         // Newest at the top — the live call is what you came to watch.
         .reverse()
         .map((e) => (
-          <li
-            key={`${e.type}-${e.at}`}
-            className="rounded-field bg-base-200 p-2 font-mono text-xs"
-          >
-            <span className="flex items-center gap-1 text-primary">
-              <Wrench className="size-3" />
-              {e.type === "tool_call" ? `→ ${e.name}` : `← ${e.name}`}
-              {e.type === "tool_result" && (
-                <span className="text-base-content/50">{e.durationMs}ms</span>
-              )}
-            </span>
-            <span className="line-clamp-3 break-all text-base-content/70">
-              {e.type === "tool_call" ? e.arguments : e.content}
-            </span>
-          </li>
+          <ActivityItem key={`${e.type}-${e.at}`} event={e} />
         ))}
     </ul>
+  )
+}
+
+function ActivityItem({
+  event: e,
+}: {
+  event: Extract<AgentActivityEvent, { type: "tool_call" | "tool_result" }>
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <li className="rounded-field bg-base-200 font-mono text-xs">
+      <button
+        type="button"
+        className="w-full cursor-pointer p-2 text-left"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className="flex items-center gap-1 text-primary">
+          <Wrench className="size-3" />
+          {e.type === "tool_call" ? `→ ${e.name}` : `← ${e.name}`}
+          {e.type === "tool_result" && (
+            <span className="text-base-content/50">{e.durationMs}ms</span>
+          )}
+        </span>
+        <span
+          className={`break-all text-base-content/70 ${
+            open ? "block whitespace-pre-wrap" : "line-clamp-3"
+          }`}
+        >
+          {e.type === "tool_call" ? e.arguments : e.content}
+        </span>
+      </button>
+    </li>
   )
 }
