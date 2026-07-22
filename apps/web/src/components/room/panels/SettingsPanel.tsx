@@ -1,7 +1,12 @@
 "use client"
 
 import { useMediaDeviceSelect } from "@livekit/components-react"
-import { type RoomSettings, videoTransformCss } from "@meet/shared"
+import {
+  type RoomSettings,
+  serializeVideoTransform,
+  type VideoTransform,
+  videoTransformCss,
+} from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import {
   FlipHorizontal2,
@@ -18,9 +23,8 @@ import { useAgentPermissions } from "@/hooks/useRoomSettings"
 import { supportsVoiceIsolation } from "@/hooks/useVoiceIsolation"
 import {
   $videoTransform,
-  flipCameraH,
-  flipCameraV,
-  rotateCamera,
+  rotatedCw,
+  setVideoTransform,
 } from "@/stores/videoTransform"
 import { readHostKey } from "@/lib/hostKey"
 import { $blur, setBlur } from "@/stores/blur"
@@ -28,6 +32,7 @@ import {
   $pauseCameraOnBackground,
   setPauseCameraOnBackground,
 } from "@/stores/camera"
+import { setDevicePref } from "@/stores/devicePrefs"
 import { $theme, setTheme } from "@/stores/theme"
 import { $voiceIsolation, setVoiceIsolation } from "@/stores/voiceIsolation"
 
@@ -73,13 +78,13 @@ export function SettingsPanel({ slug }: { slug: string }) {
         <MicLevel />
         <DeviceSelect
           kind="audioinput"
-          label="Microphone"
+          label="Select microphone"
           persistKey="audioDeviceId"
         />
         <CameraSetting />
         <DeviceSelect
           kind="audiooutput"
-          label="Speaker"
+          label="Select speaker"
           persistKey="audioOutputDeviceId"
         />
       </section>
@@ -234,20 +239,29 @@ function MicLevel() {
 function CameraSetting() {
   const { devices, activeDeviceId, setActiveMediaDevice } =
     useMediaDeviceSelect({ kind: "videoinput" })
-  // undefined = following the live camera; a string = pending choice.
+  const applied = useStore($videoTransform)
+  // undefined = following the live camera/transform; set = pending choice.
   const [pending, setPending] = useState<string | undefined>(undefined)
+  const [pendingT, setPendingT] = useState<VideoTransform | undefined>(
+    undefined,
+  )
   const shown = pending ?? activeDeviceId
-  const dirty = pending !== undefined && pending !== activeDeviceId
+  const shownT = pendingT ?? applied
+  const dirty =
+    (pending !== undefined && pending !== activeDeviceId) ||
+    (pendingT !== undefined &&
+      serializeVideoTransform(pendingT) !== serializeVideoTransform(applied))
 
   return (
     <div className="flex min-w-0 flex-col gap-2">
-      <CameraSettingsPreview deviceId={shown} />
+      <CameraSettingsPreview deviceId={shown} transform={shownT} />
+      {/* Orientation stages like the device does: preview-only until Save. */}
       <div className="flex gap-1">
         <button
           type="button"
           className="btn btn-ghost btn-xs flex-1"
           title="Rotate 90° clockwise"
-          onClick={rotateCamera}
+          onClick={() => setPendingT(rotatedCw(shownT))}
         >
           <RotateCw className="size-4" />
         </button>
@@ -255,7 +269,7 @@ function CameraSetting() {
           type="button"
           className="btn btn-ghost btn-xs flex-1"
           title="Flip horizontally"
-          onClick={flipCameraH}
+          onClick={() => setPendingT({ ...shownT, flipH: !shownT.flipH })}
         >
           <FlipHorizontal2 className="size-4" />
         </button>
@@ -263,13 +277,13 @@ function CameraSetting() {
           type="button"
           className="btn btn-ghost btn-xs flex-1"
           title="Flip vertically"
-          onClick={flipCameraV}
+          onClick={() => setPendingT({ ...shownT, flipV: !shownT.flipV })}
         >
           <FlipVertical2 className="size-4" />
         </button>
       </div>
       <label className="flex min-w-0 flex-col gap-1">
-        <span className="text-base-content/70 text-sm">Camera</span>
+        <span className="text-base-content/70 text-sm">Select camera</span>
         <Select
           value={shown}
           onChange={(e) => setPending(e.target.value)}
@@ -284,11 +298,14 @@ function CameraSetting() {
           type="button"
           className="btn btn-primary btn-sm w-full"
           onClick={() => {
-            void setActiveMediaDevice(pending)
-            try {
-              localStorage.setItem("videoDeviceId", pending)
-            } catch {}
+            if (pending !== undefined) {
+              // Pin first so useStickyDevices doesn't fight the switch.
+              setDevicePref("videoinput", pending)
+              void setActiveMediaDevice(pending)
+            }
+            if (pendingT !== undefined) setVideoTransform(pendingT)
             setPending(undefined)
+            setPendingT(undefined)
           }}
         >
           Save camera
@@ -299,10 +316,15 @@ function CameraSetting() {
 }
 
 /** Mirrored preview of one camera device, honoring rotation/flip. */
-function CameraSettingsPreview({ deviceId }: { deviceId: string }) {
+function CameraSettingsPreview({
+  deviceId,
+  transform,
+}: {
+  deviceId: string
+  transform: VideoTransform
+}) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const camId = deviceId
-  const transform = useStore($videoTransform)
   const [error, setError] = useState(false)
 
   useEffect(() => {
@@ -343,7 +365,15 @@ function CameraSettingsPreview({ deviceId }: { deviceId: string }) {
       muted
       playsInline
       className="aspect-video w-full rounded-field bg-base-300 object-cover"
-      style={{ transform: videoTransformCss(transform, true) }}
+      // Quarter turns scale up to keep covering the 16:9 preview box.
+      style={{
+        transform: [
+          videoTransformCss(transform, true),
+          transform.rotation % 180 !== 0 ? "scale(1.78)" : undefined,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      }}
     />
   )
 }
@@ -398,10 +428,18 @@ function DeviceSelect({
       <Select
         value={activeDeviceId}
         onChange={(e) => {
-          void setActiveMediaDevice(e.target.value)
-          try {
-            localStorage.setItem(persistKey, e.target.value)
-          } catch {}
+          const id = e.target.value
+          if (kind === "audiooutput") {
+            // Speaker choice isn't governed by the sticky-device guard.
+            try {
+              localStorage.setItem(persistKey, id)
+            } catch {}
+          } else {
+            // Keep the shared pin in sync (and persisted) so useStickyDevices
+            // honours this change instead of re-asserting the old device.
+            setDevicePref(kind, id)
+          }
+          void setActiveMediaDevice(id)
         }}
         options={devices.map((d) => ({
           value: d.deviceId,

@@ -38,8 +38,10 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Modal } from "@/components/ui/Modal"
 import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
+import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
 import { $blur } from "@/stores/blur"
+import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $videoTransform } from "@/stores/videoTransform"
 import { $openPanel, togglePanel } from "@/stores/panels"
 import { $voiceIsolation } from "@/stores/voiceIsolation"
@@ -75,6 +77,9 @@ export function ControlBar({
 
   const voiceIsolation = useStore($voiceIsolation)
   useVoiceIsolation(voiceIsolation)
+
+  // Keep the chosen mic/camera pinned against OS auto-switching on hot-plug.
+  useStickyDevices()
 
   // Publish the camera orientation so every client renders this feed the
   // same way — the track itself is untouched, viewers apply CSS.
@@ -219,7 +224,7 @@ export function ControlBar({
           </div>
           {/* Noise removal and blur live in Settings — these menus are for
               picking devices only. */}
-          <DeviceMenu kind="audioinput" persistKey="audioDeviceId" />
+          <DeviceMenu kind="audioinput" />
         </div>
         <div className="join">
           <div
@@ -241,7 +246,7 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="videoinput" persistKey="videoDeviceId" />
+          <DeviceMenu kind="videoinput" />
         </div>
         <div
           className="tooltip tooltip-bottom"
@@ -452,11 +457,9 @@ function CallTimer({ startedAt }: { startedAt: number }) {
  */
 function DeviceMenu({
   kind,
-  persistKey,
   children,
 }: {
-  kind: "audioinput" | "videoinput"
-  persistKey: string
+  kind: DeviceKind
   children?: React.ReactNode
 }) {
   const { devices, activeDeviceId, setActiveMediaDevice } =
@@ -506,10 +509,10 @@ function DeviceMenu({
               }
               onMouseLeave={() => setHovered(null)}
               onClick={() => {
+                // Pin before switching so useStickyDevices sees the new choice
+                // when LiveKit emits ActiveDeviceChanged and doesn't fight it.
+                setDevicePref(kind, d.deviceId)
                 void setActiveMediaDevice(d.deviceId)
-                try {
-                  localStorage.setItem(persistKey, d.deviceId)
-                } catch {}
               }}
             >
               <span className="min-w-0 break-words">

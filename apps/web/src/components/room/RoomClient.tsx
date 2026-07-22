@@ -10,6 +10,7 @@ import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
+import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 
 const queryClient = new QueryClient()
@@ -225,6 +226,15 @@ export function RoomClient({
     typeof window !== "undefined" &&
     window.matchMedia("(max-width: 639px)").matches
 
+  // Seed LiveKit's active device with the chosen input (the lobby writes the
+  // same pref useStickyDevices reads). Setting it here means the very first
+  // captured track — and every unmute after — uses the picked device rather
+  // than the OS default. An empty pref leaves LiveKit on the system default.
+  const audioDeviceId =
+    session.prefs.audioDeviceId || readDevicePref("audioinput") || undefined
+  const videoDeviceId =
+    session.prefs.videoDeviceId || readDevicePref("videoinput") || undefined
+
   return (
     <LiveKitRoom
       token={session.token.token}
@@ -234,14 +244,18 @@ export function RoomClient({
         // per the saved preference; where unsupported the extra flag is simply
         // ignored. Set as a capture default so unmuting inherits it too.
         audioCaptureDefaults: {
+          deviceId: audioDeviceId,
           voiceIsolation: readVoiceIsolationPref(),
           echoCancellation: true,
           noiseSuppression: true,
           autoGainControl: true,
         },
-        videoCaptureDefaults: portraitCapture
-          ? { resolution: { width: 720, height: 1280 } }
-          : undefined,
+        videoCaptureDefaults: {
+          deviceId: videoDeviceId,
+          ...(portraitCapture
+            ? { resolution: { width: 720, height: 1280 } }
+            : {}),
+        },
       }}
       // Waiting participants join without media; on admission WaitingRoom
       // brings devices up per the lobby preferences. Otherwise join with the

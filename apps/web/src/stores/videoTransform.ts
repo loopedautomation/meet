@@ -28,18 +28,12 @@ function set(t: VideoTransform) {
   } catch {}
 }
 
+/** Commit a transform (Settings stages changes locally until Save). */
+export function setVideoTransform(t: VideoTransform) {
+  set(t)
+}
+
 /** Quarter turn clockwise; four presses come back around. */
-export function rotateCamera() {
-  const t = $videoTransform.get()
-  set({ ...t, rotation: ((t.rotation + 90) % 360) as VideoTransform["rotation"] })
-}
-
-export function flipCameraH() {
-  const t = $videoTransform.get()
-  set({ ...t, flipH: !t.flipH })
-}
-
-export function flipCameraV() {
-  const t = $videoTransform.get()
-  set({ ...t, flipV: !t.flipV })
+export function rotatedCw(t: VideoTransform): VideoTransform {
+  return { ...t, rotation: ((t.rotation + 90) % 360) as VideoTransform["rotation"] }
 }
