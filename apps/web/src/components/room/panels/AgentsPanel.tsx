@@ -234,7 +234,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
                       <div className="space-y-1.5">
                         <div className="space-y-1.5">
                           <Select
-                            size="xs"
+                            size="sm"
                             value={mode}
                             onChange={(e) => {
                               const next = e.target.value as AgentMode
@@ -264,7 +264,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
                               stands. */}
                           {options && (
                             <Select
-                              size="xs"
+                              size="sm"
                               value={voice}
                               onChange={(e) =>
                                 setVoices((v) => ({
