@@ -57,11 +57,13 @@ export function SettingsPanel({ slug }: { slug: string }) {
         <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
           Devices
         </h3>
+        <MicLevel />
         <DeviceSelect
           kind="audioinput"
           label="Microphone"
           persistKey="audioDeviceId"
         />
+        <CameraSettingsPreview />
         <DeviceSelect
           kind="videoinput"
           label="Camera"
@@ -72,7 +74,6 @@ export function SettingsPanel({ slug }: { slug: string }) {
           label="Speaker"
           persistKey="audioOutputDeviceId"
         />
-        <DevicePreview />
       </section>
 
       {supportsVoiceIsolation() && (
@@ -161,17 +162,13 @@ export function SettingsPanel({ slug }: { slug: string }) {
 }
 
 /**
- * Live preview of the selected mic and camera, so a device change can be
- * judged before the meeting hears/sees it. A second capture of the active
- * devices (browsers allow this alongside the published tracks), torn down
- * with the panel. The meter is a simple time-domain RMS at ~30fps.
+ * Live level of the selected mic, shown just above its select so a device
+ * change can be judged before the meeting hears it. Audio-only second
+ * capture (fine alongside the published track); time-domain RMS at ~30fps.
  */
-function DevicePreview() {
-  const videoRef = useRef<HTMLVideoElement>(null)
+function MicLevel() {
   const { activeDeviceId: micId } = useMediaDeviceSelect({ kind: "audioinput" })
-  const { activeDeviceId: camId } = useMediaDeviceSelect({ kind: "videoinput" })
   const [level, setLevel] = useState(0)
-  const [error, setError] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -180,21 +177,17 @@ function DevicePreview() {
     let raf = 0
 
     const acquire = async () => {
-      setError(false)
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           audio: { deviceId: micId ? { exact: micId } : undefined },
-          video: { deviceId: camId ? { exact: camId } : undefined },
         })
       } catch {
-        if (!cancelled) setError(true)
-        return
+        return // no meter beats an error box here — the select still works
       }
       if (cancelled) {
         for (const t of stream.getTracks()) t.stop()
         return
       }
-      if (videoRef.current) videoRef.current.srcObject = stream
       audioCtx = new AudioContext()
       const analyser = audioCtx.createAnalyser()
       analyser.fftSize = 512
@@ -219,33 +212,83 @@ function DevicePreview() {
       void audioCtx?.close().catch(() => undefined)
       for (const t of stream?.getTracks() ?? []) t.stop()
     }
-  }, [micId, camId])
+  }, [micId])
+
+  return <MicMeter level={level} />
+}
+
+/** Mirrored preview of the selected camera, above its select. */
+function CameraSettingsPreview() {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const { activeDeviceId: camId } = useMediaDeviceSelect({ kind: "videoinput" })
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    let stream: MediaStream | null = null
+    setError(false)
+    void navigator.mediaDevices
+      .getUserMedia({
+        video: { deviceId: camId ? { exact: camId } : undefined },
+      })
+      .then((s) => {
+        if (cancelled) {
+          for (const t of s.getTracks()) t.stop()
+          return
+        }
+        stream = s
+        if (videoRef.current) videoRef.current.srcObject = s
+      })
+      .catch(() => {
+        if (!cancelled) setError(true)
+      })
+    return () => {
+      cancelled = true
+      for (const t of stream?.getTracks() ?? []) t.stop()
+    }
+  }, [camId])
 
   if (error) {
     return (
-      <p className="text-error text-xs">
-        Couldn't open the selected devices for preview.
-      </p>
+      <p className="text-error text-xs">Couldn't open the camera to preview.</p>
     )
   }
   return (
-    <div className="flex flex-col gap-2">
-      {/* biome-ignore lint/a11y/useMediaCaption: local camera preview */}
-      <video
-        ref={videoRef}
-        autoPlay
-        muted
-        playsInline
-        className="aspect-video w-full scale-x-[-1] rounded-field bg-base-300 object-cover"
-      />
-      <div className="flex items-center gap-2">
-        <span className="text-base-content/60 text-xs">Mic</span>
-        <progress
-          className="progress progress-primary h-2 flex-1"
-          value={level}
-          max={1}
-        />
-      </div>
+    // biome-ignore lint/a11y/useMediaCaption: local camera preview
+    <video
+      ref={videoRef}
+      autoPlay
+      muted
+      playsInline
+      className="aspect-video w-full scale-x-[-1] rounded-field bg-base-300 object-cover"
+    />
+  )
+}
+
+const METER_SEGMENTS = 14
+/** How many top-end segments render in the darker purple when lit. */
+const METER_PEAK_SEGMENTS = 4
+
+/**
+ * Segmented level meter: little rectangles lighting up left to right —
+ * light purple through the body, dark purple at the loud end.
+ */
+function MicMeter({ level }: { level: number }) {
+  return (
+    <div className="flex flex-1 items-center gap-0.5">
+      {Array.from({ length: METER_SEGMENTS }, (_, i) => {
+        const lit = level >= (i + 1) / METER_SEGMENTS
+        const peak = i >= METER_SEGMENTS - METER_PEAK_SEGMENTS
+        return (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed-size meter
+            key={i}
+            className={`h-3 flex-1 rounded-[2px] transition-colors duration-75 ${
+              lit ? (peak ? "bg-primary" : "bg-secondary") : "bg-base-300"
+            }`}
+          />
+        )
+      })}
     </div>
   )
 }
