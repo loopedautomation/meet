@@ -81,19 +81,7 @@ export function SettingsPanel({ slug }: { slug: string }) {
           persistKey="audioDeviceId"
         />
         <MicLevel />
-        <CameraSetting />
-        <DeviceSelect
-          kind="audiooutput"
-          label="Select speaker"
-          persistKey="audioOutputDeviceId"
-        />
-      </section>
-
-      {supportsVoiceIsolation() && (
-        <section className="flex flex-col gap-2">
-          <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
-            Audio
-          </h3>
+        {supportsVoiceIsolation() && (
           <label className="flex cursor-pointer items-center justify-between gap-4">
             <span className="flex flex-col">
               <span className="text-sm">Enhanced noise removal</span>
@@ -110,13 +98,8 @@ export function SettingsPanel({ slug }: { slug: string }) {
               onChange={(e) => setVoiceIsolation(e.target.checked)}
             />
           </label>
-        </section>
-      )}
-
-      <section className="flex flex-col gap-2">
-        <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
-          Camera effects
-        </h3>
+        )}
+        <CameraSetting />
         <label className="flex cursor-pointer items-center justify-between">
           <span className="text-sm">Background blur</span>
           <input
@@ -126,6 +109,11 @@ export function SettingsPanel({ slug }: { slug: string }) {
             onChange={(e) => setBlur(e.target.checked)}
           />
         </label>
+        <DeviceSelect
+          kind="audiooutput"
+          label="Select speaker"
+          persistKey="audioOutputDeviceId"
+        />
       </section>
 
       <section className="flex flex-col gap-2">
