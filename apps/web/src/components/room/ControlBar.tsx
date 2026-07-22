@@ -37,6 +37,7 @@ import {
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Modal } from "@/components/ui/Modal"
+import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
 import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
@@ -516,7 +517,8 @@ function DeviceMenu({
               }}
             >
               <span className="min-w-0 break-words">
-                {d.label || (kind === "audioinput" ? "Microphone" : "Camera")}
+                {cleanDeviceLabel(d.label) ||
+                  (kind === "audioinput" ? "Microphone" : "Camera")}
               </span>
               {d.deviceId === activeDeviceId && (
                 <Check className="size-4 shrink-0 text-success" />

@@ -8,6 +8,7 @@ import { Select } from "@/components/ui/Select"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import type { JoinPreferences } from "@/components/room/RoomClient"
 import { useMediaPreview } from "@/hooks/useMediaPreview"
+import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { readDevicePref, setDevicePref } from "@/stores/devicePrefs"
 
 function readStoredString(key: string): string {
@@ -197,7 +198,7 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
                 placeholder="Default microphone"
                 options={mics.map((d) => ({
                   value: d.deviceId,
-                  label: d.label || "Microphone",
+                  label: cleanDeviceLabel(d.label) || "Microphone",
                 }))}
               />
             </label>
@@ -217,7 +218,7 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
                 placeholder="Default camera"
                 options={cameras.map((d) => ({
                   value: d.deviceId,
-                  label: d.label || "Camera",
+                  label: cleanDeviceLabel(d.label) || "Camera",
                 }))}
               />
             </label>

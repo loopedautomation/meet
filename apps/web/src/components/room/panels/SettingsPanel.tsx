@@ -26,6 +26,7 @@ import {
   rotatedCw,
   setVideoTransform,
 } from "@/stores/videoTransform"
+import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { readHostKey } from "@/lib/hostKey"
 import { $blur, setBlur } from "@/stores/blur"
 import {
@@ -249,7 +250,7 @@ function CameraSetting() {
           onChange={(e) => setPending(e.target.value)}
           options={devices.map((d) => ({
             value: d.deviceId,
-            label: d.label || "Camera",
+            label: cleanDeviceLabel(d.label) || "Camera",
           }))}
         />
       </label>
@@ -435,7 +436,7 @@ function DeviceSelect({
         }}
         options={devices.map((d) => ({
           value: d.deviceId,
-          label: d.label || label,
+          label: cleanDeviceLabel(d.label) || label,
         }))}
       />
     </label>
