@@ -6,6 +6,7 @@ export const DataTopic = {
   AgentControl: "agent-control",
   Chat: "chat",
   Doc: "doc",
+  DocPresence: "doc-presence",
   ScreenShare: "screen-share",
 } as const
 
@@ -419,6 +420,55 @@ export function mergeSharedDoc(
   // Same revision, same millisecond: fall back to a stable comparison so
   // every participant converges on one text instead of on their own.
   return incoming.by > current.by ? incoming : current
+}
+
+/**
+ * Where someone's cursor sits in the shared document right now.
+ *
+ * Ephemeral by design: sent lossy on the `doc-presence` topic, never
+ * persisted, and pruned by receivers when it goes quiet. `start`/`end` are
+ * offsets into the sender's copy of the doc text (equal for a bare caret);
+ * both null means the person left the editor.
+ */
+export const docPresenceSchema = z.object({
+  by: z.string(),
+  byName: z.string(),
+  /** The sender picks its own color so every peer renders the same one. */
+  color: z.string(),
+  start: z.number().int().min(0).nullable(),
+  end: z.number().int().min(0).nullable(),
+  at: z.number(),
+})
+export type DocPresence = z.infer<typeof docPresenceSchema>
+
+/** The first ten people get predefined, well-separated cursor colors. */
+export const DOC_CURSOR_COLORS = [
+  "#2563eb", // blue
+  "#dc2626", // red
+  "#16a34a", // green
+  "#9333ea", // purple
+  "#ea580c", // orange
+  "#0891b2", // cyan
+  "#db2777", // pink
+  "#ca8a04", // yellow
+  "#4f46e5", // indigo
+  "#0d9488", // teal
+] as const
+
+/**
+ * Cursor color for a participant: palette by join order for the first ten,
+ * then a hue derived from the identity so late joiners still get a stable
+ * color without any coordination.
+ */
+export function docCursorColor(identity: string, joinIndex: number): string {
+  if (joinIndex >= 0 && joinIndex < DOC_CURSOR_COLORS.length) {
+    return DOC_CURSOR_COLORS[joinIndex]
+  }
+  let hash = 0
+  for (let i = 0; i < identity.length; i++) {
+    hash = (hash * 31 + identity.charCodeAt(i)) | 0
+  }
+  return `hsl(${((hash % 360) + 360) % 360} 70% 45%)`
 }
 
 /**
