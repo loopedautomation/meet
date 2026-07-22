@@ -1,13 +1,31 @@
 "use client"
 
 import { useMediaDeviceSelect } from "@livekit/components-react"
-import type { RoomSettings } from "@meet/shared"
+import {
+  type RoomSettings,
+  serializeVideoTransform,
+  type VideoTransform,
+  videoTransformCss,
+} from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Lock, Moon, Sun } from "lucide-react"
-import { useEffect, useState } from "react"
+import {
+  FlipHorizontal2,
+  FlipVertical2,
+  Lock,
+  Moon,
+  RotateCw,
+  Sun,
+} from "lucide-react"
+import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { Select } from "@/components/ui/Select"
 import { useAgentPermissions } from "@/hooks/useRoomSettings"
 import { supportsVoiceIsolation } from "@/hooks/useVoiceIsolation"
+import {
+  $videoTransform,
+  rotatedCw,
+  setVideoTransform,
+} from "@/stores/videoTransform"
 import { readHostKey } from "@/lib/hostKey"
 import { $blur, setBlur } from "@/stores/blur"
 import {
@@ -50,23 +68,23 @@ export function SettingsPanel({ slug }: { slug: string }) {
         </div>
       </section>
 
-      <section className="flex flex-col gap-3">
+      {/* min-w-0 at every flex level: the selects' longest option would
+          otherwise set the section's min-content width and overflow the
+          panel sideways. */}
+      <section className="flex min-w-0 flex-col gap-3">
         <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
           Devices
         </h3>
+        <MicLevel />
         <DeviceSelect
           kind="audioinput"
-          label="Microphone"
+          label="Select microphone"
           persistKey="audioDeviceId"
         />
-        <DeviceSelect
-          kind="videoinput"
-          label="Camera"
-          persistKey="videoDeviceId"
-        />
+        <CameraSetting />
         <DeviceSelect
           kind="audiooutput"
-          label="Speaker"
+          label="Select speaker"
           persistKey="audioOutputDeviceId"
         />
       </section>
@@ -156,6 +174,238 @@ export function SettingsPanel({ slug }: { slug: string }) {
   )
 }
 
+/**
+ * Live level of the selected mic, shown just above its select so a device
+ * change can be judged before the meeting hears it. Audio-only second
+ * capture (fine alongside the published track); time-domain RMS at ~30fps.
+ */
+function MicLevel() {
+  const { activeDeviceId: micId } = useMediaDeviceSelect({ kind: "audioinput" })
+  const [level, setLevel] = useState(0)
+
+  useEffect(() => {
+    let cancelled = false
+    let stream: MediaStream | null = null
+    let audioCtx: AudioContext | null = null
+    let raf = 0
+
+    const acquire = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: { deviceId: micId ? { exact: micId } : undefined },
+        })
+      } catch {
+        return // no meter beats an error box here — the select still works
+      }
+      if (cancelled) {
+        for (const t of stream.getTracks()) t.stop()
+        return
+      }
+      audioCtx = new AudioContext()
+      const analyser = audioCtx.createAnalyser()
+      analyser.fftSize = 512
+      audioCtx.createMediaStreamSource(stream).connect(analyser)
+      const samples = new Float32Array(analyser.fftSize)
+      const tick = () => {
+        analyser.getFloatTimeDomainData(samples)
+        let sum = 0
+        for (const s of samples) sum += s * s
+        // RMS is tiny for speech at normal levels — scale so talking fills
+        // most of the bar and clipping pins it.
+        setLevel(Math.min(1, Math.sqrt(sum / samples.length) * 4))
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+    }
+    void acquire()
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+      void audioCtx?.close().catch(() => undefined)
+      for (const t of stream?.getTracks() ?? []) t.stop()
+    }
+  }, [micId])
+
+  return <MicMeter level={level} />
+}
+
+/**
+ * Camera picker with a true preview: the select and the tile show a pending
+ * choice without touching the published camera — what the meeting sees only
+ * changes on Save. (The mic select stays immediate: a mic switch is loud in
+ * no one's face, and the meter previews it anyway.)
+ */
+function CameraSetting() {
+  const { devices, activeDeviceId, setActiveMediaDevice } =
+    useMediaDeviceSelect({ kind: "videoinput" })
+  const applied = useStore($videoTransform)
+  // undefined = following the live camera/transform; set = pending choice.
+  const [pending, setPending] = useState<string | undefined>(undefined)
+  const [pendingT, setPendingT] = useState<VideoTransform | undefined>(
+    undefined,
+  )
+  const shown = pending ?? activeDeviceId
+  const shownT = pendingT ?? applied
+  const dirty =
+    (pending !== undefined && pending !== activeDeviceId) ||
+    (pendingT !== undefined &&
+      serializeVideoTransform(pendingT) !== serializeVideoTransform(applied))
+
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <CameraSettingsPreview deviceId={shown} transform={shownT} />
+      {/* Orientation stages like the device does: preview-only until Save. */}
+      <div className="flex gap-1">
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs flex-1"
+          title="Rotate 90° clockwise"
+          onClick={() => setPendingT(rotatedCw(shownT))}
+        >
+          <RotateCw className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs flex-1"
+          title="Flip horizontally"
+          onClick={() => setPendingT({ ...shownT, flipH: !shownT.flipH })}
+        >
+          <FlipHorizontal2 className="size-4" />
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs flex-1"
+          title="Flip vertically"
+          onClick={() => setPendingT({ ...shownT, flipV: !shownT.flipV })}
+        >
+          <FlipVertical2 className="size-4" />
+        </button>
+      </div>
+      <label className="flex min-w-0 flex-col gap-1">
+        <span className="text-base-content/70 text-sm">Select camera</span>
+        <Select
+          value={shown}
+          onChange={(e) => setPending(e.target.value)}
+          options={devices.map((d) => ({
+            value: d.deviceId,
+            label: d.label || "Camera",
+          }))}
+        />
+      </label>
+      {dirty && (
+        <button
+          type="button"
+          className="btn btn-primary btn-sm w-full"
+          onClick={() => {
+            if (pending !== undefined) {
+              // Pin first so useStickyDevices doesn't fight the switch.
+              setDevicePref("videoinput", pending)
+              void setActiveMediaDevice(pending)
+            }
+            if (pendingT !== undefined) setVideoTransform(pendingT)
+            setPending(undefined)
+            setPendingT(undefined)
+          }}
+        >
+          Save camera
+        </button>
+      )}
+    </div>
+  )
+}
+
+/** Mirrored preview of one camera device, honoring rotation/flip. */
+function CameraSettingsPreview({
+  deviceId,
+  transform,
+}: {
+  deviceId: string
+  transform: VideoTransform
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const camId = deviceId
+  const [error, setError] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    let stream: MediaStream | null = null
+    setError(false)
+    void navigator.mediaDevices
+      .getUserMedia({
+        video: { deviceId: camId ? { exact: camId } : undefined },
+      })
+      .then((s) => {
+        if (cancelled) {
+          for (const t of s.getTracks()) t.stop()
+          return
+        }
+        stream = s
+        if (videoRef.current) videoRef.current.srcObject = s
+      })
+      .catch(() => {
+        if (!cancelled) setError(true)
+      })
+    return () => {
+      cancelled = true
+      for (const t of stream?.getTracks() ?? []) t.stop()
+    }
+  }, [camId])
+
+  if (error) {
+    return (
+      <p className="text-error text-xs">Couldn't open the camera to preview.</p>
+    )
+  }
+  return (
+    // biome-ignore lint/a11y/useMediaCaption: local camera preview
+    <video
+      ref={videoRef}
+      autoPlay
+      muted
+      playsInline
+      className="aspect-video w-full rounded-field bg-base-300 object-cover"
+      // Quarter turns scale up to keep covering the 16:9 preview box.
+      style={{
+        transform: [
+          videoTransformCss(transform, true),
+          transform.rotation % 180 !== 0 ? "scale(1.78)" : undefined,
+        ]
+          .filter(Boolean)
+          .join(" "),
+      }}
+    />
+  )
+}
+
+const METER_SEGMENTS = 32
+/** How many top-end segments render in the darker purple when lit. */
+const METER_PEAK_SEGMENTS = 7
+
+/**
+ * Segmented level meter: thin vertical bars lighting up left to right —
+ * light purple through the body, dark purple at the loud end.
+ */
+function MicMeter({ level }: { level: number }) {
+  return (
+    <div className="flex w-full items-center gap-[3px]">
+      {Array.from({ length: METER_SEGMENTS }, (_, i) => {
+        const lit = level >= (i + 1) / METER_SEGMENTS
+        const peak = i >= METER_SEGMENTS - METER_PEAK_SEGMENTS
+        return (
+          <span
+            // biome-ignore lint/suspicious/noArrayIndexKey: fixed-size meter
+            key={i}
+            className={`h-4 min-w-0 flex-1 rounded-[1px] transition-colors duration-75 ${
+              lit ? (peak ? "bg-primary" : "bg-secondary") : "bg-base-300"
+            }`}
+          />
+        )
+      })}
+    </div>
+  )
+}
+
 function DeviceSelect({
   kind,
   label,
@@ -173,10 +423,9 @@ function DeviceSelect({
   return (
     <label className="flex min-w-0 flex-col gap-1">
       <span className="text-base-content/70 text-sm">{label}</span>
-      {/* Device labels are long ("Studio Display Microphone (…)") — keep the
-          select at the panel width and truncate rather than overflow. */}
-      <select
-        className="select select-sm w-full max-w-full truncate"
+      {/* Device labels are long ("Studio Display Microphone (…)") — the
+          shared Select truncates them at the panel width. */}
+      <Select
         value={activeDeviceId}
         onChange={(e) => {
           const id = e.target.value
@@ -192,13 +441,11 @@ function DeviceSelect({
           }
           void setActiveMediaDevice(id)
         }}
-      >
-        {devices.map((d) => (
-          <option key={d.deviceId} value={d.deviceId}>
-            {d.label || label}
-          </option>
-        ))}
-      </select>
+        options={devices.map((d) => ({
+          value: d.deviceId,
+          label: d.label || label,
+        }))}
+      />
     </label>
   )
 }

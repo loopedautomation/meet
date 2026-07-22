@@ -9,7 +9,13 @@ import {
   useParticipantAttributes,
   VideoTrack,
 } from "@livekit/components-react"
-import { HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
+import {
+  HAND_ATTRIBUTE,
+  parseParticipantMeta,
+  parseVideoTransform,
+  VIDEO_TRANSFORM_ATTRIBUTE,
+  videoTransformCss,
+} from "@meet/shared"
 import { ConnectionQuality, Track } from "livekit-client"
 import { Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
@@ -50,13 +56,13 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   // `resize` when the phone rotates mid-call) and adapt the card (compact)
   // or letterbox within the grid cell.
   const videoRef = useRef<HTMLVideoElement>(null)
-  const [portrait, setPortrait] = useState(false)
+  const [ratio, setRatio] = useState(16 / 9)
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
     const update = () => {
       if (el.videoWidth && el.videoHeight) {
-        setPortrait(el.videoHeight > el.videoWidth)
+        setRatio(el.videoWidth / el.videoHeight)
       }
     }
     update()
@@ -67,6 +73,13 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
       el.removeEventListener("loadedmetadata", update)
     }
   }, [hasVideo])
+
+  // The publisher's staged orientation: a quarter turn (90/270) swaps the
+  // feed's effective aspect, so the tile adapts as if the source itself were
+  // portrait/landscape flipped.
+  const transform = parseVideoTransform(attributes?.[VIDEO_TRANSFORM_ATTRIBUTE])
+  const quarterTurned = transform.rotation % 180 !== 0
+  const portrait = quarterTurned ? ratio >= 1 : ratio < 1
 
   return (
     <div
@@ -86,9 +99,21 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
         <VideoTrack
           ref={videoRef}
           trackRef={trackRef}
-          className={`size-full ${portrait && !compact ? "object-contain" : "object-cover"} ${
-            participant.isLocal ? "scale-x-[-1]" : ""
-          }`}
+          className={`size-full ${portrait && !compact ? "object-contain" : "object-cover"}`}
+          // The publisher's rotation/flip rides their attributes; composed
+          // with the local self-view mirror (flipH and mirror cancel). A
+          // quarter turn leaves the element's layout box unrotated, so the
+          // content is scaled up by the source aspect to keep covering it.
+          style={{
+            transform: [
+              videoTransformCss(transform, participant.isLocal),
+              quarterTurned
+                ? `scale(${(ratio >= 1 ? ratio : 1 / ratio).toFixed(3)})`
+                : undefined,
+            ]
+              .filter(Boolean)
+              .join(" "),
+          }}
         />
       ) : (
         <div className="flex size-full items-center justify-center">
