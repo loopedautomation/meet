@@ -11,6 +11,20 @@ import { useRef } from "react"
 import { toast } from "react-toastify"
 
 /**
+ * Rapid repeats of the same control on the same agent share one toast slot.
+ * react-toastify silently drops a toast whose id is still on screen, so the
+ * slot has to be updated in place — otherwise cycling response modes only
+ * announces the first click and swallows the rest.
+ */
+function showControlToast(id: string, message: string): void {
+  if (toast.isActive(id)) {
+    toast.update(id, { render: message, autoClose: 3000 })
+  } else {
+    toast.info(message, { toastId: id })
+  }
+}
+
+/**
  * Announces agent controls to the room. Agents are shared: if someone mutes
  * one mid-answer or changes how it takes turns, everyone else needs to know
  * why the agent's behaviour just changed, and who to ask about it.
@@ -48,11 +62,10 @@ export function useAgentControlToasts(): void {
     const description = describeAgentControl(control, agentName)
     if (!description) return
 
-    toast.info(`${control.byName} ${description}`, {
-      // Rapid repeats of the same control on the same agent collapse rather
-      // than stacking up the corner of the screen.
-      toastId: `agent-control-${control.agentId}-${control.type}`,
-    })
+    showControlToast(
+      `agent-control-${control.agentId}-${control.type}`,
+      `${control.byName} ${description}`,
+    )
   })
 }
 
@@ -67,7 +80,8 @@ export function announceAgentControl(
 ): void {
   const description = describeAgentControl(control, agentName)
   if (!description) return
-  toast.info(`You ${description}`, {
-    toastId: `agent-control-${control.agentId}-${control.type}`,
-  })
+  showControlToast(
+    `agent-control-${control.agentId}-${control.type}`,
+    `You ${description}`,
+  )
 }
