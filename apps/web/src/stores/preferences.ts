@@ -59,7 +59,7 @@ export const [$pushToTalk, setPushToTalk] = persistedBool("pushToTalk", false)
 
 // ---- video -----------------------------------------------------------------
 
-export type SendQuality = "auto" | "1080p" | "720p" | "360p" | "180p"
+export type SendQuality = "auto" | "4k" | "1080p" | "720p" | "360p" | "180p"
 
 /** Cap on the outgoing camera resolution — the data-saver for uplink. */
 export const [$sendQuality, setSendQuality] = persistedString<SendQuality>(
@@ -68,15 +68,17 @@ export const [$sendQuality, setSendQuality] = persistedString<SendQuality>(
 )
 
 /**
- * "auto" asks for the camera's maximum (up to 4K) — the constraints are
- * ideal, not exact, so a lesser camera simply delivers its best.
+ * "auto" captures at 1080p and lets simulcast + congestion control pick
+ * what's actually sent per network conditions; 4K is a deliberate opt-in.
+ * All constraints are ideal, not exact — a lesser camera delivers its best.
  */
-export const AUTO_MAX_RESOLUTION = { width: 3840, height: 2160 }
+export const AUTO_RESOLUTION = { width: 1920, height: 1080 }
 
 export const SEND_QUALITY_RESOLUTION: Record<
   Exclude<SendQuality, "auto">,
   { width: number; height: number }
 > = {
+  "4k": { width: 3840, height: 2160 },
   "1080p": { width: 1920, height: 1080 },
   "720p": { width: 1280, height: 720 },
   "360p": { width: 640, height: 360 },

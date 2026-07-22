@@ -14,7 +14,7 @@ import { readDevicePref } from "@/stores/devicePrefs"
 import {
   $autoGain,
   $sendQuality,
-  AUTO_MAX_RESOLUTION,
+  AUTO_RESOLUTION,
   SEND_QUALITY_RESOLUTION,
   type SendQuality,
 } from "@/stores/preferences"
@@ -247,6 +247,12 @@ export function RoomClient({
       token={session.token.token}
       serverUrl={session.token.serverUrl}
       options={{
+        // Auto quality adapts to network conditions: simulcast publishes
+        // layered resolutions, dynacast pauses layers nobody is consuming,
+        // and adaptiveStream sizes what we receive to what's on screen.
+        // Congestion control then walks the send bitrate up and down.
+        dynacast: true,
+        adaptiveStream: true,
         // Keep the browser DSP on and layer enhanced voice isolation on top
         // per the saved preference; where unsupported the extra flag is simply
         // ignored. Set as a capture default so unmuting inherits it too.
@@ -260,9 +266,9 @@ export function RoomClient({
         videoCaptureDefaults: {
           deviceId: videoDeviceId,
           // Send-quality cap wins over the portrait default: it exists for
-          // uplink-poor connections, which phones often are. "auto" asks for
-          // the camera's maximum — ideal constraints, so a modest camera
-          // just delivers its best.
+          // uplink-poor connections, which phones often are. "auto" captures
+          // 1080p; what actually goes out adapts to the network (simulcast
+          // layers + congestion control, dynacast below).
           ...($sendQuality.get() !== "auto"
             ? {
                 resolution:
@@ -272,7 +278,7 @@ export function RoomClient({
               }
             : portraitCapture
               ? { resolution: { width: 720, height: 1280 } }
-              : { resolution: AUTO_MAX_RESOLUTION }),
+              : { resolution: AUTO_RESOLUTION }),
         },
       }}
       // Waiting participants join without media; on admission WaitingRoom
