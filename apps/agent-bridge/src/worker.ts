@@ -25,6 +25,7 @@ import {
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
 import { getDynamicAgent } from "./dynamic.js"
+import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import {
@@ -43,7 +44,7 @@ import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = {
   agentId: string
-  mode?: "realtime" | "pipeline"
+  mode?: "realtime" | "gemini" | "pipeline"
   voice?: string
 }
 
@@ -66,10 +67,10 @@ function applyMode(
   entry: ResolvedEntry,
   mode?: DispatchMeta["mode"],
 ): ResolvedEntry {
-  if (mode === "pipeline" && entry.realtime) {
-    return { ...entry, realtime: undefined }
+  if (mode === "pipeline") {
+    return entry.realtime ? { ...entry, realtime: undefined } : entry
   }
-  if (mode === "realtime" && !entry.realtime) {
+  if (mode === "realtime" && entry.realtime?.provider !== "openai") {
     const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
       ? entry.tts.voice
       : "marin"
@@ -79,6 +80,16 @@ function applyMode(
         provider: "openai" as const,
         model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1-mini",
         voice,
+      },
+    }
+  }
+  if (mode === "gemini" && entry.realtime?.provider !== "gemini") {
+    return {
+      ...entry,
+      realtime: {
+        provider: "gemini" as const,
+        model: process.env.GEMINI_REALTIME_MODEL ?? GEMINI_LIVE_DEFAULT_MODEL,
+        voice: "Puck",
       },
     }
   }

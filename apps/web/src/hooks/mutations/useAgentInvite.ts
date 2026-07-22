@@ -3,7 +3,7 @@
 import { useMutation } from "@tanstack/react-query"
 import { readHostKey } from "@/lib/hostKey"
 
-export type AgentMode = "realtime" | "pipeline"
+export type AgentMode = "realtime" | "gemini" | "pipeline"
 
 export function useAgentInvite(slug: string) {
   return useMutation({

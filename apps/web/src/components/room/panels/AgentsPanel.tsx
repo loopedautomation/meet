@@ -34,8 +34,9 @@ function voiceOptions(
   agent: AgentInfo,
   mode: AgentMode | "",
 ): readonly string[] | null {
-  const effective = mode || (agent.realtimeProvider ? "realtime" : "pipeline")
-  if (effective === "realtime") {
+  if (mode === "gemini") return GEMINI_VOICES
+  if (mode === "realtime") return AGENT_VOICES
+  if (mode === "" && agent.realtimeProvider) {
     return agent.realtimeProvider === "gemini" ? GEMINI_VOICES : AGENT_VOICES
   }
   return agent.ttsProvider === "elevenlabs" ? null : OPENAI_TTS_VOICES
@@ -197,7 +198,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
                 ) : canInvite ? (
                   <div className="join w-full">
                     <select
-                      className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
+                      className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-[11px]"
                       value={modes[agent.id] ?? ""}
                       onChange={(e) => {
                         setModes((m) => ({
@@ -211,7 +212,8 @@ export function AgentsPanel({ slug }: { slug: string }) {
                       aria-label="Interaction mode"
                     >
                       <option value="">Default</option>
-                      <option value="realtime">Realtime</option>
+                      <option value="realtime">Realtime mini</option>
+                      <option value="gemini">Gemini Live</option>
                       <option value="pipeline">STT + TTS</option>
                     </select>
                     {(() => {
@@ -221,7 +223,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
                       if (!options) return null
                       return (
                         <select
-                          className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-xs"
+                          className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-[11px]"
                           value={voices[agent.id] ?? ""}
                           onChange={(e) =>
                             setVoices((v) => ({

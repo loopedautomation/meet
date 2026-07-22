@@ -76,8 +76,21 @@ app.post("/rooms/:room/agents/:id", async (c) => {
     mode?: string
     voice?: string
   }
-  if (body.mode && body.mode !== "realtime" && body.mode !== "pipeline") {
+  if (
+    body.mode &&
+    body.mode !== "realtime" &&
+    body.mode !== "gemini" &&
+    body.mode !== "pipeline"
+  ) {
     return c.json({ error: "unknown mode" }, 400)
+  }
+  // Gemini Live cannot be gated; refused here so the invite fails visibly
+  // instead of the dispatched job dying where no one sees it.
+  if (body.mode === "gemini" && entry.turn_policy !== "open") {
+    return c.json(
+      { error: "this agent's turn policy needs the openai realtime provider" },
+      400,
+    )
   }
   // Which list applies depends on the resolved mode and provider, so the
   // check here is membership in any namespace — the UI offers the right one.
