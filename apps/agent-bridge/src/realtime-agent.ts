@@ -626,7 +626,7 @@ function publishBrainActivity(
       type: "tool_result",
       agentId,
       name: frame.name,
-      content: frame.content.slice(0, 2000),
+      content: frame.content.slice(0, 8000),
       durationMs: frame.durationMs,
       at,
     }
