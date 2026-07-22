@@ -213,7 +213,12 @@ export function SettingsPanel({ slug }: { slug: string }) {
           Meeting
         </h3>
         <label className="flex cursor-pointer items-center justify-between gap-4">
-          <span className="text-sm">Always join muted</span>
+          <span className="flex flex-col">
+            <span className="text-sm">Always join muted</span>
+            <span className="text-base-content/60 text-xs">
+              Saved in this browser and applied to every meeting you join here.
+            </span>
+          </span>
           <input
             type="checkbox"
             className="toggle toggle-primary"
@@ -222,7 +227,12 @@ export function SettingsPanel({ slug }: { slug: string }) {
           />
         </label>
         <label className="flex cursor-pointer items-center justify-between gap-4">
-          <span className="text-sm">Always join with camera off</span>
+          <span className="flex flex-col">
+            <span className="text-sm">Always join with camera off</span>
+            <span className="text-base-content/60 text-xs">
+              Saved in this browser and applied to every meeting you join here.
+            </span>
+          </span>
           <input
             type="checkbox"
             className="toggle toggle-primary"
