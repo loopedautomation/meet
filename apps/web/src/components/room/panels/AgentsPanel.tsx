@@ -198,56 +198,61 @@ export function AgentsPanel({ slug }: { slug: string }) {
                     sendControl={(control) => sendControl(control, agent.name)}
                   />
                 ) : canInvite ? (
-                  <div className="join w-full">
-                    <select
-                      className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-[11px]"
-                      value={modes[agent.id] ?? ""}
-                      onChange={(e) => {
-                        setModes((m) => ({
-                          ...m,
-                          [agent.id]: e.target.value as AgentMode | "",
-                        }))
-                        // The mode decides which provider speaks, and voice
-                        // names don't carry across providers — back to default.
-                        setVoices((v) => ({ ...v, [agent.id]: "" }))
-                      }}
-                      aria-label="Interaction mode"
-                    >
-                      <option value="">Default</option>
-                      <option value="realtime">Realtime mini</option>
-                      <option value="gemini">Gemini Live</option>
-                      <option value="pipeline">OpenAI STT</option>
-                      <option value="elevenlabs">ElevenLabs STT</option>
-                    </select>
-                    {(() => {
-                      const options = voiceOptions(agent, modes[agent.id] ?? "")
-                      // ElevenLabs voices are account-specific ids, not an
-                      // enumerable list — the registry's choice stands.
-                      if (!options) return null
-                      return (
-                        <select
-                          className="select select-sm join-item min-w-0 flex-1 border border-base-300 text-[11px]"
-                          value={voices[agent.id] ?? ""}
-                          onChange={(e) =>
-                            setVoices((v) => ({
-                              ...v,
-                              [agent.id]: e.target.value,
-                            }))
-                          }
-                          aria-label="Voice"
-                        >
-                          <option value="">Voice</option>
-                          {options.map((v) => (
-                            <option key={v} value={v}>
-                              {v}
-                            </option>
-                          ))}
-                        </select>
-                      )
-                    })()}
+                  <div className="space-y-1.5">
+                    <div className="flex gap-1.5">
+                      <select
+                        className="select select-xs min-w-0 flex-1 border border-base-300 text-[11px]"
+                        value={modes[agent.id] ?? ""}
+                        onChange={(e) => {
+                          setModes((m) => ({
+                            ...m,
+                            [agent.id]: e.target.value as AgentMode | "",
+                          }))
+                          // The mode decides which provider speaks, and voice
+                          // names don't carry across providers — back to default.
+                          setVoices((v) => ({ ...v, [agent.id]: "" }))
+                        }}
+                        aria-label="Interaction mode"
+                      >
+                        <option value="">Default</option>
+                        <option value="realtime">Realtime mini</option>
+                        <option value="gemini">Gemini Live</option>
+                        <option value="pipeline">OpenAI STT</option>
+                        <option value="elevenlabs">ElevenLabs STT</option>
+                      </select>
+                      {(() => {
+                        const options = voiceOptions(
+                          agent,
+                          modes[agent.id] ?? "",
+                        )
+                        // ElevenLabs voices are account-specific ids, not an
+                        // enumerable list — the registry's choice stands.
+                        if (!options) return null
+                        return (
+                          <select
+                            className="select select-xs min-w-0 flex-1 border border-base-300 text-[11px]"
+                            value={voices[agent.id] ?? ""}
+                            onChange={(e) =>
+                              setVoices((v) => ({
+                                ...v,
+                                [agent.id]: e.target.value,
+                              }))
+                            }
+                            aria-label="Voice"
+                          >
+                            <option value="">Voice</option>
+                            {options.map((v) => (
+                              <option key={v} value={v}>
+                                {v}
+                              </option>
+                            ))}
+                          </select>
+                        )
+                      })()}
+                    </div>
                     <button
                       type="button"
-                      className="btn btn-primary btn-sm join-item"
+                      className="btn btn-primary btn-sm w-full"
                       disabled={isInviting(agent.id)}
                       onClick={() =>
                         invite.mutate({
