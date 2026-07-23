@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@excalidraw/excalidraw": "0.18.1",
+    "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
     "@livekit/components-react": "catalog:",
     "@livekit/track-processors": "^0.7.2",
     "@meet/shared": "workspace:*",
@@ -27,11 +28,14 @@
     "next": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
+    "react-markdown": "^10.1.0",
     "react-toastify": "^11.1.0",
+    "remark-gfm": "^4.0.1",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.17",
+    "@tailwindcss/typography": "^0.5.20",
     "@types/node": "^24.0.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",

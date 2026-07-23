@@ -29,9 +29,10 @@ export const CANVAS_PROTOCOL_NOTE =
   '{"op":"arrow","id","from?","to?","label?"} (from/to are shape ids), ' +
   '{"op":"move","id","x","y"}, {"op":"update","id","label?","text?",' +
   '"color?","w?","h?"}, {"op":"delete","id"}, {"op":"clear"}, ' +
-  '{"op":"diagram","id","mermaid"} (a Mermaid flowchart/graph source ' +
-  "string — PREFER this for any boxes-and-arrows structure: it is laid " +
-  "out automatically with proper spacing, no coordinates needed; node ids " +
+  '{"op":"diagram","id","mermaid"} (Mermaid source — PREFER this for any ' +
+  "boxes-and-arrows structure: flowcharts render with full Mermaid fidelity " +
+  "(subgraphs, diamonds, all node shapes), sequence and class diagrams " +
+  "also work; layout is automatic, no coordinates needed; node ids " +
   'become "<id>.<node>" for later moves/updates; Mermaid style/classDef ' +
   "fill colors are honored, snapped to the palette; re-sending the same " +
   "diagram id with edited Mermaid updates the diagram IN PLACE — the way " +

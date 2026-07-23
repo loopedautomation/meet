@@ -11,6 +11,7 @@ import { useStore } from "@nanostores/react"
 import { Pencil, SendHorizontal, Trash2 } from "lucide-react"
 import { nanoid } from "nanoid"
 import { useCallback, useEffect, useRef, useState } from "react"
+import { Markdown } from "@/components/Markdown"
 import {
   completeMention,
   MentionPicker,
@@ -25,29 +26,6 @@ import {
   removeChatMessage,
   updateChatMessage,
 } from "@/stores/roomData"
-
-/**
- * Render message text with URLs as real links. `break-all` on the anchor so
- * long URLs wrap inside the bubble instead of overflowing it.
- */
-function linkify(text: string): React.ReactNode[] {
-  return text.split(/(https?:\/\/\S+)/g).map((part, i) =>
-    /^https?:\/\//.test(part) ? (
-      <a
-        // biome-ignore lint/suspicious/noArrayIndexKey: parts are positional
-        key={i}
-        href={part}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="link break-all"
-      >
-        {part}
-      </a>
-    ) : (
-      part
-    ),
-  )
-}
 
 /** "Ada is typing…", "Ada and Ben are typing…", "3 people are typing…". */
 function typingLabel(names: string[]): string {
@@ -127,7 +105,7 @@ function ChatMessageRow({
         </div>
       ) : (
         <div
-          className={`chat-bubble relative min-h-0 min-w-0 max-w-[85%] rounded-lg px-2.5 py-1 whitespace-pre-wrap break-words text-sm ${
+          className={`chat-bubble relative min-h-0 min-w-0 max-w-[85%] rounded-lg px-2.5 py-1 break-words text-sm ${
             own ? "chat-bubble-primary" : ""
           } ${
             lastInGroup
@@ -137,7 +115,13 @@ function ChatMessageRow({
               : "before:hidden"
           }`}
         >
-          {linkify(message.text)}
+          {/* text-inherit throughout so markdown keeps the bubble's own
+              color (primary-content on own messages); tight margins keep
+              one-liners looking like chat, not an article. */}
+          <Markdown
+            text={message.text}
+            className="**:text-inherit prose-a:break-all prose-headings:my-1 prose-ol:my-1 prose-p:my-0 prose-pre:my-1 prose-ul:my-1"
+          />
           {own && (
             <MessageActions
               onStartEdit={onStartEdit}

@@ -50,7 +50,7 @@ import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
-import { $openPanel, togglePanel } from "@/stores/panels"
+import { $docOnStage, $openPanel, togglePanel } from "@/stores/panels"
 import {
   $autoDataSaver,
   $meetingSounds,
@@ -431,7 +431,11 @@ export function ControlBar({
             onClick={() => {
               const opening = !$canvasOpen.get()
               $canvasOpen.set(opening)
-              if (opening) $canvasUnseen.set(false)
+              if (opening) {
+                $canvasUnseen.set(false)
+                // The stage holds one takeover at a time.
+                $docOnStage.set(false)
+              }
             }}
             aria-label={
               agentDrawing && !whiteboardOpen
@@ -519,7 +523,10 @@ export function ControlBar({
               onClick={() => {
                 const opening = !$canvasOpen.get()
                 $canvasOpen.set(opening)
-                if (opening) $canvasUnseen.set(false)
+                if (opening) {
+                  $canvasUnseen.set(false)
+                  $docOnStage.set(false)
+                }
                 ;(document.activeElement as HTMLElement | null)?.blur()
               }}
             >

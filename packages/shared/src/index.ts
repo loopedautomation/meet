@@ -8,6 +8,13 @@ export const DataTopic = {
   AgentActivity: "agent-activity",
   AgentControl: "agent-control",
   Canvas: "canvas",
+  /**
+   * Bridge → one chosen client: render Mermaid with the official
+   * mermaid-to-excalidraw converter (needs a real browser; the bridge has
+   * none). Addressed via destinationIdentities so exactly one client ever
+   * sees a request — no election, no race.
+   */
+  CanvasConvert: "canvas-convert",
   CanvasPresence: "canvas-presence",
   Chat: "chat",
   Doc: "doc",
@@ -716,6 +723,35 @@ export function mergeCanvasRecord(
   }
   return incoming.by > current.by ? incoming : current
 }
+
+/** The bridge asking a client to render Mermaid into Excalidraw elements. */
+export const canvasConvertRequestSchema = z.object({
+  type: z.literal("canvas-convert"),
+  id: z.string().min(1).max(64),
+  mermaid: z.string().min(1).max(20_000),
+})
+export type CanvasConvertRequest = z.infer<typeof canvasConvertRequestSchema>
+
+/**
+ * The client's reply, chunked: reliable data messages cap at ~15KiB and a
+ * converted diagram's element JSON can exceed that.
+ */
+export const canvasConvertResultSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("canvas-convert-result"),
+    id: z.string().min(1).max(64),
+    seq: z.number().int().min(0),
+    total: z.number().int().min(1).max(64),
+    /** A slice of the JSON-serialized element array. */
+    part: z.string().max(12_000),
+  }),
+  z.object({
+    type: z.literal("canvas-convert-error"),
+    id: z.string().min(1).max(64),
+    error: z.string().max(500),
+  }),
+])
+export type CanvasConvertResult = z.infer<typeof canvasConvertResultSchema>
 
 /** A batch of record puts/tombstones on the reliable `canvas` topic. */
 export const canvasDiffSchema = z.object({

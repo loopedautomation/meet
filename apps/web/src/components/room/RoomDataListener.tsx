@@ -3,6 +3,7 @@
 import { useDataChannel, useRoomContext } from "@livekit/components-react"
 import {
   agentActivityEventSchema,
+  canvasConvertRequestSchema,
   canvasDiffSchema,
   canvasSnapshotSchema,
   chatMessageSchema,
@@ -112,6 +113,69 @@ export function RoomDataListener({ slug }: { slug: string }) {
     } catch {}
   })
 
+  // The bridge has no browser, and rendering Mermaid properly needs one.
+  // It addresses ONE client (destinationIdentities — only that client even
+  // receives the message, so there is no election and no race) and that
+  // client runs the official mermaid-to-excalidraw converter, streaming the
+  // element JSON back in chunks under the data channel's size cap.
+  const { send: sendConvert } = useDataChannel(
+    DataTopic.CanvasConvert,
+    (msg) => {
+      if (!msg.from?.identity.startsWith("agent-")) return
+      const requester = msg.from.identity
+      try {
+        const parsed = canvasConvertRequestSchema.safeParse(
+          JSON.parse(new TextDecoder().decode(msg.payload)),
+        )
+        if (!parsed.success) return
+        const request = parsed.data
+        void (async () => {
+          const reply = (payload: Record<string, unknown>) =>
+            sendConvert(new TextEncoder().encode(JSON.stringify(payload)), {
+              topic: DataTopic.CanvasConvert,
+              reliable: true,
+              destinationIdentities: [requester],
+            })
+          try {
+            // Lazy: mermaid is a heavy chunk nobody pays for until an agent
+            // actually draws a diagram.
+            const [
+              { parseMermaidToExcalidraw },
+              { convertToExcalidrawElements },
+            ] = await Promise.all([
+              import("@excalidraw/mermaid-to-excalidraw"),
+              import("@excalidraw/excalidraw"),
+            ])
+            const { elements } = await parseMermaidToExcalidraw(request.mermaid)
+            // biome-ignore lint/suspicious/noExplicitAny: opaque skeleton JSON
+            const full = convertToExcalidrawElements(elements as any)
+            const json = JSON.stringify(full)
+            const CHUNK = 10_000
+            const total = Math.max(1, Math.ceil(json.length / CHUNK))
+            for (let seq = 0; seq < total; seq++) {
+              await reply({
+                type: "canvas-convert-result",
+                id: request.id,
+                seq,
+                total,
+                part: json.slice(seq * CHUNK, (seq + 1) * CHUNK),
+              })
+            }
+          } catch (err) {
+            await reply({
+              type: "canvas-convert-error",
+              id: request.id,
+              error: ((err as Error).message || "conversion failed").slice(
+                0,
+                480,
+              ),
+            })
+          }
+        })()
+      } catch {}
+    },
+  )
+
   useDataChannel(DataTopic.Doc, (msg) => {
     try {
       const parsed = docSyncMessageSchema.safeParse(
@@ -215,11 +279,31 @@ export function RoomDataListener({ slug }: { slug: string }) {
   // Data messages only reach people already in the room, so the document has
   // to be fetched once on arrival — otherwise everyone who joins after the
   // first line was written sees a blank page until somebody types.
+  //
+  // Retried with backoff: a knocked-in guest reaches this point holding
+  // their "waiting" token while RoomClient is still swapping it for an
+  // admitted one, so the first attempt 401s. The retries pick up the fresh
+  // token from sessionStorage once the swap lands (and also paper over a
+  // briefly-unavailable bridge).
   useEffect(() => {
     let cancelled = false
-    const fetchDocSnapshot = () => {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const fetchDocSnapshot = (attempt = 0) => {
+      const retry = () => {
+        if (cancelled || attempt >= 5) return
+        retryTimer = setTimeout(
+          () => fetchDocSnapshot(attempt + 1),
+          500 * 2 ** attempt,
+        )
+      }
       fetch(`/api/rooms/${slug}/doc`, { headers: roomAuthHeaders(slug) })
-        .then((res) => (res.ok ? res.json() : null))
+        .then((res) => {
+          if (!res.ok) {
+            retry()
+            return null
+          }
+          return res.json()
+        })
         .then((body: { snapshot?: unknown } | null) => {
           if (cancelled || !body) return
           if (typeof body.snapshot === "string" && body.snapshot) {
@@ -228,34 +312,55 @@ export function RoomDataListener({ slug }: { slug: string }) {
             applyRemoteDocUpdate(body.snapshot)
           }
         })
-        .catch(() => undefined)
+        .catch(retry)
     }
-    fetchDocSnapshot()
+    const fetchFresh = () => fetchDocSnapshot(0)
+    fetchFresh()
     // Refetched after a reconnect: an update lost across the gap would
     // leave Yjs queueing everything after it — the doc looks frozen until
     // a full state fills the hole.
-    room.on(RoomEvent.Reconnected, fetchDocSnapshot)
+    room.on(RoomEvent.Reconnected, fetchFresh)
     return () => {
       cancelled = true
-      room.off(RoomEvent.Reconnected, fetchDocSnapshot)
+      if (retryTimer) clearTimeout(retryTimer)
+      room.off(RoomEvent.Reconnected, fetchFresh)
     }
   }, [slug, room])
 
-  // Same for the whiteboard. Records carry their own clocks, so this fetch
-  // and any diffs racing past it converge whichever lands first.
+  // Same for the whiteboard (including the admitted-token retry). Records
+  // carry their own clocks, so this fetch and any diffs racing past it
+  // converge whichever lands first.
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/rooms/${slug}/canvas`, { headers: roomAuthHeaders(slug) })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (cancelled || !body) return
-        const parsed = canvasSnapshotSchema.safeParse(body)
-        if (!parsed.success) return
-        applyCanvasChanges(parsed.data.records)
-      })
-      .catch(() => undefined)
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const fetchCanvasSnapshot = (attempt = 0) => {
+      const retry = () => {
+        if (cancelled || attempt >= 5) return
+        retryTimer = setTimeout(
+          () => fetchCanvasSnapshot(attempt + 1),
+          500 * 2 ** attempt,
+        )
+      }
+      fetch(`/api/rooms/${slug}/canvas`, { headers: roomAuthHeaders(slug) })
+        .then((res) => {
+          if (!res.ok) {
+            retry()
+            return null
+          }
+          return res.json()
+        })
+        .then((body) => {
+          if (cancelled || !body) return
+          const parsed = canvasSnapshotSchema.safeParse(body)
+          if (!parsed.success) return
+          applyCanvasChanges(parsed.data.records)
+        })
+        .catch(retry)
+    }
+    fetchCanvasSnapshot()
     return () => {
       cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
     }
   }, [slug])
 

@@ -14,6 +14,7 @@ import {
 import { useStore } from "@nanostores/react"
 import { Check, Copy, Download } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Markdown } from "@/components/Markdown"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $doc, encodeDocState, setLocalDocText } from "@/stores/doc"
 import {
@@ -21,6 +22,9 @@ import {
   pruneDocPresence,
   type SeenDocPresence,
 } from "@/stores/docPresence"
+
+const DOC_PLACEHOLDER =
+  "Write here, or ask an agent to draft it.\nEveryone in the meeting sees the same document."
 
 /** How long to sit on keystrokes before telling the room. Short, so people
  * watch each other type nearly live rather than in paragraph-sized bursts. */
@@ -120,11 +124,22 @@ function CursorLayer({
  * The meeting's shared markdown document — a plan the room writes together
  * with the agent while they talk about it.
  *
- * Deliberately a plain markdown source editor: the document is the thing
- * people take away and paste into an issue or a README, and a WYSIWYG layer
- * would put a renderer between them and what they're actually producing.
+ * Deliberately a plain markdown source editor — the document is the thing
+ * people take away and paste into an issue or a README — with a rendered
+ * Preview tab on the side, GitHub-issue style.
  */
-export function DocPanel({ slug }: { slug: string }) {
+export function DocPanel({
+  slug,
+  title,
+  headerActions,
+}: {
+  slug: string
+  /** Heading shown in the header — the stage passes one, the side panel
+   * already has the PanelHost title above. */
+  title?: string
+  /** Extra buttons after copy/download — the stage adds its minimize here. */
+  headerActions?: React.ReactNode
+}) {
   const doc = useStore($doc)
   const presenceMap = useStore($docPresence)
   const { localParticipant } = useLocalParticipant()
@@ -137,6 +152,8 @@ export function DocPanel({ slug }: { slug: string }) {
   // the cursor on every keystroke someone else makes.
   const [draft, setDraft] = useState(doc.text)
   const [editing, setEditing] = useState(false)
+  // GitHub-issue style: write markdown source, flip to a rendered preview.
+  const [preview, setPreview] = useState(false)
   const [copied, setCopied] = useState(false)
   const [scrollTop, setScrollTop] = useState(0)
   const editingRef = useRef(editing)
@@ -346,11 +363,35 @@ export function DocPanel({ slug }: { slug: string }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between gap-2 px-4 pt-3 pb-2">
-        <p className="min-w-0 truncate text-base-content/50 text-xs">
-          {lastEditor ? `Last edited by ${lastEditor}` : "Shared with the room"}
-        </p>
+      <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2 px-4 pt-3 pb-2">
+        <div className="flex min-w-0 items-baseline gap-2">
+          {title && <h2 className="shrink-0 font-medium">{title}</h2>}
+          <p className="min-w-0 truncate text-base-content/50 text-xs">
+            {lastEditor
+              ? `Last edited by ${lastEditor}`
+              : "Shared with the room"}
+          </p>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
+          {/* GitHub-issue style Write | Preview switch. */}
+          <div role="tablist" className="tabs tabs-box tabs-xs mr-1">
+            <button
+              type="button"
+              role="tab"
+              className={`tab ${preview ? "" : "tab-active"}`}
+              onClick={() => setPreview(false)}
+            >
+              Write
+            </button>
+            <button
+              type="button"
+              role="tab"
+              className={`tab ${preview ? "tab-active" : ""}`}
+              onClick={() => setPreview(true)}
+            >
+              Preview
+            </button>
+          </div>
           <button
             type="button"
             className="btn btn-ghost btn-xs btn-circle"
@@ -381,51 +422,68 @@ export function DocPanel({ slug }: { slug: string }) {
           >
             <Download className="size-3.5" />
           </a>
+          {headerActions}
         </div>
       </div>
 
-      <div className="relative min-h-0 flex-1">
-        <textarea
-          ref={textareaRef}
-          className={`absolute inset-0 size-full resize-none border-0 bg-transparent focus:outline-none ${TEXT_CLASSES}`}
-          spellCheck={false}
-          value={draft}
-          placeholder={
-            "# Plan\n\nWrite here, or ask an agent to draft it.\nEveryone in the meeting sees the same document."
-          }
-          onChange={(e) => {
-            setDraft(e.target.value)
-            queuePresence()
-          }}
-          onSelect={queuePresence}
-          onKeyUp={queuePresence}
-          onClick={queuePresence}
-          onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
-          onFocus={() => {
-            setEditing(true)
-            queuePresence()
-          }}
-          onBlur={() => {
-            setEditing(false)
-            // Don't wait out the debounce on the way out — leaving the field
-            // is the clearest signal that an edit is finished.
-            publish(draft)
-            sendPresence(null, null)
-          }}
-        />
-        {/* Remote cursors: one invisible copy of the text per participant,
-            scrolled in lockstep with the textarea, showing only the caret,
-            name pill, and selection tint. */}
-        {remoteCursors.length > 0 && (
-          <div className="pointer-events-none absolute inset-0 overflow-hidden">
-            <div style={{ transform: `translateY(-${scrollTop}px)` }}>
-              {remoteCursors.map((presence) => (
-                <div key={presence.by} className="absolute inset-x-0 top-0">
-                  <CursorLayer text={draft} presence={presence} />
-                </div>
-              ))}
-            </div>
+      {/* The editable column is capped and centered so the doc reads like a
+          page when it owns the full-width stage; in the side panel the cap
+          never bites. The cursor mirror lives inside the same capped wrapper,
+          so remote carets keep lining up with the textarea's own metrics. */}
+      <div className="relative mx-auto min-h-0 w-full max-w-3xl flex-1">
+        {preview ? (
+          <div className="absolute inset-0 overflow-y-auto px-4 pb-4">
+            {draft.trim() ? (
+              <Markdown text={draft} />
+            ) : (
+              <p className="text-base-content/50 text-sm">
+                Nothing to preview yet.
+              </p>
+            )}
           </div>
+        ) : (
+          <>
+            <textarea
+              ref={textareaRef}
+              className={`absolute inset-0 size-full resize-none border-0 bg-transparent focus:outline-none ${TEXT_CLASSES}`}
+              spellCheck={false}
+              value={draft}
+              placeholder={`# Plan\n\n${DOC_PLACEHOLDER}`}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                queuePresence()
+              }}
+              onSelect={queuePresence}
+              onKeyUp={queuePresence}
+              onClick={queuePresence}
+              onScroll={(e) => setScrollTop(e.currentTarget.scrollTop)}
+              onFocus={() => {
+                setEditing(true)
+                queuePresence()
+              }}
+              onBlur={() => {
+                setEditing(false)
+                // Don't wait out the debounce on the way out — leaving the
+                // field is the clearest signal that an edit is finished.
+                publish(draft)
+                sendPresence(null, null)
+              }}
+            />
+            {/* Remote cursors: one invisible copy of the text per
+                participant, scrolled in lockstep with the textarea, showing
+                only the caret, name pill, and selection tint. */}
+            {remoteCursors.length > 0 && (
+              <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                <div style={{ transform: `translateY(-${scrollTop}px)` }}>
+                  {remoteCursors.map((presence) => (
+                    <div key={presence.by} className="absolute inset-x-0 top-0">
+                      <CursorLayer text={draft} presence={presence} />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>
