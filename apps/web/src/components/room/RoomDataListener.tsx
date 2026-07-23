@@ -86,15 +86,16 @@ export function RoomDataListener({ slug }: { slug: string }) {
 
   useDataChannel(DataTopic.AgentActivity, (msg) => {
     try {
-      // Only the bridge's agent participants publish activity; a human
-      // crafting activity packets must not be able to fake agent behavior.
-      if (!msg.from || !msg.from.identity.startsWith("agent-")) return
+      if (!msg.from) return
       const parsed = agentActivityEventSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
       if (!parsed.success) return
       // Typing is transient presence keyed by the real sender, not a logged
       // step — route it to the indicator rather than the activity feed.
+      // Unlike the feed below it's open to humans too: composing in the
+      // chat is presence anyone may claim about themselves, and the
+      // attribution is the verified sender either way.
       if (parsed.data.type === "typing") {
         setAgentTyping(
           msg.from.identity,
@@ -104,6 +105,9 @@ export function RoomDataListener({ slug }: { slug: string }) {
         )
         return
       }
+      // Only the bridge's agent participants publish real activity; a human
+      // crafting activity packets must not be able to fake agent behavior.
+      if (!msg.from.identity.startsWith("agent-")) return
       addAgentActivity(parsed.data)
     } catch {}
   })

@@ -14,6 +14,7 @@ import {
   type AgentActivityEvent,
   agentControlSchema,
   type CanvasOp,
+  type ChatMessage,
   chatMessageSchema,
   DataTopic,
   mentionsName,
@@ -133,6 +134,14 @@ export async function runRealtimeAgent(opts: {
   /** Read/draw on the meeting's shared whiteboard. */
   readCanvas?: () => Promise<string>
   drawCanvas?: (ops: CanvasOp[]) => Promise<string>
+  /**
+   * Answer a chat @mention through the brain (text in, chat reply out,
+   * marker blocks acted on). Resolves with the posted text, so the voice
+   * model can be told what "it" said in chat.
+   */
+  onChatMention?: (
+    message: ChatMessage & { fromName: string },
+  ) => Promise<string | null>
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
   /** Fed what the agent said aloud, for the brain's record of the meeting. */
@@ -735,8 +744,30 @@ export async function runRealtimeAgent(opts: {
           !sender.identity.startsWith("agent-") &&
           mentionsName(message.text, entry.name)
         ) {
-          debug("info", `chat mention: replying in chat`)
-          session.promptChatReply(line)
+          if (opts.onChatMention) {
+            // The brain answers chat, not the voice model — it has the
+            // tools, memory and marker-block powers (doc edits, drawings)
+            // a chat request may need. The session still hears both sides
+            // as passive context so the spoken conversation stays coherent.
+            debug("info", "chat mention: replying via brain")
+            session.notifyChat(line)
+            void opts
+              .onChatMention({
+                ...message,
+                fromName: sender.name || sender.identity,
+              })
+              .then((posted) => {
+                if (posted) {
+                  session.notifyChat(
+                    `[meeting chat] ${entry.name} (you) replied: ${posted}`,
+                  )
+                }
+              })
+              .catch(() => undefined)
+          } else {
+            debug("info", `chat mention: replying in chat`)
+            session.promptChatReply(line)
+          }
         } else {
           session.notifyChat(line)
         }

@@ -1,11 +1,16 @@
 "use client"
 
 import { useDataChannel, useLocalParticipant } from "@livekit/components-react"
-import { type ChatMessage, type ChatOp, DataTopic } from "@meet/shared"
+import {
+  type ChatMessage,
+  type ChatOp,
+  DataTopic,
+  TYPING_HEARTBEAT_MS,
+} from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { Pencil, SendHorizontal, Trash2 } from "lucide-react"
 import { nanoid } from "nanoid"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   completeMention,
   MentionPicker,
@@ -44,11 +49,11 @@ function linkify(text: string): React.ReactNode[] {
   )
 }
 
-/** "Ada is typing…", "Ada and Ben are typing…", "3 agents are typing…". */
+/** "Ada is typing…", "Ada and Ben are typing…", "3 people are typing…". */
 function typingLabel(names: string[]): string {
   if (names.length === 1) return `${names[0]} is typing`
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing`
-  return `${names.length} agents are typing`
+  return `${names.length} people are typing`
 }
 
 function ChatMessageRow({
@@ -200,6 +205,38 @@ export function ChatPanel() {
   }
 
   const { send } = useDataChannel(DataTopic.Chat)
+  const { send: sendActivity } = useDataChannel(DataTopic.AgentActivity)
+
+  // Human typing presence, on the same topic and event agents use (the
+  // listener attributes by verified sender, so agentId carries no weight).
+  // Heartbeat while composing; peers prune stale indicators themselves, so
+  // a dropped "stopped" signal can't stick.
+  const typingSentAt = useRef(0)
+  const sendTyping = useCallback(
+    (typing: boolean) => {
+      typingSentAt.current = typing ? Date.now() : 0
+      void sendActivity(
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: "typing",
+            agentId: "",
+            typing,
+            at: Date.now(),
+          }),
+        ),
+        { topic: DataTopic.AgentActivity, reliable: false },
+      )
+    },
+    [sendActivity],
+  )
+  const draftChanged = (value: string) => {
+    setDraft(value)
+    if (!value.trim()) {
+      if (typingSentAt.current) sendTyping(false)
+    } else if (Date.now() - typingSentAt.current > TYPING_HEARTBEAT_MS) {
+      sendTyping(true)
+    }
+  }
 
   // Follow the conversation: jump on open, glide on each new message.
   // biome-ignore lint/correctness/useExhaustiveDependencies: messages drives the scroll
@@ -219,6 +256,7 @@ export function ChatPanel() {
       at: Date.now(),
     }
     setDraft("")
+    if (typingSentAt.current) sendTyping(false)
     addChatMessage(message)
     await send(new TextEncoder().encode(JSON.stringify(message)), {
       topic: DataTopic.Chat,
@@ -326,8 +364,11 @@ export function ChatPanel() {
           className="input input-sm flex-1"
           placeholder="Send a message — @ to mention"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => draftChanged(e.target.value)}
           onKeyDown={pickerKeys}
+          onBlur={() => {
+            if (typingSentAt.current) sendTyping(false)
+          }}
         />
         <button
           type="submit"

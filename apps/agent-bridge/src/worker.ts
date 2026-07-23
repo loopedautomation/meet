@@ -663,6 +663,122 @@ export default defineAgent({
       postDebugEvent(roomName, `agent:${entry.id}`, "info", "left the room")
     })
 
+    /**
+     * A canvas marker block from the brain: validate, draw through the same
+     * path the realtime tool uses, and buffer the outcome (positions,
+     * auto-placement nudges, validation errors) for the brain's next turn.
+     */
+    const drawCanvasBlock = async (block: string): Promise<string> => {
+      const parsed = parseCanvasBlock(block)
+      const outcome =
+        "error" in parsed
+          ? `${parsed.error} Fix the block and try again.`
+          : await publishCanvasOps(parsed.ops)
+      pushBounded(canvasOutcomes, outcome)
+      return outcome
+    }
+
+    /**
+     * Chat mentions get a chat reply — text in, text out, straight to the
+     * brain; tool activity streams to the activity feed. Shared by both
+     * paths: pipeline agents have no other chat channel, and realtime
+     * agents route chat here too so the brain's judgment, tools and
+     * marker-block powers (doc edits, drawings) answer instead of the
+     * voice model. Returns the posted text so the realtime layer can tell
+     * its voice model what "it" said in chat.
+     */
+    const replyInChat = async (
+      message: ChatMessage,
+    ): Promise<string | null> => {
+      const { text: input, images } = await attachScreenFrame(
+        screen,
+        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
+      )
+      setState(sessionState.muted ? "muted" : "thinking")
+      setTyping(true)
+      try {
+        let reply = ""
+        for await (const frame of brain.runTurn(input, images)) {
+          const at = Date.now()
+          if (frame.type === "assistant") {
+            reply += (reply ? "\n" : "") + frame.content
+          } else if (frame.type === "result" && frame.reply) {
+            // Some agent builds stream no assistant frames — the final
+            // reply arrives only here. Authoritative when present.
+            reply = frame.reply
+          } else if (frame.type === "tool_call") {
+            publishActivity({
+              type: "tool_call",
+              agentId: entry.id,
+              name: frame.name,
+              arguments: frame.arguments,
+              at,
+            })
+          } else if (frame.type === "tool_result") {
+            publishActivity({
+              type: "tool_result",
+              agentId: entry.id,
+              name: frame.name,
+              content: frame.content.slice(0, 8000),
+              durationMs: frame.durationMs,
+              at,
+            })
+          } else if (frame.type === "error") {
+            throw new Error(frame.error)
+          }
+        }
+        // Chat-asked doc edits and drawings come back as marker blocks too —
+        // act on them and keep them out of the chat.
+        const { spoken: afterDocs, blocks: docs } =
+          new DocBlockExtractor().feed(reply)
+        for (const doc of docs) {
+          const outcome = await publishDoc(doc)
+          publishActivity({
+            type: "tool_result",
+            agentId: entry.id,
+            name: "update_shared_doc",
+            content: outcome,
+            durationMs: 0,
+            at: Date.now(),
+          })
+        }
+        const { spoken, blocks: drawings } = new CanvasBlockExtractor().feed(
+          afterDocs,
+        )
+        for (const block of drawings) {
+          const outcome = await drawCanvasBlock(block)
+          publishActivity({
+            type: "tool_result",
+            agentId: entry.id,
+            name: "draw_on_canvas",
+            content: outcome,
+            durationMs: 0,
+            at: Date.now(),
+          })
+        }
+        const posted = spoken.trim()
+          ? spoken.trim()
+          : docs.length
+            ? "(I've updated the shared document.)"
+            : drawings.length
+              ? "(I've drawn on the whiteboard.)"
+              : null
+        if (posted) publishChat(posted)
+        return posted
+      } catch (err) {
+        const busy = err instanceof Error && /in progress/.test(err.message)
+        publishChat(
+          busy
+            ? "(I'm mid-task right now — ask me again in a moment.)"
+            : "(Sorry, I couldn't process that.)",
+        )
+        return null
+      } finally {
+        setTyping(false)
+        setState(sessionState.muted ? "muted" : "listening")
+      }
+    }
+
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
@@ -778,6 +894,10 @@ export default defineAgent({
         readCanvas,
         drawCanvas: publishCanvasOps,
         context: meetingContext,
+        // Chat @mentions go to the brain, not the voice model: the brain's
+        // tools, memory, and marker blocks (doc edits, drawings) can answer
+        // a chat request; the voice model only gets told what was said.
+        onChatMention: replyInChat,
         onSpoke: (text) =>
           pushBounded(heardSince, `${entry.name} (you, aloud): ${text}`),
       })
@@ -788,21 +908,6 @@ export default defineAgent({
     // the SDK's own field is milliseconds.
     const endpointMinDelayMs =
       Number(process.env.PIPELINE_ENDPOINT_MIN_DELAY ?? 4) * 1000
-
-    /**
-     * A canvas marker block from the brain: validate, draw through the same
-     * path the realtime tool uses, and buffer the outcome (positions,
-     * auto-placement nudges, validation errors) for the brain's next turn.
-     */
-    const drawCanvasBlock = async (block: string): Promise<string> => {
-      const parsed = parseCanvasBlock(block)
-      const outcome =
-        "error" in parsed
-          ? `${parsed.error} Fix the block and try again.`
-          : await publishCanvasOps(parsed.ops)
-      pushBounded(canvasOutcomes, outcome)
-      return outcome
-    }
 
     const agent = new LoopedVoiceAgent(
       entry,
@@ -1070,93 +1175,6 @@ export default defineAgent({
         }
       }
     })
-
-    // Chat mentions get a chat reply — text in, text out; tool activity
-    // still streams to the activity feed.
-    const replyInChat = async (message: ChatMessage) => {
-      const { text: input, images } = await attachScreenFrame(
-        screen,
-        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
-      )
-      setState(sessionState.muted ? "muted" : "thinking")
-      setTyping(true)
-      try {
-        let reply = ""
-        for await (const frame of brain.runTurn(input, images)) {
-          const at = Date.now()
-          if (frame.type === "assistant") {
-            reply += (reply ? "\n" : "") + frame.content
-          } else if (frame.type === "result" && frame.reply) {
-            // Some agent builds stream no assistant frames — the final
-            // reply arrives only here. Authoritative when present.
-            reply = frame.reply
-          } else if (frame.type === "tool_call") {
-            publishActivity({
-              type: "tool_call",
-              agentId: entry.id,
-              name: frame.name,
-              arguments: frame.arguments,
-              at,
-            })
-          } else if (frame.type === "tool_result") {
-            publishActivity({
-              type: "tool_result",
-              agentId: entry.id,
-              name: frame.name,
-              content: frame.content.slice(0, 8000),
-              durationMs: frame.durationMs,
-              at,
-            })
-          } else if (frame.type === "error") {
-            throw new Error(frame.error)
-          }
-        }
-        // Chat-asked doc edits and drawings come back as marker blocks too —
-        // act on them and keep them out of the chat.
-        const { spoken: afterDocs, blocks: docs } =
-          new DocBlockExtractor().feed(reply)
-        for (const doc of docs) {
-          const outcome = await publishDoc(doc)
-          publishActivity({
-            type: "tool_result",
-            agentId: entry.id,
-            name: "update_shared_doc",
-            content: outcome,
-            durationMs: 0,
-            at: Date.now(),
-          })
-        }
-        const { spoken, blocks: drawings } = new CanvasBlockExtractor().feed(
-          afterDocs,
-        )
-        for (const block of drawings) {
-          const outcome = await drawCanvasBlock(block)
-          publishActivity({
-            type: "tool_result",
-            agentId: entry.id,
-            name: "draw_on_canvas",
-            content: outcome,
-            durationMs: 0,
-            at: Date.now(),
-          })
-        }
-        if (spoken.trim()) publishChat(spoken.trim())
-        else if (docs.length) publishChat("(I've updated the shared document.)")
-        else if (drawings.length) {
-          publishChat("(I've drawn on the whiteboard.)")
-        }
-      } catch (err) {
-        const busy = err instanceof Error && /in progress/.test(err.message)
-        publishChat(
-          busy
-            ? "(I'm mid-task right now — ask me again in a moment.)"
-            : "(Sorry, I couldn't process that.)",
-        )
-      } finally {
-        setTyping(false)
-        setState(sessionState.muted ? "muted" : "listening")
-      }
-    }
 
     await session.start({
       agent,
