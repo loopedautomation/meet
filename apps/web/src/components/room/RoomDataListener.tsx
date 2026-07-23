@@ -279,11 +279,31 @@ export function RoomDataListener({ slug }: { slug: string }) {
   // Data messages only reach people already in the room, so the document has
   // to be fetched once on arrival — otherwise everyone who joins after the
   // first line was written sees a blank page until somebody types.
+  //
+  // Retried with backoff: a knocked-in guest reaches this point holding
+  // their "waiting" token while RoomClient is still swapping it for an
+  // admitted one, so the first attempt 401s. The retries pick up the fresh
+  // token from sessionStorage once the swap lands (and also paper over a
+  // briefly-unavailable bridge).
   useEffect(() => {
     let cancelled = false
-    const fetchDocSnapshot = () => {
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const fetchDocSnapshot = (attempt = 0) => {
+      const retry = () => {
+        if (cancelled || attempt >= 5) return
+        retryTimer = setTimeout(
+          () => fetchDocSnapshot(attempt + 1),
+          500 * 2 ** attempt,
+        )
+      }
       fetch(`/api/rooms/${slug}/doc`, { headers: roomAuthHeaders(slug) })
-        .then((res) => (res.ok ? res.json() : null))
+        .then((res) => {
+          if (!res.ok) {
+            retry()
+            return null
+          }
+          return res.json()
+        })
         .then((body: { snapshot?: unknown } | null) => {
           if (cancelled || !body) return
           if (typeof body.snapshot === "string" && body.snapshot) {
@@ -292,34 +312,55 @@ export function RoomDataListener({ slug }: { slug: string }) {
             applyRemoteDocUpdate(body.snapshot)
           }
         })
-        .catch(() => undefined)
+        .catch(retry)
     }
-    fetchDocSnapshot()
+    const fetchFresh = () => fetchDocSnapshot(0)
+    fetchFresh()
     // Refetched after a reconnect: an update lost across the gap would
     // leave Yjs queueing everything after it — the doc looks frozen until
     // a full state fills the hole.
-    room.on(RoomEvent.Reconnected, fetchDocSnapshot)
+    room.on(RoomEvent.Reconnected, fetchFresh)
     return () => {
       cancelled = true
-      room.off(RoomEvent.Reconnected, fetchDocSnapshot)
+      if (retryTimer) clearTimeout(retryTimer)
+      room.off(RoomEvent.Reconnected, fetchFresh)
     }
   }, [slug, room])
 
-  // Same for the whiteboard. Records carry their own clocks, so this fetch
-  // and any diffs racing past it converge whichever lands first.
+  // Same for the whiteboard (including the admitted-token retry). Records
+  // carry their own clocks, so this fetch and any diffs racing past it
+  // converge whichever lands first.
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/rooms/${slug}/canvas`, { headers: roomAuthHeaders(slug) })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (cancelled || !body) return
-        const parsed = canvasSnapshotSchema.safeParse(body)
-        if (!parsed.success) return
-        applyCanvasChanges(parsed.data.records)
-      })
-      .catch(() => undefined)
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const fetchCanvasSnapshot = (attempt = 0) => {
+      const retry = () => {
+        if (cancelled || attempt >= 5) return
+        retryTimer = setTimeout(
+          () => fetchCanvasSnapshot(attempt + 1),
+          500 * 2 ** attempt,
+        )
+      }
+      fetch(`/api/rooms/${slug}/canvas`, { headers: roomAuthHeaders(slug) })
+        .then((res) => {
+          if (!res.ok) {
+            retry()
+            return null
+          }
+          return res.json()
+        })
+        .then((body) => {
+          if (cancelled || !body) return
+          const parsed = canvasSnapshotSchema.safeParse(body)
+          if (!parsed.success) return
+          applyCanvasChanges(parsed.data.records)
+        })
+        .catch(retry)
+    }
+    fetchCanvasSnapshot()
     return () => {
       cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
     }
   }, [slug])
 

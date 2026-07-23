@@ -238,6 +238,7 @@ function DocTakeover({
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-box border border-base-300 bg-base-100">
         <DocPanel
           slug={slug}
+          title="Meeting Notes"
           headerActions={
             <button
               type="button"
