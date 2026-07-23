@@ -39,6 +39,17 @@ const HOST =
 /** How long a task may take before it goes to the background. */
 const TASK_ACK_MS = 8_000
 
+/**
+ * Reconnect policy: Gemini Live drops sessions mid-meeting (observed 1011
+ * "Internal error" and 1007 content-type rejections) and the agent would
+ * otherwise fall silent for the rest of the call. Bounded backoff; the
+ * attempt counter resets once a reconnected session completes setup, so
+ * only consecutive failures exhaust it.
+ */
+const RECONNECT_MAX_ATTEMPTS = 5
+const RECONNECT_BASE_DELAY_MS = 1_000
+const RECONNECT_MAX_DELAY_MS = 15_000
+
 type FunctionCall = { id: string; name: string; args?: Record<string, unknown> }
 
 type ServerMessage = {
@@ -79,6 +90,10 @@ export class GeminiLiveSession implements VoiceSession {
   #suppressTurn = false
   /** The current turn's spoken transcript, flushed on turnComplete. */
   #spokenBuf = ""
+  #reconnectAttempts = 0
+  #reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  /** True once any session completed setup — reconnects get a resume note. */
+  #wasConnected = false
 
   constructor(opts: RealtimeSessionOptions) {
     this.#opts = opts
@@ -106,6 +121,14 @@ export class GeminiLiveSession implements VoiceSession {
   }
 
   async open(): Promise<void> {
+    this.#connect()
+    await this.#ready
+  }
+
+  #connect(): void {
+    this.#ready = new Promise<void>((resolve) => {
+      this.#resolveReady = resolve
+    })
     const url = `${HOST}?key=${encodeURIComponent(this.#opts.apiKey)}`
     const ws = new WebSocket(url)
     this.#ws = ws
@@ -143,20 +166,62 @@ export class GeminiLiveSession implements VoiceSession {
     }
     ws.onerror = () => this.#opts.onError?.("gemini live websocket error")
     ws.onclose = (ev) => {
-      this.#closed = true
+      if (this.#ws !== ws) return // superseded by a newer reconnect
       // Gemini closes the socket on setup errors (bad model, bad key)
       // instead of sending an error frame — surface the reason.
       if (ev.code !== 1000 && ev.reason) {
         this.#opts.onError?.(`gemini live closed: ${ev.code} ${ev.reason}`)
       }
       this.#resolveReady() // never strand a caller waiting on a dead socket
+      if (this.#closed) return
+      // A mid-turn drop leaves half-spoken state behind; reset it so the
+      // reconnected session starts a clean turn, and flush queued playout.
+      if (this.#responding) this.#opts.onInterrupt()
+      this.#responding = false
+      this.#suppressTurn = false
+      this.#spokenBuf = ""
+      this.#scheduleReconnect()
     }
+  }
 
-    await this.#ready
+  #scheduleReconnect(): void {
+    const attempt = ++this.#reconnectAttempts
+    if (attempt > RECONNECT_MAX_ATTEMPTS) {
+      this.#closed = true
+      this.#opts.onError?.(
+        `gemini live: gave up after ${RECONNECT_MAX_ATTEMPTS} reconnect attempts`,
+      )
+      return
+    }
+    const delay = Math.min(
+      RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1),
+      RECONNECT_MAX_DELAY_MS,
+    )
+    this.#opts.onError?.(
+      `gemini live: reconnecting in ${delay}ms (attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS})`,
+    )
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null
+      if (!this.#closed) this.#connect()
+    }, delay)
   }
 
   #handle(message: ServerMessage) {
     if (message.setupComplete) {
+      this.#reconnectAttempts = 0
+      if (this.#wasConnected) {
+        // A reconnected session has no conversation history — the setup
+        // resends the instructions, but the model must not greet the room
+        // as if it just arrived. Context only; no turnComplete, so the
+        // model doesn't auto-respond to it.
+        this.#sendUserText(
+          "[Your voice connection dropped briefly and is now restored, " +
+            "mid-meeting. Continue naturally from the live audio; do not " +
+            "greet the room again or mention the interruption.]",
+          false,
+        )
+      }
+      this.#wasConnected = true
       this.#resolveReady()
       return
     }
@@ -419,6 +484,8 @@ export class GeminiLiveSession implements VoiceSession {
 
   close() {
     this.#closed = true
+    if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer)
+    this.#reconnectTimer = null
     this.#ws?.close()
   }
 }
