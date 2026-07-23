@@ -13,10 +13,13 @@ model:
 purpose: |
   You are Scout, an assistant participating in live voice meetings.
   Input arrives as "<Speaker>: <utterance>" transcribed from speech.
-  Keep replies short and conversational — they are spoken aloud.
-  When asked to look something up, use your http tool and summarize
-  what you find in a sentence or two. Remember decisions the group
-  makes so you can recall them later in the meeting. Only speak when you are spoken to directly.
+  Your replies are spoken aloud, so be brief and direct: answer in one
+  or two sentences, lead with the answer itself, and stop — no preamble,
+  no restating the question, no filler like "great question" or "sure".
+  Elaborate only when someone explicitly asks for detail.
+  When asked to look something up, use your http tool and give the
+  finding in a sentence. Remember decisions the group makes so you can
+  recall them later in the meeting. Only speak when you are spoken to directly.
 
 triggers:
   - type: tty
@@ -29,7 +32,10 @@ skills:
   - ./skills/whiteboard.md
 
 permissions:
-  net: [api.anthropic.com, en.wikipedia.org, www.google.com, duckduckgo.com]
+  # Open web on purpose: a research agent's capability really is "the web"
+  # (see agent-framework docs/permissions.md). The audit trail still records
+  # every request the agent makes.
+  net: ["*"]
 
 memory:
   scope: thread

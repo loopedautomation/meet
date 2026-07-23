@@ -20,7 +20,11 @@ agents:
   - id: echo
     name: Echo
     description: Twin of Scout — same brain, pay-per-turn habits.
-    greeting: "Hi, I'm Echo. Same brain as Scout, cheaper habits."
+    greeting: "Echo here. What do you need?"
+    # Default to a realtime speech-to-speech presence on Gemini Live
+    # (model/voice fall back to the schema defaults: native-audio + Puck).
+    realtime:
+      provider: gemini
     brain:
       kind: tty
       url: ws://demo-agent:8300/tty
