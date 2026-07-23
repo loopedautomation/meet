@@ -1,6 +1,11 @@
 import { ReadableStream } from "node:stream/web"
 import { type ChatContext, type llm, voice } from "@livekit/agents"
-import type { AgentActivityEvent, AgentState, TurnPolicy } from "@meet/shared"
+import {
+  type AgentActivityEvent,
+  type AgentState,
+  spokenMentionRegExp,
+  type TurnPolicy,
+} from "@meet/shared"
 import { DocBlockExtractor } from "./doc-blocks.js"
 import type { TtyServerFrame } from "./looped-tty.js"
 import type { Brain } from "./looped-webhook.js"
@@ -100,7 +105,7 @@ export class LoopedVoiceAgent extends voice.Agent {
     let calledOn = false
     if (state.turnPolicy !== "open") {
       const zapped = Date.now() < state.zappedUntil
-      const mentioned = new RegExp(entry.name, "i").test(input)
+      const mentioned = spokenMentionRegExp(entry.name).test(input)
       // "raise-hand" is strict: even a name mention only raises the hand —
       // the floor is granted exclusively by call-on (zap still bypasses,
       // it's an explicit host action).

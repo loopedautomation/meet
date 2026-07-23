@@ -27,6 +27,7 @@ import {
   DataTopic,
   type DocPresence,
   docCursorColor,
+  mentionsName,
   type ParticipantMeta,
   parseParticipantMeta,
   type SharedDoc,
@@ -909,8 +910,7 @@ export default defineAgent({
           // Attribution from the actual LiveKit sender, not payload claims.
           if (!sender || sender.identity.startsWith("agent-")) return
           const senderName = sender.name || sender.identity
-          const mention = new RegExp(`@${entry.name}\\b`, "i")
-          if (!mention.test(message.text)) {
+          if (!mentionsName(message.text, entry.name)) {
             // Not for us directly — queue as context for the next turn.
             chatSince.push(`${senderName}: ${message.text}`)
             return

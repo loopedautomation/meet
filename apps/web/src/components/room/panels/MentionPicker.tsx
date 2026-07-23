@@ -24,14 +24,20 @@ export function useMentionables(): Mentionable[] {
     }))
 }
 
-/** The active "@query" at the end of the draft, or null. */
+/**
+ * The active "@query" at the end of the draft, or null. Single spaces are
+ * part of the query so multi-word names ("Scout Team") stay pickable while
+ * being typed; the picker still closes as soon as no candidate matches
+ * (see matchMentions), so ordinary "@name thanks everyone" typing isn't
+ * hijacked for long.
+ */
 export function mentionQuery(draft: string): string | null {
-  const match = draft.match(/(?:^|\s)@([\w-]*)$/)
+  const match = draft.match(/(?:^|\s)@([\w-]*(?: [\w-]+)*)$/)
   return match ? match[1] : null
 }
 
 export function completeMention(draft: string, name: string): string {
-  return draft.replace(/@[\w-]*$/, `@${name} `)
+  return draft.replace(/@[\w-]*(?: [\w-]+)*$/, `@${name} `)
 }
 
 /** The visible (capped) match list — shared with the input's key handler so

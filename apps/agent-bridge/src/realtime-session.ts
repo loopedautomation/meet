@@ -60,6 +60,13 @@ export interface VoiceSession {
   appendAudio(pcm: Uint8Array): void
   say(text: string): void
   notifyChat(line: string): void
+  /**
+   * A chat message that addressed the agent by name: surface it AND elicit
+   * a reply into the chat (send_chat_message), without speaking. Plain
+   * notifyChat only adds context, so a realtime agent would otherwise stay
+   * silent to @mentions forever (#112).
+   */
+  promptChatReply(line: string): void
   setGateOpen(open: boolean): void
   callOn(): void
   cancelResponse(): void
@@ -808,6 +815,28 @@ export class RealtimeSession implements VoiceSession {
         type: "message",
         role: "user",
         content: [{ type: "input_text", text: line }],
+      },
+    })
+  }
+
+  /**
+   * An addressed chat message: inject it like notifyChat, then create a
+   * text-only response so the model answers into the chat via its
+   * send_chat_message tool instead of aloud. Skipped while a response is
+   * in flight — the injected line still lands as context for later.
+   */
+  promptChatReply(line: string) {
+    this.notifyChat(line)
+    if (this.#responding) return
+    this.#send({
+      type: "response.create",
+      response: {
+        output_modalities: ["text"],
+        instructions:
+          "You were just addressed in the meeting's text chat (the last " +
+          "[meeting chat] message). Reply briefly into the chat with the " +
+          `${CHAT_TOOL} tool — text only, do not speak. If you genuinely ` +
+          "have nothing to add, reply with a short acknowledgement.",
       },
     })
   }
