@@ -6,45 +6,9 @@ settings:
 
 catalogs:
   default:
-    '@livekit/components-react':
-      specifier: ^2.9.0
-      version: 2.9.23
-    '@nanostores/react':
-      specifier: ^1.0.0
-      version: 1.1.0
-    '@tanstack/react-query':
-      specifier: ^5.90.12
-      version: 5.101.2
-    daisyui:
-      specifier: 5.5.14
-      version: 5.5.14
-    livekit-client:
-      specifier: ^2.15.0
-      version: 2.20.1
     livekit-server-sdk:
       specifier: ^2.13.0
       version: 2.17.0
-    lucide-react:
-      specifier: ^0.559.0
-      version: 0.559.0
-    motion:
-      specifier: ^12.23.26
-      version: 12.42.2
-    nanostores:
-      specifier: ^1.1.0
-      version: 1.4.0
-    next:
-      specifier: 16.2.11
-      version: 16.2.11
-    react:
-      specifier: 19.2.4
-      version: 19.2.4
-    react-dom:
-      specifier: 19.2.4
-      version: 19.2.4
-    tailwindcss:
-      specifier: ^4.1.17
-      version: 4.3.2
     typescript:
       specifier: ^5.9.3
       version: 5.9.3
@@ -108,9 +72,6 @@ importers:
       yaml:
         specifier: ^2.7.0
         version: 2.9.0
-      yjs:
-        specifier: ^13.6.31
-        version: 13.6.31
       zod:
         specifier: 'catalog:'
         version: 4.4.3
@@ -184,9 +145,6 @@ importers:
       react-toastify:
         specifier: ^11.1.0
         version: 11.1.0(react-dom@19.2.4(react@19.2.4))(react@19.2.4)
-      yjs:
-        specifier: ^13.6.31
-        version: 13.6.31
       zod:
         specifier: 'catalog:'
         version: 4.4.3
