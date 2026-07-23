@@ -262,7 +262,19 @@ export function buildCanvasRecords(
     const spot = placeCreate(working, op.id, op, bboxW, bboxH)
     for (const child of expanded) {
       if (child.op === "arrow") {
-        ops.push(child)
+        // Waypoints were computed diagram-relative; shift them to the spot
+        // the block landed on, like the shapes above.
+        ops.push(
+          child.via
+            ? {
+                ...child,
+                via: child.via.map((p) => ({
+                  x: p.x + spot.x,
+                  y: p.y + spot.y,
+                })),
+              }
+            : child,
+        )
       } else {
         ops.push({
           ...child,
@@ -484,18 +496,27 @@ export function buildCanvasRecords(
         const end = toShape
           ? center(toShape)
           : (op.toPoint ?? { x: start.x + 100, y: start.y })
+        const waypoints = (op.via ?? []).map(
+          (p) => [p.x - start.x, p.y - start.y] as [number, number],
+        )
+        const points: [number, number][] = [
+          [0, 0],
+          ...waypoints,
+          [end.x - start.x, end.y - start.y],
+        ]
         const element: LooseElement = {
           ...baseElement(id, at),
           type: "arrow",
           x: start.x,
           y: start.y,
-          width: Math.abs(end.x - start.x),
-          height: Math.abs(end.y - start.y),
+          width:
+            Math.max(...points.map((p) => p[0])) -
+            Math.min(...points.map((p) => p[0])),
+          height:
+            Math.max(...points.map((p) => p[1])) -
+            Math.min(...points.map((p) => p[1])),
           strokeColor: STROKE_COLORS[op.color ?? "black"],
-          points: [
-            [0, 0],
-            [end.x - start.x, end.y - start.y],
-          ],
+          points,
           lastCommittedPoint: null,
           startBinding: fromShape
             ? { elementId: fromId, focus: 0, gap: 4 }

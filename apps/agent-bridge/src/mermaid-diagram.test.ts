@@ -88,6 +88,20 @@ describe("expandDiagram", () => {
     expect(b.x!).toBeGreaterThan(a.x!)
   })
 
+  it("routes a cycle's back-edge through waypoints instead of straight through", () => {
+    const ops = expandDiagram(
+      "cyc",
+      "graph LR\n a[Client] --> b[Server] --> c[Response] --> a",
+    )
+    const back = ops!.find(
+      (op) => op.op === "arrow" && op.id === "cyc.c->a",
+    ) as { via?: { x: number; y: number }[] }
+    expect(back).toBeDefined()
+    // Dagre routes the reversed edge around the rank row — waypoints exist
+    // and leave the row's vertical band rather than cutting through it.
+    expect(back.via?.length ?? 0).toBeGreaterThan(0)
+  })
+
   it("returns null for unparseable source", () => {
     expect(expandDiagram("x", "pie title Pets")).toBeNull()
   })

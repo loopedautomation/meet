@@ -196,6 +196,15 @@ export function expandDiagram(
     minX = Math.min(minX, placed.x - placed.width / 2)
     minY = Math.min(minY, placed.y - placed.height / 2)
   }
+  // Edge routing can swing outside the node bounding box (a cycle's back
+  // edge bends around the rank row) — include it, so nothing lands at
+  // negative coordinates relative to the block's placement spot.
+  for (const e of graph.edges()) {
+    for (const p of graph.edge(e)?.points ?? []) {
+      minX = Math.min(minX, p.x)
+      minY = Math.min(minY, p.y)
+    }
+  }
   for (const node of parsed.nodes.values()) {
     const placed = graph.node(node.id)
     ops.push({
@@ -210,11 +219,22 @@ export function expandDiagram(
   }
   for (const edge of parsed.edges) {
     if (!parsed.nodes.has(edge.from) || !parsed.nodes.has(edge.to)) continue
+    // Dagre routes every edge (around ranks for back-edges in a cycle);
+    // carry the interior waypoints so a long return arrow bends around the
+    // diagram instead of cutting straight through the boxes it passes.
+    const layout = graph.edge(edge.from, edge.to) as
+      | { points?: { x: number; y: number }[] }
+      | undefined
+    const via = (layout?.points ?? []).slice(1, -1).map((p) => ({
+      x: Math.round(p.x - minX),
+      y: Math.round(p.y - minY),
+    }))
     ops.push({
       op: "arrow",
       id: `${diagramId}.${edge.from}->${edge.to}`,
       from: `${diagramId}.${edge.from}`,
       to: `${diagramId}.${edge.to}`,
+      via: via.length ? via.slice(0, 16) : undefined,
       label: edge.label,
     })
   }

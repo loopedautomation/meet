@@ -831,6 +831,12 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     to: z.string().optional(),
     fromPoint: canvasPointSchema.optional(),
     toPoint: canvasPointSchema.optional(),
+    /**
+     * Optional waypoints (page pixels) the arrow routes through between its
+     * ends — how diagram layout keeps a long back-edge from cutting
+     * straight through the boxes it passes.
+     */
+    via: z.array(canvasPointSchema).max(16).optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
   }),
