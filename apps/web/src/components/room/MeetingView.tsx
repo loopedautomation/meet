@@ -83,7 +83,11 @@ export function MeetingView({
   const whiteboardOpen = useStore($canvasOpen)
 
   return (
-    <div className="flex h-dvh flex-col bg-base-200">
+    // overflow-hidden + overscroll-none: the meeting is an app surface, not
+    // a document — nothing inside it may push the page into scrolling
+    // (mobile rubber-banding, sideways drift from a wide header or a
+    // dragged self-view at the edge).
+    <div className="flex h-dvh flex-col overflow-hidden overscroll-none bg-base-200">
       <RoomAudioRenderer />
       <RoomDataListener slug={slug} />
       <ControlBar slug={slug} shareBase={shareBase} startedAt={startedAt} />

@@ -22,6 +22,7 @@ import {
   ChevronDown,
   FileText,
   Hand,
+  LayoutGrid,
   Link as LinkIcon,
   LogOut,
   MessageSquare,
@@ -356,7 +357,10 @@ export function ControlBar({
         </div>
       </Modal>
 
-      <div className="flex items-center gap-1">
+      {/* Phones: twelve circular buttons don't fit one row — the panel
+          icons collapse into a single dropdown (see below) so the header
+          never overflows the viewport sideways. */}
+      <div className="hidden items-center gap-1 sm:flex">
         {/* Agents first — it's the most frequently used panel. */}
         <div className="tooltip tooltip-bottom" data-tip="Agents">
           <button
@@ -462,6 +466,71 @@ export function ControlBar({
             <Settings className="size-5" />
           </button>
         </div>
+      </div>
+
+      {/* The same panels behind one button on phones. The trigger carries a
+          dot when something needs attention (knocks, unseen drawings). */}
+      <div className="dropdown dropdown-end sm:hidden">
+        <button
+          type="button"
+          tabIndex={0}
+          className="btn btn-ghost btn-circle indicator"
+          aria-label="Open a panel"
+        >
+          {(waitingCount > 0 || canvasUnseen || agentDrawing) && (
+            <span className="badge indicator-item badge-primary badge-xs" />
+          )}
+          <LayoutGrid className="size-5" />
+        </button>
+        <ul className="menu dropdown-content z-30 mt-1 w-52 rounded-box bg-base-100 p-2 shadow-lg ring-1 ring-base-300">
+          {(
+            [
+              ["agents", "Agents", Bot],
+              ["participants", "Participants", Users],
+              ["transcript", "Transcript", ScrollText],
+              ["chat", "Chat", MessageSquare],
+              ["doc", "Doc", FileText],
+              ["settings", "Settings", Settings],
+            ] as const
+          ).map(([panel, label, Icon]) => (
+            <li key={panel}>
+              <button
+                type="button"
+                className={openPanel === panel ? "active" : ""}
+                onClick={() => {
+                  togglePanel(panel)
+                  ;(document.activeElement as HTMLElement | null)?.blur()
+                }}
+              >
+                <Icon className="size-4" />
+                {label}
+                {panel === "participants" && waitingCount > 0 && (
+                  <span className="badge badge-warning badge-xs">
+                    {waitingCount}
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+          <li>
+            <button
+              type="button"
+              className={whiteboardOpen ? "active" : ""}
+              onClick={() => {
+                const opening = !$canvasOpen.get()
+                $canvasOpen.set(opening)
+                if (opening) $canvasUnseen.set(false)
+                ;(document.activeElement as HTMLElement | null)?.blur()
+              }}
+            >
+              <PenLine className="size-4" />
+              Whiteboard
+              {(agentDrawing || canvasUnseen) && !whiteboardOpen && (
+                <span className="badge badge-primary badge-xs" />
+              )}
+            </button>
+          </li>
+        </ul>
       </div>
     </div>
   )
