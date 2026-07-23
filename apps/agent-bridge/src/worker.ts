@@ -29,7 +29,10 @@ import {
   docCursorColor,
   type ParticipantMeta,
   parseParticipantMeta,
+  type SharedDoc,
+  sharedDocSchema,
   TRANSCRIPTION_TOPIC,
+  TYPING_HEARTBEAT_MS,
 } from "@meet/shared"
 import {
   CURSOR_FRAME_MS,
@@ -43,6 +46,7 @@ import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
 import { buildCanvasRecords } from "./canvas-records.js"
 import { controlAllowed } from "./control-auth.js"
+import { DOC_PROTOCOL_NOTE, DocBlockExtractor } from "./doc-blocks.js"
 import {
   dynamicAgentsPublicOnly,
   getDynamicAgent,
@@ -303,7 +307,54 @@ export default defineAgent({
         .catch(() => undefined)
     }
 
-    const screen = new ScreenCapture(ctx.room)
+    // "typing…" while the agent composes a chat reply. A heartbeat keeps a
+    // long deliberation from expiring on the clients (they prune after
+    // TYPING_STALE_MS), and a crashed worker's indicator self-clears when the
+    // heartbeat stops. Sending is idempotent — repeated true/false is fine.
+    let typingHeartbeat: ReturnType<typeof setInterval> | null = null
+    const setTyping = (typing: boolean) => {
+      const beat = () =>
+        publishActivity({
+          type: "typing",
+          agentId: entry.id,
+          typing: true,
+          at: Date.now(),
+        })
+      if (typing) {
+        beat()
+        if (!typingHeartbeat) {
+          typingHeartbeat = setInterval(beat, TYPING_HEARTBEAT_MS)
+          typingHeartbeat.unref?.()
+        }
+      } else {
+        if (typingHeartbeat) {
+          clearInterval(typingHeartbeat)
+          typingHeartbeat = null
+        }
+        publishActivity({
+          type: "typing",
+          agentId: entry.id,
+          typing: false,
+          at: Date.now(),
+        })
+      }
+    }
+
+    // Vision failures used to be invisible (issue #110: "the agent acts as
+    // if nothing is shared", with nothing in any log to say why). Every
+    // stage change and failure now lands in the worker log and the room's
+    // debug feed, where a deployment can actually see it.
+    const screen = new ScreenCapture(ctx.room, undefined, {
+      log: (level, message) => {
+        console.log(`[${entry.id}] screen: ${message}`)
+        postDebugEvent(
+          roomName,
+          `agent:${entry.id}`,
+          level,
+          `screen: ${message}`,
+        )
+      },
+    })
 
     // The agent's visible hand. Presence frames are lossy fire-and-forget,
     // and animations queue so overlapping tool calls play out in order
@@ -462,6 +513,10 @@ export default defineAgent({
       priorTranscript
         ? `Transcript of the meeting before you joined:\n${priorTranscript}`
         : "",
+      // Realtime brains write the doc through the voice model's
+      // update_shared_doc tool instead; telling them about marker blocks
+      // would have them wrap ordinary replies in one.
+      entry.realtime ? "" : DOC_PROTOCOL_NOTE,
     ]
       .filter(Boolean)
       .join("\n\n")
@@ -475,8 +530,18 @@ export default defineAgent({
     // pipeline path leaves it empty: its brain hears every turn directly,
     // and the room transcriber's copy would duplicate them.)
     const heardSince: string[] = []
+    // Latest shared-doc edit by someone else (pipeline path only): the brain
+    // has no read tool, so without this it would rewrite from the stale copy
+    // it saw at join time and clobber everything typed since.
+    let docSince: SharedDoc | null = null
     const brain = withMeetingContext(rawBrain, meetingContext, () => {
       const parts: string[] = []
+      if (docSince) {
+        parts.push(
+          `[${docSince.byName || docSince.by} updated the shared document. ${formatSharedDoc(docSince)}]`,
+        )
+        docSince = null
+      }
       const heard = heardSince.splice(0)
       if (heard.length) {
         parts.push(
@@ -630,7 +695,7 @@ export default defineAgent({
       entry,
       brain,
       sessionState,
-      { publishActivity, publishChat, setState },
+      { publishActivity, publishChat, setState, writeDoc: publishDoc },
       screen,
       { roster: () => describeRoster(ctx.room) },
     )
@@ -855,6 +920,21 @@ export default defineAgent({
         } catch {
           // ignore malformed chat messages
         }
+      } else if (topic === DataTopic.Doc) {
+        // A participant saved the shared document (DocPanel broadcasts every
+        // save). Own writes never arrive here — LiveKit doesn't echo data
+        // back to the sender — so this is always someone else's edit.
+        try {
+          const doc = sharedDocSchema.parse(
+            JSON.parse(new TextDecoder().decode(payload)),
+          )
+          docSince = {
+            ...doc,
+            byName: sender?.name || sender?.identity || doc.byName,
+          }
+        } catch {
+          // ignore malformed doc messages
+        }
       }
     })
 
@@ -866,6 +946,7 @@ export default defineAgent({
         `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
       )
       setState(sessionState.muted ? "muted" : "thinking")
+      setTyping(true)
       try {
         let reply = ""
         for await (const frame of brain.runTurn(input, images)) {
@@ -893,7 +974,22 @@ export default defineAgent({
             throw new Error(frame.error)
           }
         }
-        if (reply) publishChat(reply)
+        // A chat-asked doc edit comes back as a marker block too — save it
+        // and keep it out of the chat.
+        const { spoken, docs } = new DocBlockExtractor().feed(reply)
+        for (const doc of docs) {
+          const outcome = await publishDoc(doc)
+          publishActivity({
+            type: "tool_result",
+            agentId: entry.id,
+            name: "update_shared_doc",
+            content: outcome,
+            durationMs: 0,
+            at: Date.now(),
+          })
+        }
+        if (spoken.trim()) publishChat(spoken.trim())
+        else if (docs.length) publishChat("(I've updated the shared document.)")
       } catch (err) {
         const busy = err instanceof Error && /in progress/.test(err.message)
         publishChat(
@@ -902,6 +998,7 @@ export default defineAgent({
             : "(Sorry, I couldn't process that.)",
         )
       } finally {
+        setTyping(false)
         setState(sessionState.muted ? "muted" : "listening")
       }
     }

@@ -331,6 +331,15 @@ export function describeAgentControl(
   }
 }
 
+/**
+ * A composing agent re-announces itself on this cadence so a live "typing…"
+ * never expires mid-thought, and a crashed one's indicator self-clears.
+ */
+export const TYPING_HEARTBEAT_MS = 4_000
+/** Drop a typing indicator this long after its last heartbeat. Must exceed
+ * TYPING_HEARTBEAT_MS so a still-composing agent is never pruned. */
+export const TYPING_STALE_MS = 10_000
+
 /** Events published by the bridge on the `agent-activity` data topic. */
 export const agentActivityEventSchema = z.discriminatedUnion("type", [
   z.object({
@@ -358,6 +367,15 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     type: z.literal("status"),
     agentId: z.string(),
     state: agentStateSchema,
+    at: z.number(),
+  }),
+  // The agent is composing a chat reply (or has just finished). Transient
+  // presence, not a logged step — clients show a "typing…" indicator and
+  // never fold it into the activity feed.
+  z.object({
+    type: z.literal("typing"),
+    agentId: z.string(),
+    typing: z.boolean(),
     at: z.number(),
   }),
   // "Stats for nerds": the agent's pipeline configuration plus rolling
@@ -651,11 +669,14 @@ export const canvasColorSchema = z.enum([
 export type CanvasColor = z.infer<typeof canvasColorSchema>
 
 export const canvasOpSchema = z.discriminatedUnion("op", [
+  // Create ops may omit x/y: the bridge auto-places the shape in free space
+  // next to existing content, which beats a voice model guessing (and
+  // repeating) coordinates.
   z.object({
     op: z.literal("rect"),
     id: z.string().min(1),
-    x: z.number(),
-    y: z.number(),
+    x: z.number().optional(),
+    y: z.number().optional(),
     w: z.number().positive(),
     h: z.number().positive(),
     label: z.string().optional(),
@@ -665,8 +686,8 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("ellipse"),
     id: z.string().min(1),
-    x: z.number(),
-    y: z.number(),
+    x: z.number().optional(),
+    y: z.number().optional(),
     w: z.number().positive(),
     h: z.number().positive(),
     label: z.string().optional(),
@@ -676,8 +697,8 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("text"),
     id: z.string().min(1),
-    x: z.number(),
-    y: z.number(),
+    x: z.number().optional(),
+    y: z.number().optional(),
     text: z.string().min(1),
     size: z.enum(["s", "m", "l", "xl"]).optional(),
     color: canvasColorSchema.optional(),
@@ -685,8 +706,8 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
   z.object({
     op: z.literal("note"),
     id: z.string().min(1),
-    x: z.number(),
-    y: z.number(),
+    x: z.number().optional(),
+    y: z.number().optional(),
     text: z.string().min(1),
     color: canvasColorSchema.optional(),
   }),
