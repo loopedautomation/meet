@@ -220,6 +220,14 @@ export function buildCanvasRecords(
   rawOps: CanvasOp[],
   existing: ReadonlyMap<string, CanvasRecord>,
   author: Author,
+  options?: {
+    /**
+     * Diagram ops pre-rendered by a client browser with the official
+     * mermaid-to-excalidraw converter, keyed by op id: full Excalidraw
+     * elements, injected in place of the dagre expansion.
+     */
+    convertedDiagrams?: Map<string, Record<string, unknown>[]>
+  },
 ): BuildResult {
   const at = Date.now()
   const warnings: string[] = []
@@ -235,7 +243,9 @@ export function buildCanvasRecords(
   // create — and each primitive is offset to its spot in the block.
   const ops: CanvasOp[] = []
   for (const op of rawOps) {
-    if (op.op !== "diagram") {
+    // Browser-converted diagrams skip the dagre expansion — they reach the
+    // op loop below as-is and are injected as full elements there.
+    if (op.op !== "diagram" || options?.convertedDiagrams?.has(op.id)) {
       ops.push(op)
       continue
     }
@@ -658,6 +668,104 @@ export function buildCanvasRecords(
           }
         }
         actions.push(`deleted ${op.id}`)
+        break
+      }
+      case "diagram": {
+        // Only browser-converted diagrams reach this case (see the
+        // expansion loop above): inject the converter's elements wholesale,
+        // remapped into this diagram's id-space and anchored where a
+        // previous render of the same diagram sits.
+        const converted = options?.convertedDiagrams?.get(op.id)
+        if (!converted?.length) {
+          warnings.push(`"${op.id}": diagram conversion produced nothing.`)
+          break
+        }
+        const prefix = `${agentShapeId(op.id)}_`
+        // Anchor on the previous render's top-left corner, then tombstone
+        // it — converter element ids are fresh every render, so an edit is a
+        // replace-in-place, not a merge.
+        let anchor: { x: number; y: number } | null = null
+        for (const [wid, prior] of working) {
+          if (!wid.startsWith(prefix)) continue
+          const el = liveElement(prior)
+          if (!el || typeof el.x !== "number" || typeof el.y !== "number") {
+            continue
+          }
+          anchor = anchor
+            ? {
+                x: Math.min(anchor.x, el.x as number),
+                y: Math.min(anchor.y, el.y as number),
+              }
+            : { x: el.x as number, y: el.y as number }
+        }
+        let minX = Number.POSITIVE_INFINITY
+        let minY = Number.POSITIVE_INFINITY
+        let maxX = Number.NEGATIVE_INFINITY
+        let maxY = Number.NEGATIVE_INFINITY
+        for (const el of converted) {
+          if (typeof el.x !== "number" || typeof el.y !== "number") continue
+          minX = Math.min(minX, el.x)
+          minY = Math.min(minY, el.y)
+          maxX = Math.max(maxX, el.x + ((el.width as number) ?? 0))
+          maxY = Math.max(maxY, el.y + ((el.height as number) ?? 0))
+        }
+        if (!Number.isFinite(minX)) {
+          warnings.push(`"${op.id}": diagram conversion had no placed shapes.`)
+          break
+        }
+        const spot =
+          op.x !== undefined && op.y !== undefined
+            ? { x: op.x, y: op.y }
+            : (anchor ??
+              placeCreate(working, op.id, op, maxX - minX, maxY - minY))
+        for (const [wid] of working) {
+          if (wid.startsWith(prefix) && liveElement(working.get(wid))) {
+            softDelete(wid)
+          }
+        }
+        const idMap = new Map<string, string>()
+        converted.forEach((el, i) => {
+          idMap.set(String(el.id), `${agentShapeId(op.id)}_${i}`)
+        })
+        const remapBinding = (binding: unknown) => {
+          if (!binding || typeof binding !== "object") return binding ?? null
+          const elementId = (binding as { elementId?: unknown }).elementId
+          const mapped = idMap.get(String(elementId))
+          return mapped ? { ...binding, elementId: mapped } : binding
+        }
+        // One shared outermost group, so a person can drag the whole
+        // diagram in one grab.
+        const groupId = `${agentShapeId(op.id)}-group`
+        for (const el of converted) {
+          const id = idMap.get(String(el.id))
+          if (!id) continue
+          put(id, {
+            ...el,
+            id,
+            x: typeof el.x === "number" ? el.x - minX + spot.x : el.x,
+            y: typeof el.y === "number" ? el.y - minY + spot.y : el.y,
+            containerId: el.containerId
+              ? (idMap.get(String(el.containerId)) ?? null)
+              : null,
+            frameId: el.frameId
+              ? (idMap.get(String(el.frameId)) ?? null)
+              : null,
+            startBinding: remapBinding(el.startBinding),
+            endBinding: remapBinding(el.endBinding),
+            boundElements: Array.isArray(el.boundElements)
+              ? (el.boundElements as { type: string; id: string }[]).map(
+                  (b) => ({ ...b, id: idMap.get(String(b.id)) ?? b.id }),
+                )
+              : (el.boundElements ?? null),
+            groupIds: [
+              ...(Array.isArray(el.groupIds) ? (el.groupIds as string[]) : []),
+              groupId,
+            ],
+          })
+        }
+        actions.push(
+          `rendered diagram ${op.id} (${converted.length} elements) at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
+        )
         break
       }
       case "clear": {

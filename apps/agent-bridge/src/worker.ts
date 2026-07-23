@@ -24,6 +24,7 @@ import {
   type CanvasPresence,
   type CanvasRecord,
   type ChatMessage,
+  canvasConvertResultSchema,
   canvasDiffSchema,
   chatMessageSchema,
   chunkCanvasChanges,
@@ -357,6 +358,98 @@ export default defineAgent({
       return op.op === "edit" ? `edited ${op.id}` : `deleted ${op.id}`
     }
 
+    // ---- client-side mermaid rendering ------------------------------------
+    // The official mermaid-to-excalidraw converter needs a real browser, and
+    // every meeting has at least one. The worker addresses ONE client via
+    // destinationIdentities (no election, no race), that client converts and
+    // streams the element JSON back in chunks; a timeout falls back to the
+    // built-in dagre expander so drawing never depends on a healthy tab.
+    const pendingConversions = new Map<
+      string,
+      {
+        resolve: (elements: Record<string, unknown>[] | null) => void
+        chunks: Map<number, string>
+      }
+    >()
+    ctx.room.on("dataReceived", (payload, _sender, _kind, topic) => {
+      if (topic !== DataTopic.CanvasConvert) return
+      try {
+        const msg = canvasConvertResultSchema.parse(
+          JSON.parse(new TextDecoder().decode(payload)),
+        )
+        const pending = pendingConversions.get(msg.id)
+        if (!pending) return
+        if (msg.type === "canvas-convert-error") {
+          pendingConversions.delete(msg.id)
+          postDebugEvent(
+            roomName,
+            `agent:${entry.id}`,
+            "error",
+            `client mermaid conversion failed: ${msg.error}`,
+          )
+          pending.resolve(null)
+          return
+        }
+        pending.chunks.set(msg.seq, msg.part)
+        if (pending.chunks.size < msg.total) return
+        pendingConversions.delete(msg.id)
+        try {
+          const json = Array.from(
+            { length: msg.total },
+            (_, i) => pending.chunks.get(i) ?? "",
+          ).join("")
+          const parsed = JSON.parse(json)
+          pending.resolve(Array.isArray(parsed) ? parsed : null)
+        } catch {
+          pending.resolve(null)
+        }
+      } catch {
+        // ignore malformed conversion messages
+      }
+    })
+
+    const convertMermaidInBrowser = async (
+      mermaid: string,
+    ): Promise<Record<string, unknown>[] | null> => {
+      // Any connected human browser will do — the host may have left a
+      // meeting that carries on. Stable pick: lowest identity.
+      const target = [...ctx.room.remoteParticipants.values()]
+        .filter((p) => parseParticipantMeta(p.metadata)?.kind === "human")
+        .map((p) => p.identity)
+        .sort()[0]
+      if (!target) return null
+      const id = `${entry.id}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`
+      return await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          pendingConversions.delete(id)
+          resolve(null)
+        }, 8_000)
+        pendingConversions.set(id, {
+          resolve: (elements) => {
+            clearTimeout(timer)
+            resolve(elements)
+          },
+          chunks: new Map(),
+        })
+        local
+          .publishData(
+            new TextEncoder().encode(
+              JSON.stringify({ type: "canvas-convert", id, mermaid }),
+            ),
+            {
+              reliable: true,
+              topic: DataTopic.CanvasConvert,
+              destination_identities: [target],
+            },
+          )
+          .catch(() => {
+            clearTimeout(timer)
+            pendingConversions.delete(id)
+            resolve(null)
+          })
+      })
+    }
+
     /** Leave on request: goodbye first, then a clean server-side removal. */
     const leaveMeeting = async () => {
       postDebugEvent(
@@ -538,10 +631,21 @@ export default defineAgent({
       // happen.
       const snapshot = await fetchCanvas(roomName)
       mergeIntoCanvasCache(snapshot.records)
+      // Diagrams render in a real browser when one is available (the
+      // official mermaid converter); the dagre expander is the fallback.
+      const convertedDiagrams = new Map<string, Record<string, unknown>[]>()
+      for (const op of ops) {
+        if (op.op !== "diagram") continue
+        const elements = await convertMermaidInBrowser(op.mermaid)
+        if (elements && elements.length > 0) {
+          convertedDiagrams.set(op.id, elements)
+        }
+      }
       const { changes, summary, warnings } = buildCanvasRecords(
         ops,
         canvasCache,
         { identity: `agent-${entry.id}`, name: entry.name },
+        { convertedDiagrams },
       )
       if (changes.length === 0) {
         return `Nothing was drawn. ${warnings.join(" ")}`.trim()

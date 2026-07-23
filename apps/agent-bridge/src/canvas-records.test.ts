@@ -202,6 +202,73 @@ describe("buildCanvasRecords", () => {
     expect(elementOf(second.changes, "agent-arch_db")).toBeDefined()
   })
 
+  it("injects browser-converted diagram elements, remapped and anchored", () => {
+    const converted = [
+      {
+        id: "n1",
+        type: "rectangle",
+        x: 100,
+        y: 100,
+        width: 120,
+        height: 60,
+        boundElements: [{ type: "text", id: "t1" }],
+      },
+      {
+        id: "t1",
+        type: "text",
+        x: 110,
+        y: 115,
+        width: 90,
+        height: 25,
+        text: "Client",
+        containerId: "n1",
+      },
+      { id: "n2", type: "rectangle", x: 100, y: 260, width: 120, height: 60 },
+      {
+        id: "a1",
+        type: "arrow",
+        x: 160,
+        y: 160,
+        width: 0,
+        height: 100,
+        startBinding: { elementId: "n1", focus: 0, gap: 4 },
+        endBinding: { elementId: "n2", focus: 0, gap: 4 },
+      },
+    ] as Record<string, unknown>[]
+    const first = buildCanvasRecords(
+      [{ op: "diagram", id: "arch", mermaid: "flowchart TD\n a --> b" }],
+      new Map(),
+      author,
+      { convertedDiagrams: new Map([["arch", converted]]) },
+    )
+    expect(first.warnings).toEqual([])
+    expect(first.summary).toContain("rendered diagram arch (4 elements)")
+    const rect = elementOf(first.changes, "agent-arch_0")
+    // Normalized to the placement origin (empty board → 0,0).
+    expect(rect.x).toBe(0)
+    expect(rect.y).toBe(0)
+    const arrow = elementOf(first.changes, "agent-arch_3")
+    expect((arrow.startBinding as { elementId: string }).elementId).toBe(
+      "agent-arch_0",
+    )
+    const label = elementOf(first.changes, "agent-arch_1")
+    expect(label.containerId).toBe("agent-arch_0")
+    // A re-render replaces in place: same anchor, old elements tombstoned.
+    const second = buildCanvasRecords(
+      [{ op: "diagram", id: "arch", mermaid: "flowchart TD\n a --> b" }],
+      new Map(first.changes.map((c) => [c.id, c])),
+      author,
+      {
+        convertedDiagrams: new Map([
+          ["arch", converted.map((el) => ({ ...el, id: `new-${el.id}` }))],
+        ]),
+      },
+    )
+    const rerendered = elementOf(second.changes, "agent-arch_0")
+    expect(rerendered.x).toBe(0)
+    expect(rerendered.y).toBe(0)
+  })
+
   it("warns instead of failing on unparseable diagram source", () => {
     const { changes, warnings } = build([
       { op: "diagram", id: "bad", mermaid: "sequenceDiagram\nA->>B: hi" },

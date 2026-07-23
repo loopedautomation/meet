@@ -3,6 +3,7 @@
 import { useDataChannel, useRoomContext } from "@livekit/components-react"
 import {
   agentActivityEventSchema,
+  canvasConvertRequestSchema,
   canvasDiffSchema,
   canvasSnapshotSchema,
   chatMessageSchema,
@@ -111,6 +112,69 @@ export function RoomDataListener({ slug }: { slug: string }) {
       addAgentActivity(parsed.data)
     } catch {}
   })
+
+  // The bridge has no browser, and rendering Mermaid properly needs one.
+  // It addresses ONE client (destinationIdentities — only that client even
+  // receives the message, so there is no election and no race) and that
+  // client runs the official mermaid-to-excalidraw converter, streaming the
+  // element JSON back in chunks under the data channel's size cap.
+  const { send: sendConvert } = useDataChannel(
+    DataTopic.CanvasConvert,
+    (msg) => {
+      if (!msg.from?.identity.startsWith("agent-")) return
+      const requester = msg.from.identity
+      try {
+        const parsed = canvasConvertRequestSchema.safeParse(
+          JSON.parse(new TextDecoder().decode(msg.payload)),
+        )
+        if (!parsed.success) return
+        const request = parsed.data
+        void (async () => {
+          const reply = (payload: Record<string, unknown>) =>
+            sendConvert(new TextEncoder().encode(JSON.stringify(payload)), {
+              topic: DataTopic.CanvasConvert,
+              reliable: true,
+              destinationIdentities: [requester],
+            })
+          try {
+            // Lazy: mermaid is a heavy chunk nobody pays for until an agent
+            // actually draws a diagram.
+            const [
+              { parseMermaidToExcalidraw },
+              { convertToExcalidrawElements },
+            ] = await Promise.all([
+              import("@excalidraw/mermaid-to-excalidraw"),
+              import("@excalidraw/excalidraw"),
+            ])
+            const { elements } = await parseMermaidToExcalidraw(request.mermaid)
+            // biome-ignore lint/suspicious/noExplicitAny: opaque skeleton JSON
+            const full = convertToExcalidrawElements(elements as any)
+            const json = JSON.stringify(full)
+            const CHUNK = 10_000
+            const total = Math.max(1, Math.ceil(json.length / CHUNK))
+            for (let seq = 0; seq < total; seq++) {
+              await reply({
+                type: "canvas-convert-result",
+                id: request.id,
+                seq,
+                total,
+                part: json.slice(seq * CHUNK, (seq + 1) * CHUNK),
+              })
+            }
+          } catch (err) {
+            await reply({
+              type: "canvas-convert-error",
+              id: request.id,
+              error: ((err as Error).message || "conversion failed").slice(
+                0,
+                480,
+              ),
+            })
+          }
+        })()
+      } catch {}
+    },
+  )
 
   useDataChannel(DataTopic.Doc, (msg) => {
     try {

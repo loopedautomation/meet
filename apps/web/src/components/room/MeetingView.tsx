@@ -8,10 +8,12 @@ import {
 import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionState, Track } from "livekit-client"
+import { Minimize2 } from "lucide-react"
 import { motion } from "motion/react"
 import { useRef } from "react"
 import { ControlBar } from "@/components/room/ControlBar"
 import { ParticipantTile } from "@/components/room/ParticipantTile"
+import { DocPanel } from "@/components/room/panels/DocPanel"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
@@ -28,7 +30,7 @@ import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
 import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
 import { $canvasOpen } from "@/stores/canvas"
-import { $openPanel } from "@/stores/panels"
+import { $docOnStage, $openPanel } from "@/stores/panels"
 
 export function MeetingView({
   slug,
@@ -81,6 +83,7 @@ export function MeetingView({
   const connectionState = useConnectionState()
   const openPanel = useStore($openPanel)
   const whiteboardOpen = useStore($canvasOpen)
+  const docOnStage = useStore($docOnStage)
 
   return (
     // overflow-hidden + overscroll-none: the meeting is an app surface, not
@@ -106,7 +109,9 @@ export function MeetingView({
         ref={stageRef}
         className="relative flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row"
       >
-        {whiteboardOpen ? (
+        {docOnStage ? (
+          <DocTakeover slug={slug} tracks={remoteTracks} focused={focused} />
+        ) : whiteboardOpen ? (
           <WhiteboardTakeover
             slug={slug}
             tracks={remoteTracks}
@@ -166,7 +171,7 @@ export function MeetingView({
             // scroll/pan, which was fighting the gesture. Rounding + shadow
             // live together here so the shadow follows the rounded corners.
             className={`absolute z-10 w-32 cursor-grab touch-none rounded-box shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
-              focused || whiteboardOpen ? "top-6" : "bottom-6"
+              focused || whiteboardOpen || docOnStage ? "top-6" : "bottom-6"
             } ${openPanel ? "right-[22.25rem]" : "right-6"}`}
           >
             <ParticipantTile trackRef={localTrack} compact />
@@ -204,6 +209,57 @@ function WhiteboardTakeover({
             type="button"
             className="w-32 shrink-0 cursor-pointer sm:w-56"
             onClick={() => $canvasOpen.set(false)}
+            title="Back to the screen share"
+          >
+            <ScreenShareTile trackRef={focused} />
+          </button>
+        )}
+      </ParticipantStrip>
+    </div>
+  )
+}
+
+/**
+ * The meeting doc owning the stage, mirroring the whiteboard takeover: a
+ * share starting doesn't force it closed — its tile in the strip is the way
+ * back. Minimizing returns the doc to the side panel.
+ */
+function DocTakeover({
+  slug,
+  tracks,
+  focused,
+}: {
+  slug: string
+  tracks: ReturnType<typeof useTracks>
+  focused?: React.ComponentProps<typeof ScreenShareTile>["trackRef"]
+}) {
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <div className="min-h-0 min-w-0 flex-1 overflow-hidden rounded-box border border-base-300 bg-base-100">
+        <DocPanel
+          slug={slug}
+          headerActions={
+            <button
+              type="button"
+              className="btn btn-ghost btn-xs btn-circle"
+              onClick={() => {
+                $docOnStage.set(false)
+                $openPanel.set("doc")
+              }}
+              aria-label="Back to the side panel"
+              title="Back to the side panel"
+            >
+              <Minimize2 className="size-3.5" />
+            </button>
+          }
+        />
+      </div>
+      <ParticipantStrip tracks={tracks}>
+        {focused && (
+          <button
+            type="button"
+            className="w-32 shrink-0 cursor-pointer sm:w-56"
+            onClick={() => $docOnStage.set(false)}
             title="Back to the screen share"
           >
             <ScreenShareTile trackRef={focused} />

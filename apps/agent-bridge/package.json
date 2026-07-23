@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.0.0",
+    "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
     "@hono/node-server": "^2.0.11",
     "@livekit/agents": "^1.0.0",
     "@livekit/agents-plugin-elevenlabs": "^1.5.2",
@@ -19,6 +20,7 @@
     "@livekit/agents-plugin-silero": "^1.0.0",
     "@livekit/rtc-node": "^0.13.0",
     "@meet/shared": "workspace:*",
+    "happy-dom": "^20.11.1",
     "hono": "^4.12.31",
     "livekit-server-sdk": "catalog:",
     "sharp": "^0.35.0",

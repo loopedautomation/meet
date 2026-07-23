@@ -124,7 +124,14 @@ function CursorLayer({
  * people take away and paste into an issue or a README, and a WYSIWYG layer
  * would put a renderer between them and what they're actually producing.
  */
-export function DocPanel({ slug }: { slug: string }) {
+export function DocPanel({
+  slug,
+  headerActions,
+}: {
+  slug: string
+  /** Extra buttons after copy/download — the stage adds its minimize here. */
+  headerActions?: React.ReactNode
+}) {
   const doc = useStore($doc)
   const presenceMap = useStore($docPresence)
   const { localParticipant } = useLocalParticipant()
@@ -381,6 +388,7 @@ export function DocPanel({ slug }: { slug: string }) {
           >
             <Download className="size-3.5" />
           </a>
+          {headerActions}
         </div>
       </div>
 
