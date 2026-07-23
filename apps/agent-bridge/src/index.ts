@@ -2,7 +2,7 @@ import { serve } from "@hono/node-server"
 import { AgentServer, initializeLogger, ServerOptions } from "@livekit/agents"
 import {
   AGENT_VOICES,
-  type AgentVoice,
+  clampIncomingDocRev,
   emptySharedDoc,
   GEMINI_VOICES,
   mergeSharedDoc,
@@ -348,7 +348,7 @@ app.put("/rooms/:room/doc", async (c) => {
   // later legitimate increment would overflow validation forever.
   const incoming = {
     ...parsed.data,
-    rev: Math.min(parsed.data.rev, current.rev + 1),
+    rev: clampIncomingDocRev(parsed.data.rev, current.rev),
   }
   const doc = mergeSharedDoc(current, incoming)
   if (!docs.has(room)) evictOldestDocIfFull()

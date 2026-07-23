@@ -389,15 +389,36 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>
  * between turns, not a Google Doc with six simultaneous typists. `rev`
  * orders edits so a straggling broadcast can't resurrect stale text.
  */
+/**
+ * Ceiling on a document revision. Bounded so a malicious MAX_SAFE_INTEGER
+ * `rev` can't freeze everyone's edits: without a cap, one huge revision
+ * would make every legitimate `+1` increment overflow schema validation
+ * forever. No real meeting doc approaches a billion edits.
+ */
+export const MAX_DOC_REV = 1_000_000_000
+
+/** Next revision after `current`, clamped so it can never exceed the cap. */
+export function nextDocRev(current: number): number {
+  return Math.min(current + 1, MAX_DOC_REV)
+}
+
+/** An incoming rev clamped to at most one past what we already hold. */
+export function clampIncomingDocRev(
+  incomingRev: number,
+  currentRev: number,
+): number {
+  return Math.min(incomingRev, nextDocRev(currentRev))
+}
+
 export const sharedDocSchema = z.object({
   // Char cap well above the store's byte cap — the store enforces bytes;
   // this stops a pathological payload before it's even merged.
   text: z.string().max(300_000),
   /**
-   * Increments on every accepted edit; the primary ordering. Bounded so a
-   * malicious MAX_SAFE_INTEGER revision can't freeze everyone's updates.
+   * Increments on every accepted edit; the primary ordering. Bounded by
+   * MAX_DOC_REV so a malicious revision can't freeze everyone's updates.
    */
-  rev: z.number().int().min(0).max(1_000_000_000),
+  rev: z.number().int().min(0).max(MAX_DOC_REV),
   /** Who last wrote, so the panel can say "Scout is drafting". */
   by: z.string().max(128),
   byName: z.string().max(128),

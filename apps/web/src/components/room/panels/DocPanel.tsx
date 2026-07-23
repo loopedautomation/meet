@@ -9,6 +9,7 @@ import {
   DataTopic,
   type DocPresence,
   docCursorColor,
+  nextDocRev,
   type SharedDoc,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
@@ -202,7 +203,7 @@ export function DocPanel({ slug }: { slug: string }) {
         text,
         // Capped at the schema ceiling so a malicious peer's huge rev can't
         // push our next increment past validation and freeze our edits.
-        rev: Math.min(current.rev + 1, 1_000_000_000),
+        rev: nextDocRev(current.rev),
         by: localParticipant.identity,
         byName: localParticipant.name || localParticipant.identity,
         at: Date.now(),

@@ -2,10 +2,13 @@ import { describe, expect, it } from "vitest"
 import {
   type AgentControl,
   agentControlSchema,
+  clampIncomingDocRev,
   defaultRoomSettings,
   describeAgentControl,
   emptySharedDoc,
+  MAX_DOC_REV,
   mergeSharedDoc,
+  nextDocRev,
   parseRoomSettings,
   type SharedDoc,
   sharedDocSchema,
@@ -168,6 +171,52 @@ describe("sharedDocSchema", () => {
     for (const rev of [-1, 1.5]) {
       expect(sharedDocSchema.safeParse({ ...doc({}), rev }).success).toBe(false)
     }
+  })
+
+  it("rejects a revision above the cap (the doc-freeze attack)", () => {
+    expect(
+      sharedDocSchema.safeParse({ ...doc({}), rev: MAX_DOC_REV + 1 }).success,
+    ).toBe(false)
+    expect(
+      sharedDocSchema.safeParse({ ...doc({}), rev: Number.MAX_SAFE_INTEGER })
+        .success,
+    ).toBe(false)
+  })
+
+  it("bounds oversized attribution fields", () => {
+    const big = "x".repeat(200)
+    expect(sharedDocSchema.safeParse({ ...doc({}), by: big }).success).toBe(
+      false,
+    )
+    expect(sharedDocSchema.safeParse({ ...doc({}), byName: big }).success).toBe(
+      false,
+    )
+  })
+})
+
+describe("doc revision clamping (freeze defense)", () => {
+  it("increments normally below the cap", () => {
+    expect(nextDocRev(0)).toBe(1)
+    expect(nextDocRev(41)).toBe(42)
+  })
+
+  it("never exceeds the cap, so validation can't overflow", () => {
+    expect(nextDocRev(MAX_DOC_REV)).toBe(MAX_DOC_REV)
+    expect(nextDocRev(MAX_DOC_REV - 1)).toBe(MAX_DOC_REV)
+    // The clamped rev always passes the schema — the freeze can't happen.
+    expect(
+      sharedDocSchema.safeParse({ ...doc({}), rev: nextDocRev(MAX_DOC_REV) })
+        .success,
+    ).toBe(true)
+  })
+
+  it("clamps a malicious incoming rev to at most one past what we hold", () => {
+    // Attacker PUTs rev at the ceiling while the stored doc is at 3.
+    expect(clampIncomingDocRev(MAX_DOC_REV, 3)).toBe(4)
+    // A normal +1 edit is untouched.
+    expect(clampIncomingDocRev(4, 3)).toBe(4)
+    // A stale/lower rev is left as-is (mergeSharedDoc discards it).
+    expect(clampIncomingDocRev(2, 3)).toBe(2)
   })
 })
 
