@@ -66,8 +66,11 @@ export async function POST(request: Request, { params }: Params) {
   if (!mic) {
     return NextResponse.json({ ok: true, alreadyMuted: true })
   }
-  await roomService()
-    .mutePublishedTrack(slug, identity, mic.sid, true)
-    .catch(() => undefined)
+  try {
+    await roomService().mutePublishedTrack(slug, identity, mic.sid, true)
+  } catch {
+    // A swallowed failure would tell the host a hot mic went silent.
+    return NextResponse.json({ error: "mute failed" }, { status: 502 })
+  }
   return NextResponse.json({ ok: true })
 }

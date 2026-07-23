@@ -27,6 +27,12 @@ export type TtyClientOptions = {
   conversationId: string
   connectTimeoutMs?: number
   turnTimeoutMs?: number
+  /**
+   * Custom DNS lookup for the connection — dynamic (pasted-URL) agents pass
+   * a private-address-refusing one so a rebinding domain can't steer the
+   * worker into the internal network at connect time.
+   */
+  lookup?: (hostname: string, options: unknown, callback: unknown) => void
 }
 
 /**
@@ -34,7 +40,8 @@ export type TtyClientOptions = {
  * One turn at a time: send input, stream frames until `result` or `error`.
  */
 export class LoopedTtyClient {
-  #opts: Required<TtyClientOptions>
+  #opts: TtyClientOptions &
+    Required<Pick<TtyClientOptions, "connectTimeoutMs" | "turnTimeoutMs">>
   #ws: WebSocket | null = null
   /** Tail of the turn queue: each turn awaits the previous one's release. */
   #tail: Promise<void> = Promise.resolve()
@@ -53,7 +60,12 @@ export class LoopedTtyClient {
     const url = new URL(this.#opts.url)
     url.searchParams.set("conversation_id", this.#opts.conversationId)
     // Bearer via subprotocol, matching the TTY trigger's browser-friendly auth.
-    const ws = new WebSocket(url, [`bearer.${this.#opts.token}`])
+    const ws = new WebSocket(
+      url,
+      [`bearer.${this.#opts.token}`],
+      // biome-ignore lint/suspicious/noExplicitAny: ws forwards lookup to http.request
+      this.#opts.lookup ? ({ lookup: this.#opts.lookup } as any) : undefined,
+    )
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(
         () => reject(new Error("TTY connect timeout")),

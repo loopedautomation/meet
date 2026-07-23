@@ -68,9 +68,11 @@ don't need to preconfigure a "Cal Video" or custom-link location.
 
 ## Notes & troubleshooting
 
-- **Starting the meeting.** A booked room opens like any durable meet link: the
-  first person in an empty room starts it from the waiting screen, and later
-  arrivals knock to be admitted.
+- **Starting the meeting.** The booking link carries the room's host key in
+  its URL fragment (`#hk=…`), so anyone arriving via the booking — organiser
+  or attendee — can start the meeting; the first to do so enters directly and
+  later arrivals knock to be admitted. Someone who only knows the 10-digit
+  room code (without the fragment) cannot start or enter an unstarted room.
 - **No link on the booking.** Check the web logs for `[calcom]` errors. A
   common cause is a missing/underprivileged `CALCOM_API_KEY`; the room link is
   still valid, it just wasn't pushed back to cal.com.

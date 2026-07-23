@@ -48,6 +48,9 @@ export function RoomDataListener({ slug }: { slug: string }) {
 
   useDataChannel(DataTopic.AgentActivity, (msg) => {
     try {
+      // Only the bridge's agent participants publish activity; a human
+      // crafting activity packets must not be able to fake agent behavior.
+      if (!msg.from || !msg.from.identity.startsWith("agent-")) return
       const parsed = agentActivityEventSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
@@ -60,7 +63,17 @@ export function RoomDataListener({ slug }: { slug: string }) {
       const parsed = sharedDocSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
-      if (parsed.success) applyDocUpdate(parsed.data)
+      if (!parsed.success) return
+      // Attribution follows the actual LiveKit sender, not payload claims.
+      applyDocUpdate(
+        msg.from
+          ? {
+              ...parsed.data,
+              by: msg.from.identity,
+              byName: msg.from.name || msg.from.identity,
+            }
+          : parsed.data,
+      )
     } catch {}
   })
 

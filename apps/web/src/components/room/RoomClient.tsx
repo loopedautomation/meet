@@ -53,6 +53,19 @@ export function RoomClient({
   const [awaitingStart, setAwaitingStart] = useState<JoinPreferences | null>(
     null,
   )
+  // Booked (cal.com) links carry the room's host key in the URL fragment —
+  // the only way a scheduled room can be started, since no browser "created"
+  // it. Stash it and scrub the address bar so it isn't shared onward by
+  // copy-pasting the URL from the browser.
+  useEffect(() => {
+    try {
+      const match = window.location.hash.match(/[#&]hk=([0-9a-f]{64})/)
+      if (!match) return
+      localStorage.setItem(`hostKey:${slug}`, match[1])
+      history.replaceState(null, "", window.location.pathname)
+    } catch {}
+  }, [slug])
+
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
       setAdmitted(false)

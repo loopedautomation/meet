@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto"
+import { lookup as lookupCb } from "node:dns"
 import { lookup } from "node:dns/promises"
 import { readFileSync, writeFileSync } from "node:fs"
 import { isIP } from "node:net"
@@ -134,6 +135,34 @@ export async function assertPublicAgentUrl(
     return "could not resolve host"
   }
   return null
+}
+
+/**
+ * A DNS lookup that refuses private addresses at the moment of connection —
+ * closing the rebinding window where a host resolves publicly during
+ * validation and internally when the worker actually dials. Passed to the
+ * `ws` client for dynamic (pasted-URL) agents.
+ */
+// biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
+export function publicOnlyLookup(
+  hostname: string,
+  options: any,
+  callback: any,
+): void {
+  lookupCb(hostname, { ...options, all: true }, (err, addresses) => {
+    if (err) return callback(err)
+    const list = Array.isArray(addresses) ? addresses : []
+    if (list.length === 0 || list.some((a) => isPrivateAddress(a.address))) {
+      return callback(new Error("refusing to connect to an internal address"))
+    }
+    if (options?.all) return callback(null, list)
+    callback(null, list[0].address, list[0].family)
+  })
+}
+
+/** Whether dynamic-agent connections must stay on public addresses. */
+export function dynamicAgentsPublicOnly(): boolean {
+  return process.env.DYNAMIC_AGENTS_ALLOW_PRIVATE !== "1"
 }
 
 export type ProbedAgent = { name: string; description?: string }

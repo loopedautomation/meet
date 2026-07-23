@@ -200,7 +200,9 @@ export function DocPanel({ slug }: { slug: string }) {
       if (text === current.text) return
       const update: SharedDoc = {
         text,
-        rev: current.rev + 1,
+        // Capped at the schema ceiling so a malicious peer's huge rev can't
+        // push our next increment past validation and freeze our edits.
+        rev: Math.min(current.rev + 1, 1_000_000_000),
         by: localParticipant.identity,
         byName: localParticipant.name || localParticipant.identity,
         at: Date.now(),

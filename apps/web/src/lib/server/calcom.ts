@@ -5,7 +5,7 @@ import {
 } from "@meet/shared/calcom"
 import { roomService } from "@/lib/server/livekit"
 import { roomShareUrl } from "@/lib/server/roomUrl"
-import { roomSecret } from "@/lib/server/slug"
+import { deriveHostKey, roomSecret } from "@/lib/server/slug"
 
 /** The cal.com API version the booking-location endpoint requires. */
 const CAL_API_VERSION = "2024-08-13"
@@ -68,8 +68,15 @@ export async function handleCalcomBooking(
     case CalcomTrigger.BookingRescheduled: {
       // The slug is recreatable, so the room materialises on first join via
       // the token route — no need to pre-create one that would only be
-      // garbage-collected before the meeting. All we owe cal.com is the link.
-      const url = roomShareUrl(slug, requestUrl)
+      // garbage-collected before the meeting.
+      //
+      // The link carries the derived host key in its fragment: booked rooms
+      // have no creator browser holding the key, and without it nobody could
+      // ever start the room (the public "start anyway" path is gone). The
+      // fragment never reaches servers or logs; the client stashes it and
+      // strips it from the address bar. Everyone on the booking can start
+      // the meeting — exactly the documented behavior.
+      const url = `${roomShareUrl(slug, requestUrl)}#hk=${deriveHostKey(slug)}`
       const wroteBack = await writeBackMeetingLink(cfg, uid, url)
       return { action: "provisioned", slug, url, wroteBack }
     }

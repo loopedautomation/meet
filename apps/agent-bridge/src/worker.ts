@@ -28,7 +28,11 @@ import {
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
 import { controlAllowed } from "./control-auth.js"
-import { getDynamicAgent } from "./dynamic.js"
+import {
+  dynamicAgentsPublicOnly,
+  getDynamicAgent,
+  publicOnlyLookup,
+} from "./dynamic.js"
 import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
@@ -206,6 +210,13 @@ export default defineAgent({
       url: entry.brain.url,
       token: entry.directToken ?? brainToken(entry),
       conversationId: `${roomName}-${entry.id}`,
+      // Dynamic (pasted-URL) agents connect through a DNS lookup that
+      // refuses private addresses at dial time — the invite-time SSRF check
+      // alone is bypassable by a rebinding domain. Registry agents come
+      // from the operator's own config and may legitimately be internal.
+      ...(entry.id.startsWith("dyn-") && dynamicAgentsPublicOnly()
+        ? { lookup: publicOnlyLookup }
+        : {}),
     }
     const rawBrain: Brain =
       entry.brain.kind === "tty"
@@ -406,10 +417,13 @@ export default defineAgent({
             const message = chatMessageSchema.parse(
               JSON.parse(new TextDecoder().decode(payload)),
             )
-            if (!message.from.startsWith("agent-")) {
+            // Attribution from the actual LiveKit sender — the payload's
+            // claimed name would let anyone put words in another's mouth
+            // inside the model's context.
+            if (sender && !sender.identity.startsWith("agent-")) {
               pushBounded(
                 heardSince,
-                `${message.fromName} (in chat): ${message.text}`,
+                `${sender.name || sender.identity} (in chat): ${message.text}`,
               )
             }
           } catch {}
@@ -690,15 +704,17 @@ export default defineAgent({
           const message = chatMessageSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),
           )
-          if (message.from.startsWith("agent-")) return
+          // Attribution from the actual LiveKit sender, not payload claims.
+          if (!sender || sender.identity.startsWith("agent-")) return
+          const senderName = sender.name || sender.identity
           const mention = new RegExp(`@${entry.name}\\b`, "i")
           if (!mention.test(message.text)) {
             // Not for us directly — queue as context for the next turn.
-            chatSince.push(`${message.fromName}: ${message.text}`)
+            chatSince.push(`${senderName}: ${message.text}`)
             return
           }
-          console.log(`[${entry.id}] chat mention from ${message.fromName}`)
-          void replyInChat(message)
+          console.log(`[${entry.id}] chat mention from ${senderName}`)
+          void replyInChat({ ...message, fromName: senderName })
         } catch {
           // ignore malformed chat messages
         }

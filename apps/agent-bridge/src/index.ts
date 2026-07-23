@@ -343,7 +343,14 @@ app.put("/rooms/:room/doc", async (c) => {
   // Merged, not overwritten: two clients can PUT concurrently, and the store
   // has to land on the same winner every peer's local merge did.
   const current = docs.get(room)?.doc ?? emptySharedDoc
-  const doc = mergeSharedDoc(current, parsed.data)
+  // Revisions are clamped to one past the stored doc: a client that jumps
+  // `rev` to the schema ceiling would otherwise freeze the document — every
+  // later legitimate increment would overflow validation forever.
+  const incoming = {
+    ...parsed.data,
+    rev: Math.min(parsed.data.rev, current.rev + 1),
+  }
+  const doc = mergeSharedDoc(current, incoming)
   if (!docs.has(room)) evictOldestDocIfFull()
   docs.set(room, { updatedAt: Date.now(), doc })
   return c.json({ doc })

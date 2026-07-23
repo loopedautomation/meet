@@ -57,9 +57,12 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   if (action === "deny") {
-    await roomService()
-      .removeParticipant(slug, identity)
-      .catch(() => undefined)
+    try {
+      await roomService().removeParticipant(slug, identity)
+    } catch {
+      // A swallowed failure would report a denial that didn't happen.
+      return NextResponse.json({ error: "deny failed" }, { status: 502 })
+    }
     return NextResponse.json({ ok: true })
   }
 

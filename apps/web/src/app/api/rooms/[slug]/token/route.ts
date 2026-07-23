@@ -6,6 +6,7 @@ import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
 import { isKicked } from "@/lib/server/kicked"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
+import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import {
   deriveHostKey,
   isRecreatableRoomSlug,
@@ -55,6 +56,17 @@ export async function POST(request: Request, { params }: Params) {
       return NextResponse.json(
         { error: "meeting not found or has ended" },
         { status: 404 },
+      )
+    }
+    // Recreation makes real LiveKit rooms from guessed slugs; without a lid
+    // it's an unauthenticated resource-creation amplifier.
+    if (
+      rateLimited(`recreate:${clientKey(request)}`, 10, 10 * 60 * 1000) ||
+      rateLimited("recreate:global", 120, 10 * 60 * 1000)
+    ) {
+      return NextResponse.json(
+        { error: "too many requests, try again shortly" },
+        { status: 429 },
       )
     }
     const recreated = await roomService()
@@ -121,11 +133,17 @@ export async function POST(request: Request, { params }: Params) {
       .catch(() => undefined)
   }
 
-  // Waiting room: the creator (or, in legacy/open rooms, the first human
-  // into an empty room) enters directly; everyone after knocks — they join
-  // with a restricted token (no publish/subscribe/data) and "waiting"
+  // Waiting room: the creator enters directly; everyone after knocks — they
+  // join with a restricted token (no publish/subscribe/data) and "waiting"
   // metadata until someone inside admits them (see ../admit/route.ts).
-  const isHost = isCreator || participantCount === 0
+  //
+  // "First human into an empty room walks in" applies ONLY to legacy rooms
+  // that predate the start gate (no metadata at all). For managed rooms it
+  // was a race: anyone polling the token endpoint between the host starting
+  // the room and actually connecting — or during a momentary empty spell —
+  // skipped the waiting room entirely.
+  const legacyOpenRoom = roomMeta.started === undefined
+  const isHost = isCreator || (legacyOpenRoom && participantCount === 0)
   let waiting = !isHost
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()

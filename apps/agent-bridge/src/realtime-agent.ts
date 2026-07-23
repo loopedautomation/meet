@@ -642,9 +642,11 @@ export async function runRealtimeAgent(opts: {
         const message = chatMessageSchema.parse(
           JSON.parse(new TextDecoder().decode(payload)),
         )
-        if (message.from === `agent-${entry.id}`) return
+        // Attribution from the actual LiveKit sender — a crafted payload
+        // must not put words in someone else's mouth in the model's context.
+        if (!sender || sender.identity === `agent-${entry.id}`) return
         session.notifyChat(
-          `[meeting chat] ${message.fromName}: ${message.text}`,
+          `[meeting chat] ${sender.name || sender.identity}: ${message.text}`,
         )
       } catch {}
       return

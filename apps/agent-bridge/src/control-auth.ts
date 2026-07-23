@@ -23,6 +23,16 @@ type RoomLike = { metadata?: string }
 export function controlAllowed(room: RoomLike, sender: SenderLike): boolean {
   if (!sender) return false
   if (parseParticipantMeta(sender.metadata)?.kind !== "human") return false
+  // Metadata that exists but can't be parsed fails closed: falling back to
+  // the permissive defaults would let corrupt metadata reopen a room the
+  // host locked down. Absent metadata is a legacy open room — defaults ok.
+  if (room.metadata) {
+    try {
+      roomMetadataSchema.parse(JSON.parse(room.metadata))
+    } catch {
+      return false
+    }
+  }
   const settings = parseRoomSettings(room.metadata)
   if (settings.participantsCanControlAgents) return true
   try {

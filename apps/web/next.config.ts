@@ -14,6 +14,20 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
           { key: "Cross-Origin-Embedder-Policy", value: "require-corp" },
+          // Baseline hardening. No CSP yet: Next's inline runtime scripts
+          // need nonces/hashes and breakage there is silent — tracked as a
+          // follow-up rather than shipped half-strict.
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            // A no-op over plain http; pins https once served over it.
+            key: "Strict-Transport-Security",
+            value: "max-age=15552000; includeSubDomains",
+          },
         ],
       },
       {
