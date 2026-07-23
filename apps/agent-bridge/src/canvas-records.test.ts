@@ -154,6 +154,34 @@ describe("buildCanvasRecords", () => {
     expect(second.summary).toContain("cleared the canvas (2 shapes)")
   })
 
+  it("expands a diagram op into laid-out shapes and bound arrows", () => {
+    const { changes, summary, warnings } = build([
+      {
+        op: "diagram",
+        id: "arch",
+        mermaid: "flowchart TD\n web[Web] --> api[API]\n api --> db[DB]",
+      },
+    ])
+    expect(warnings).toEqual([])
+    expect(summary).toContain("laid out diagram arch (3 nodes)")
+    const web = elementOf(changes, "agent-arch_web")
+    const api = elementOf(changes, "agent-arch_api")
+    expect(web).toBeDefined()
+    expect(api).toBeDefined()
+    // dagre put the second rank strictly below the first.
+    expect(api.y as number).toBeGreaterThan(web.y as number)
+    const arrows = changes.filter((c) => c.record.type === "arrow")
+    expect(arrows).toHaveLength(2)
+  })
+
+  it("warns instead of failing on unparseable diagram source", () => {
+    const { changes, warnings } = build([
+      { op: "diagram", id: "bad", mermaid: "sequenceDiagram\nA->>B: hi" },
+    ])
+    expect(changes).toHaveLength(0)
+    expect(warnings[0]).toContain("bad")
+  })
+
   it("reports freehand, text and note ops in the summary", () => {
     const { changes, warnings, summary } = build([
       { op: "text", id: "t1", x: 0, y: 0, text: "Q3 architecture" },

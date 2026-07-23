@@ -11,7 +11,6 @@
 //    session offers cannot be implemented — gated turn policies are
 //    rejected upstream for this provider.
 
-import { canvasOpBatchSchema } from "@meet/shared"
 import {
   CANCEL_TOOL,
   CHAT_TOOL,
@@ -259,14 +258,11 @@ export class GeminiLiveSession implements VoiceSession {
         break
       case DRAW_CANVAS_TOOL:
         void this.#docTool(call, async () => {
-          // Gemini delivers arguments as objects, already parsed.
-          const parsed = canvasOpBatchSchema.safeParse(call.args?.ops)
-          if (!parsed.success) {
-            const issue = parsed.error.issues[0]
-            return `Those drawing operations were invalid (${issue?.path.join(".")}: ${issue?.message}). Fix the batch and try again.`
-          }
+          const instruction = call.args?.instruction
+          if (typeof instruction !== "string" || !instruction.trim())
+            return "No drawing instruction was provided."
           return (
-            (await this.#opts.drawCanvas?.(parsed.data)) ??
+            (await this.#opts.drawCanvas?.(instruction)) ??
             "You can't draw right now."
           )
         })

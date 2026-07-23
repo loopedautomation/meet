@@ -1,4 +1,5 @@
 import type { CanvasColor, CanvasOp, CanvasRecord } from "@meet/shared"
+import { expandDiagram } from "./mermaid-diagram.js"
 
 // Translates the agent's drawing vocabulary into plain Excalidraw element
 // JSON — no browser, no editor. Elements are built conservatively with every
@@ -216,7 +217,7 @@ function placeCreate(
 }
 
 export function buildCanvasRecords(
-  ops: CanvasOp[],
+  rawOps: CanvasOp[],
   existing: ReadonlyMap<string, CanvasRecord>,
   author: Author,
 ): BuildResult {
@@ -227,6 +228,53 @@ export function buildCanvasRecords(
   // them — so changes accumulate into a working view of the room.
   const working = new Map(existing)
   const changes = new Map<string, CanvasRecord>()
+
+  // Diagram ops expand into the primitives below before anything runs: the
+  // Mermaid topology is laid out by dagre relative to (0,0), then the whole
+  // block is placed once — at the op's x/y, or in free space like any other
+  // create — and each primitive is offset to its spot in the block.
+  const ops: CanvasOp[] = []
+  for (const op of rawOps) {
+    if (op.op !== "diagram") {
+      ops.push(op)
+      continue
+    }
+    const expanded = expandDiagram(op.id, op.mermaid)
+    if (!expanded) {
+      warnings.push(
+        `"${op.id}" wasn't valid Mermaid flowchart source; nothing was drawn for it. Use "flowchart TD" / "graph LR" node-and-edge syntax.`,
+      )
+      continue
+    }
+    const shapes = expanded.filter((child) => child.op !== "arrow")
+    const bboxW = Math.max(
+      ...shapes.map(
+        (s) => ((s as { x?: number }).x ?? 0) + (s as { w?: number }).w!,
+      ),
+      1,
+    )
+    const bboxH = Math.max(
+      ...shapes.map(
+        (s) => ((s as { y?: number }).y ?? 0) + (s as { h?: number }).h!,
+      ),
+      1,
+    )
+    const spot = placeCreate(working, op.id, op, bboxW, bboxH)
+    for (const child of expanded) {
+      if (child.op === "arrow") {
+        ops.push(child)
+      } else {
+        ops.push({
+          ...child,
+          x: ((child as { x?: number }).x ?? 0) + spot.x,
+          y: ((child as { y?: number }).y ?? 0) + spot.y,
+        } as CanvasOp)
+      }
+    }
+    actions.push(
+      `laid out diagram ${op.id} (${shapes.length} nodes) at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
+    )
+  }
 
   const put = (id: string, element: LooseElement) => {
     const prior = working.get(id)

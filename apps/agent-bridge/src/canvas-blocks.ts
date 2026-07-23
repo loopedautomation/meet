@@ -28,7 +28,11 @@ export const CANVAS_PROTOCOL_NOTE =
   '"size?":"s"|"m"|"l"|"xl"}, {"op":"note","id","x","y","text","color?"}, ' +
   '{"op":"arrow","id","from?","to?","label?"} (from/to are shape ids), ' +
   '{"op":"move","id","x","y"}, {"op":"update","id","label?","text?",' +
-  '"color?","w?","h?"}, {"op":"delete","id"}, {"op":"clear"}. Coordinates ' +
+  '"color?","w?","h?"}, {"op":"delete","id"}, {"op":"clear"}, ' +
+  '{"op":"diagram","id","mermaid"} (a Mermaid flowchart/graph source ' +
+  "string — PREFER this for any boxes-and-arrows structure: it is laid " +
+  "out automatically with proper spacing, no coordinates needed; node ids " +
+  'become "<id>.<node>" for later moves/updates). Coordinates ' +
   "are page pixels on roughly a 1600x1000 area, y growing downward from " +
   "the top-left origin — align related shapes by arithmetic (bars on a " +
   "shared baseline end at the same y+h). Omit x/y on creates to " +

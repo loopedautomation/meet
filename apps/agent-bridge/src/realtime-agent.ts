@@ -25,6 +25,11 @@ import {
   bargeInConfigFromEnv,
   PcmRingBuffer,
 } from "./barge-in.js"
+import {
+  CANVAS_PROTOCOL_NOTE,
+  CanvasBlockExtractor,
+  parseCanvasBlock,
+} from "./canvas-blocks.js"
 import { controlAllowed } from "./control-auth.js"
 import {
   GEMINI_INPUT_SAMPLE_RATE,
@@ -325,6 +330,64 @@ export async function runRealtimeAgent(opts: {
    * it. The voice model never authors persistent content, so doc writes get
    * the brain's judgment, memory and audit trail like everything else.
    */
+  /**
+   * Draw on the whiteboard on instruction: the brain composes the actual
+   * shapes — as canvas marker blocks, its native drawing vocabulary — and
+   * the bridge applies them. Mirrors updateDoc: the voice model describes
+   * intent, never authors coordinates. This is what makes drawing work on
+   * conversational realtime models (Gemini native audio especially), which
+   * cannot hold a spatial map while talking.
+   */
+  const drawOnCanvas =
+    readCanvas && drawCanvas
+      ? async (instruction: string): Promise<string> => {
+          callbacks.setState("thinking")
+          debug("info", `drawing started: "${instruction.slice(0, 200)}"`)
+          workInFlight++
+          try {
+            const board = await readCanvas()
+            const prompt =
+              "The meeting's shared whiteboard needs drawing. " +
+              `Instruction from the meeting: ${instruction}\n\n` +
+              `Current whiteboard: ${board}\n\n` +
+              `${CANVAS_PROTOCOL_NOTE}\n\n` +
+              "Reply with the canvas block(s) and nothing else — no " +
+              "prose outside the markers."
+            let reply = ""
+            for await (const frame of brain.runTurn(prompt)) {
+              publishBrainActivity(entry.id, frame, callbacks)
+              if (frame.type === "assistant") {
+                reply += (reply ? "\n" : "") + frame.content
+              } else if (frame.type === "error") {
+                throw new Error(frame.error)
+              }
+            }
+            const { blocks } = new CanvasBlockExtractor().feed(reply)
+            if (blocks.length === 0) {
+              debug("error", "drawing produced no canvas block")
+              return "Nothing was drawn — the drawing task produced no shapes."
+            }
+            const outcomes: string[] = []
+            for (const block of blocks) {
+              const parsed = parseCanvasBlock(block)
+              if ("error" in parsed) {
+                outcomes.push(parsed.error)
+                continue
+              }
+              outcomes.push(await drawCanvas(parsed.ops))
+            }
+            debug("info", "drawing applied")
+            return outcomes.join(" ")
+          } catch (err) {
+            debug("error", `drawing failed: ${(err as Error).message}`)
+            throw err
+          } finally {
+            workInFlight--
+            callbacks.setState(state.muted ? "muted" : "listening")
+          }
+        }
+      : undefined
+
   const updateDoc =
     readDoc && writeDoc
       ? async (instruction: string): Promise<string> => {
@@ -420,7 +483,7 @@ export async function runRealtimeAgent(opts: {
     readDoc,
     updateDoc,
     readCanvas,
-    drawCanvas,
+    drawCanvas: drawOnCanvas,
     onAgentSpoke: opts.onSpoke,
     // Offered only when a look could actually succeed. A webhook brain
     // drops images on the floor, so an agent on one must not be told it

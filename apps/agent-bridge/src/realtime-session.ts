@@ -6,12 +6,6 @@
 // permissions and audit trail. No SDK — the protocol is JSON events over a
 // websocket.
 
-import {
-  type CanvasOp,
-  canvasColorSchema,
-  canvasOpBatchSchema,
-} from "@meet/shared"
-
 /** The audio format both directions of the session speak: 24 kHz mono PCM16. */
 export const REALTIME_SAMPLE_RATE = 24_000
 
@@ -97,12 +91,15 @@ export type RealtimeSessionOptions = {
   updateDoc?: (instruction: string) => Promise<string>
   /**
    * The meeting's shared whiteboard. Reading returns a text description of
-   * every shape with its id; drawing takes a batch of primitive ops. Both
-   * or neither — a model that can draw but not read would trample what
-   * others drew.
+   * every shape with its id; drawing hands an *instruction* to the brain,
+   * which composes the actual shapes — same contract as updateDoc, and for
+   * the same reason: voice models are conversational, not spatial, and a
+   * batch of guessed pixel coordinates from one is how diagrams end up in
+   * a heap. Both or neither — a model that can draw but not read would
+   * trample what others drew.
    */
   readCanvas?: () => Promise<string>
-  drawCanvas?: (ops: CanvasOp[]) => Promise<string>
+  drawCanvas?: (instruction: string) => Promise<string>
   /**
    * Look at the screen someone is sharing and describe it. The realtime
    * model has no eyes of its own here — this captures a frame and puts it
@@ -277,120 +274,27 @@ export function toolDeclarations(
             name: DRAW_CANVAS_TOOL,
             description:
               "Draw on the meeting's shared whiteboard, which everyone can " +
-              "see live. Send a batch of simple operations: rectangles, " +
-              "ellipses, sticky notes, text, freehand lines, and arrows " +
-              "that connect shapes by id. Coordinates are page pixels with " +
-              "y growing DOWNWARD from the top-left origin: lay diagrams " +
-              "out left-to-right or top-down starting near (0,0) on " +
-              "roughly a 1600x1000 area, size boxes around 160x80, and " +
-              "leave ~80px gaps. For charts and aligned layouts compute " +
-              "positions with arithmetic, never by eye: bars on a shared " +
-              "baseline all end at the same y+h, so a taller bar starts at " +
-              "a SMALLER y; draw the axes from that same baseline. Placing " +
-              "a shape inside a larger frame is fine. Omit x/y to " +
-              "auto-place a loose shape in free space; every result " +
-              "reports where each shape landed — use those positions when " +
-              "placing the next ones, never reuse the same spot. Give " +
-              "every shape a short memorable id " +
-              "(e.g. 'api') so you can connect, move or update it later. " +
-              "Build complex diagrams incrementally across several calls " +
-              "while you talk — draw a part, say what it is, draw the " +
-              "next. If others may have drawn, call read_canvas first. " +
-              "Never narrate coordinates or ids out loud.",
+              "see live. Describe WHAT to draw or change — the shapes, " +
+              "their labels, and how they connect — and it is drawn for " +
+              "you with proper layout; never mention pixels or " +
+              "coordinates. Works for new diagrams, additions, edits " +
+              "('make the queue red', 'remove the cache box') and clearing " +
+              "the board. Keep talking while it draws — the sketch appears " +
+              "within moments and everyone sees it. If others may have " +
+              "drawn, call read_canvas first and reference existing " +
+              "shapes by their labels.",
             parameters: {
               type: "object",
               properties: {
-                ops: {
-                  type: "array",
-                  description: "Operations applied in order.",
-                  items: {
-                    type: "object",
-                    properties: {
-                      op: {
-                        type: "string",
-                        enum: [
-                          "rect",
-                          "ellipse",
-                          "text",
-                          "note",
-                          "arrow",
-                          "draw",
-                          "move",
-                          "update",
-                          "delete",
-                          "clear",
-                        ],
-                      },
-                      id: {
-                        type: "string",
-                        description:
-                          "Short id, e.g. 'api'. Required for every op " +
-                          "except clear.",
-                      },
-                      x: {
-                        type: "number",
-                        description:
-                          "Page-pixel position. Omit on creates to " +
-                          "auto-place clear of existing shapes.",
-                      },
-                      y: { type: "number" },
-                      w: { type: "number" },
-                      h: { type: "number" },
-                      label: {
-                        type: "string",
-                        description: "Label on rect/ellipse/arrow shapes.",
-                      },
-                      text: {
-                        type: "string",
-                        description: "Content of text/note shapes.",
-                      },
-                      color: {
-                        type: "string",
-                        enum: [...canvasColorSchema.options],
-                      },
-                      fill: { type: "string", enum: ["none", "semi", "solid"] },
-                      size: { type: "string", enum: ["s", "m", "l", "xl"] },
-                      from: {
-                        type: "string",
-                        description: "Arrow start: a shape id to attach to.",
-                      },
-                      to: {
-                        type: "string",
-                        description: "Arrow end: a shape id to attach to.",
-                      },
-                      fromPoint: {
-                        type: "object",
-                        description: "Arrow start as a free point instead.",
-                        properties: {
-                          x: { type: "number" },
-                          y: { type: "number" },
-                        },
-                      },
-                      toPoint: {
-                        type: "object",
-                        description: "Arrow end as a free point instead.",
-                        properties: {
-                          x: { type: "number" },
-                          y: { type: "number" },
-                        },
-                      },
-                      points: {
-                        type: "array",
-                        description: "Freehand polyline, in page pixels.",
-                        items: {
-                          type: "object",
-                          properties: {
-                            x: { type: "number" },
-                            y: { type: "number" },
-                          },
-                        },
-                      },
-                    },
-                    required: ["op"],
-                  },
+                instruction: {
+                  type: "string",
+                  description:
+                    "What to draw or change, in full sentences and " +
+                    "self-contained: the shapes or diagram wanted, every " +
+                    "label to use, and how parts connect or relate.",
                 },
               },
-              required: ["ops"],
+              required: ["instruction"],
             },
           },
         ]
@@ -737,17 +641,13 @@ export class RealtimeSession implements VoiceSession {
   }
 
   async #drawCanvas(rawArguments: string): Promise<string> {
-    const parsed = canvasOpBatchSchema.safeParse(
-      (JSON.parse(rawArguments) as { ops?: unknown }).ops,
-    )
-    // Malformed ops go back as text, not an exception: the model can fix
-    // its batch and retry instead of falling silent.
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0]
-      return `Those drawing operations were invalid (${issue?.path.join(".")}: ${issue?.message}). Fix the batch and try again.`
+    const instruction = (JSON.parse(rawArguments) as { instruction?: unknown })
+      .instruction
+    if (typeof instruction !== "string" || !instruction.trim()) {
+      return "No drawing instruction was provided."
     }
     return (
-      (await this.#opts.drawCanvas?.(parsed.data)) ??
+      (await this.#opts.drawCanvas?.(instruction)) ??
       "You can't draw right now."
     )
   }
