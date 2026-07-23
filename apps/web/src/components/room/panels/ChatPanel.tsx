@@ -60,6 +60,7 @@ function ChatMessageRow({
   message,
   own,
   grouped,
+  lastInGroup,
   isEditing,
   editText,
   onEditTextChange,
@@ -74,6 +75,7 @@ function ChatMessageRow({
   message: ChatMessage
   own: boolean
   grouped: boolean
+  lastInGroup: boolean
   isEditing: boolean
   editText: string
   onEditTextChange: (text: string) => void
@@ -87,7 +89,7 @@ function ChatMessageRow({
 }) {
   return (
     <li
-      className={`group chat ${own ? "chat-end" : "chat-start"} ${grouped ? "!pt-0" : ""}`}
+      className={`group chat ${own ? "chat-end" : "chat-start"} ${grouped ? "mt-1 !pt-0" : "not-first:mt-2"} ${lastInGroup ? "" : "!pb-0"}`}
     >
       {!grouped && (
         <div className="chat-header text-base-content/50 text-xs">
@@ -125,8 +127,14 @@ function ChatMessageRow({
         </div>
       ) : (
         <div
-          className={`chat-bubble relative min-w-0 max-w-[85%] whitespace-pre-wrap break-words text-sm ${
+          className={`chat-bubble relative min-h-0 min-w-0 max-w-[85%] rounded-lg px-2.5 py-1 whitespace-pre-wrap break-words text-sm ${
             own ? "chat-bubble-primary" : ""
+          } ${
+            lastInGroup
+              ? own
+                ? "rounded-br-none"
+                : "rounded-bl-none"
+              : "before:hidden"
           }`}
         >
           {linkify(message.text)}
@@ -327,7 +335,7 @@ export function ChatPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+      <ul className="min-h-0 flex-1 overflow-y-auto p-4">
         {messages.length === 0 && (
           <li className="text-base-content/50 text-sm">
             No messages yet. Mention an agent with @Name to ask it in text.
@@ -343,12 +351,19 @@ export function ChatPanel() {
           const grouped = Boolean(
             prev && prev.from === m.from && minute(prev.at) === minute(m.at),
           )
+          const next = messages[i + 1]
+          const lastInGroup = !(
+            next &&
+            next.from === m.from &&
+            minute(next.at) === minute(m.at)
+          )
           return (
             <ChatMessageRow
               key={m.id}
               message={m}
               own={own}
               grouped={grouped}
+              lastInGroup={lastInGroup}
               isEditing={editingId === m.id}
               editText={editText}
               onEditTextChange={setEditText}
