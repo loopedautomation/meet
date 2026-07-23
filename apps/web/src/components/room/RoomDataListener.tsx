@@ -10,6 +10,7 @@ import {
 } from "@meet/shared"
 import { RoomEvent } from "livekit-client"
 import { useEffect } from "react"
+import { roomAuthHeaders } from "@/lib/roomAuth"
 import { applyDocUpdate, resetDoc } from "@/stores/doc"
 import {
   removeDocPresence,
@@ -30,7 +31,18 @@ export function RoomDataListener({ slug }: { slug: string }) {
       const parsed = chatMessageSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
-      if (parsed.success) addChatMessage(parsed.data)
+      if (!parsed.success) return
+      // The payload's claimed sender is replaced with the actual LiveKit
+      // sender — anyone can type any name into a crafted data message.
+      addChatMessage(
+        msg.from
+          ? {
+              ...parsed.data,
+              from: msg.from.identity,
+              fromName: msg.from.name || msg.from.identity,
+            }
+          : parsed.data,
+      )
     } catch {}
   })
 
@@ -58,10 +70,19 @@ export function RoomDataListener({ slug }: { slug: string }) {
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
       if (!parsed.success) return
-      if (parsed.data.start === null || parsed.data.end === null) {
-        removeDocPresence(parsed.data.by)
+      // Keyed by the actual LiveKit sender, so nobody can move or clear
+      // someone else's cursor with a crafted message.
+      const presence = msg.from
+        ? {
+            ...parsed.data,
+            by: msg.from.identity,
+            byName: msg.from.name || msg.from.identity,
+          }
+        : parsed.data
+      if (presence.start === null || presence.end === null) {
+        removeDocPresence(presence.by)
       } else {
-        upsertDocPresence(parsed.data)
+        upsertDocPresence(presence)
       }
     } catch {}
   })
@@ -82,7 +103,7 @@ export function RoomDataListener({ slug }: { slug: string }) {
   // first line was written sees a blank page until somebody types.
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/rooms/${slug}/doc`)
+    fetch(`/api/rooms/${slug}/doc`, { headers: roomAuthHeaders(slug) })
       .then((res) => (res.ok ? res.json() : null))
       .then((body) => {
         if (cancelled || !body) return

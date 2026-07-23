@@ -22,6 +22,7 @@ import {
   bargeInConfigFromEnv,
   PcmRingBuffer,
 } from "./barge-in.js"
+import { controlAllowed } from "./control-auth.js"
 import {
   GEMINI_INPUT_SAMPLE_RATE,
   GeminiLiveSession,
@@ -632,7 +633,7 @@ export async function runRealtimeAgent(opts: {
     })()
   }
 
-  ctx.room.on("dataReceived", (payload, _p, _k, topic) => {
+  ctx.room.on("dataReceived", (payload, sender, _k, topic) => {
     if (topic === DataTopic.Chat) {
       // Surface the room's text chat to the model as passive context; the
       // instructions tell it to reply in chat (or ignore it) rather than
@@ -649,6 +650,9 @@ export async function runRealtimeAgent(opts: {
       return
     }
     if (topic !== DataTopic.AgentControl) return
+    // Enforced here, not just in the UI: only an admitted human — and only
+    // the host when they've reserved controls — may drive agents.
+    if (!controlAllowed(ctx.room, sender)) return
     try {
       const control = agentControlSchema.parse(
         JSON.parse(new TextDecoder().decode(payload)),

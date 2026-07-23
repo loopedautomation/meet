@@ -13,6 +13,7 @@ import {
 import { Hono } from "hono"
 import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk"
 import {
+  assertPublicAgentUrl,
   type DynamicAgentSpec,
   normalizeAgentUrl,
   probeAgent,
@@ -30,6 +31,24 @@ const httpUrl = LIVEKIT_URL.replace(/^ws/, "http")
 if (!BRIDGE_TOKEN) {
   console.error("BRIDGE_TOKEN is required")
   process.exit(1)
+}
+
+// A guessable BRIDGE_TOKEN turns this whole API — transcripts, agent
+// dispatch, participant data — into a public one. Refuse known placeholders
+// outright in production; warn loudly everywhere else.
+const WEAK_TOKEN =
+  /change_?me|devsecret|devkey|placeholder|example/i.test(BRIDGE_TOKEN) ||
+  BRIDGE_TOKEN.length < 24
+if (WEAK_TOKEN) {
+  if (process.env.NODE_ENV === "production") {
+    console.error(
+      "BRIDGE_TOKEN is a placeholder or too short (<24 chars); refusing to start in production. Generate one with: openssl rand -hex 32",
+    )
+    process.exit(1)
+  }
+  console.error(
+    "WARNING: BRIDGE_TOKEN looks like a placeholder or is shorter than 24 chars — fine for local dev only. Generate one with: openssl rand -hex 32",
+  )
 }
 
 initializeLogger({ pretty: false, level: process.env.LOG_LEVEL ?? "info" })
@@ -115,6 +134,9 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   if (participants.some((p) => p.identity === `agent-${id}`)) {
     return c.json({ ok: true, already: true })
   }
+  if (!inviteAllowed(room)) {
+    return c.json({ error: "too many agent invites, slow down" }, 429)
+  }
 
   await dispatch.createDispatch(room, "looped-bridge", {
     metadata: JSON.stringify({
@@ -125,6 +147,39 @@ app.post("/rooms/:room/agents/:id", async (c) => {
   })
   return c.json({ ok: true })
 })
+
+// Dispatching an agent starts a worker and spends provider credit, so
+// invites are rate limited per room — a slug leak must not become an
+// unbounded fleet of eavesdropping agents or an API-spend amplifier.
+const INVITE_WINDOW_MS = 60 * 60 * 1000
+const MAX_INVITES_PER_ROOM_PER_WINDOW = 20
+const inviteTimes = new Map<string, number[]>()
+
+function inviteAllowed(room: string): boolean {
+  const now = Date.now()
+  const times = (inviteTimes.get(room) ?? []).filter(
+    (t) => now - t < INVITE_WINDOW_MS,
+  )
+  if (times.length >= MAX_INVITES_PER_ROOM_PER_WINDOW) {
+    inviteTimes.set(room, times)
+    return false
+  }
+  times.push(now)
+  inviteTimes.set(room, times)
+  return true
+}
+
+setInterval(
+  () => {
+    const cutoff = Date.now() - INVITE_WINDOW_MS
+    for (const [room, times] of inviteTimes) {
+      const kept = times.filter((t) => t > cutoff)
+      if (kept.length === 0) inviteTimes.delete(room)
+      else inviteTimes.set(room, kept)
+    }
+  },
+  10 * 60 * 1000,
+).unref()
 
 // Ad-hoc invite: paste any looped agent's TTY URL (+ token) and it joins the
 // room — no agent-registry.yaml registration. The spec lives in the bridge's memory
@@ -148,6 +203,12 @@ app.post("/rooms/:room/agents", async (c) => {
   if (overrideError) return c.json({ error: overrideError }, 400)
   const url = normalizeAgentUrl(body.url)
   if (!url) return c.json({ error: "invalid url" }, 400)
+  // SSRF guard: never dial into the deployment's own network.
+  const ssrfError = await assertPublicAgentUrl(url)
+  if (ssrfError) return c.json({ error: ssrfError }, 422)
+  if (!inviteAllowed(room)) {
+    return c.json({ error: "too many agent invites, slow down" }, 429)
+  }
 
   const probe = await probeAgent(url, body.token ?? "")
   if ("error" in probe) return c.json({ error: probe.error }, 422)
@@ -239,7 +300,23 @@ app.get("/internal/rooms/:room/transcript", (c) => {
 // an agent that wants to read what was planned all fetch it from one place.
 // Memory only, like the transcript, and dropped on the same schedule.
 const MAX_DOC_BYTES = 256 * 1024
+// Global cap on stored documents: without it, PUTs under arbitrary slugs
+// can grow this map for 24h straight. Oldest room evicted first.
+const MAX_DOC_ROOMS = 1000
 const docs = new Map<string, { updatedAt: number; doc: SharedDoc }>()
+
+function evictOldestDocIfFull() {
+  if (docs.size < MAX_DOC_ROOMS) return
+  let oldest: string | null = null
+  let oldestAt = Number.POSITIVE_INFINITY
+  for (const [room, entry] of docs) {
+    if (entry.updatedAt < oldestAt) {
+      oldestAt = entry.updatedAt
+      oldest = room
+    }
+  }
+  if (oldest) docs.delete(oldest)
+}
 
 setInterval(
   () => {
@@ -267,6 +344,7 @@ app.put("/rooms/:room/doc", async (c) => {
   // has to land on the same winner every peer's local merge did.
   const current = docs.get(room)?.doc ?? emptySharedDoc
   const doc = mergeSharedDoc(current, parsed.data)
+  if (!docs.has(room)) evictOldestDocIfFull()
   docs.set(room, { updatedAt: Date.now(), doc })
   return c.json({ doc })
 })

@@ -2,6 +2,8 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { bridgeFetch } from "@/lib/server/bridge"
 import { canManageAgents, HOST_KEY_HEADER } from "@/lib/server/host"
+import { isKicked } from "@/lib/server/kicked"
+import { verifyParticipant } from "@/lib/server/participantAuth"
 import { isValidRoomSlug } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
@@ -24,6 +26,17 @@ export async function POST(request: Request, { params }: Params) {
   )
   if (!body.success) {
     return NextResponse.json({ error: "url required" }, { status: 400 })
+  }
+  // Inviting an agent hands it the meeting's audio, chat, and transcript —
+  // so the caller must prove they're an admitted member of this meeting,
+  // not just someone who knows the slug.
+  const participant = await verifyParticipant(request, slug)
+  if (
+    !participant ||
+    participant.kind !== "human" ||
+    isKicked(slug, participant.identity)
+  ) {
+    return NextResponse.json({ error: "not authorized" }, { status: 401 })
   }
   // Same gate as the registry invites: the host can reserve agents.
   if (!(await canManageAgents(slug, request.headers.get(HOST_KEY_HEADER)))) {

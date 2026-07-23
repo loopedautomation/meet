@@ -36,7 +36,10 @@ export async function POST(request: Request) {
     name: slug,
     emptyTimeout: 300,
     departureTimeout: 60,
-    metadata: JSON.stringify({ hostKey, started: false }),
+    // The hostKey itself must never be in metadata: LiveKit broadcasts room
+    // metadata to every participant, including people still in the waiting
+    // room. Host routes recompute the derived key server-side instead.
+    metadata: JSON.stringify({ started: false }),
   })
   const url = roomShareUrl(slug, request.url)
   return NextResponse.json({ slug, url, hostKey })

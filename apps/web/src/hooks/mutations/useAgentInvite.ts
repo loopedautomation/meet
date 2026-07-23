@@ -2,6 +2,7 @@
 
 import { useMutation } from "@tanstack/react-query"
 import { readHostKey } from "@/lib/hostKey"
+import { roomAuthHeaders } from "@/lib/roomAuth"
 
 export type AgentMode = "realtime" | "gemini" | "pipeline" | "elevenlabs"
 
@@ -32,6 +33,8 @@ export function useAgentInvite(slug: string) {
         headers: {
           ...(hostKey ? { "x-host-key": hostKey } : {}),
           ...(overrides ? { "content-type": "application/json" } : {}),
+          // Proves room membership — invites are refused without it.
+          ...roomAuthHeaders(slug),
         },
         ...(overrides ? { body: JSON.stringify(overrides) } : {}),
       })

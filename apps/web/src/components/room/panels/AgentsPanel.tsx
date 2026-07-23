@@ -24,6 +24,7 @@ import { useAgentPermissions } from "@/hooks/useRoomSettings"
 import { useSendAgentControl } from "@/hooks/useSendAgentControl"
 import { properCase } from "@/lib/casing"
 import { readHostKey } from "@/lib/hostKey"
+import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $agentActivity, $agentStats } from "@/stores/roomData"
 
 /**
@@ -144,6 +145,8 @@ export function AgentsPanel({ slug }: { slug: string }) {
         headers: {
           "content-type": "application/json",
           ...(hostKey ? { "x-host-key": hostKey } : {}),
+          // Proves room membership — invites are refused without it.
+          ...roomAuthHeaders(slug),
         },
         body: JSON.stringify(spec),
       })

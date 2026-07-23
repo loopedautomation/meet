@@ -27,6 +27,7 @@ import {
 } from "@meet/shared"
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
+import { controlAllowed } from "./control-auth.js"
 import { getDynamicAgent } from "./dynamic.js"
 import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
@@ -399,7 +400,7 @@ export default defineAgent({
       // message is surfaced to the model as context, and it posts replies
       // itself via the send_chat_message tool (see realtime-agent.ts). The
       // heard buffer gets a copy too, so the brain follows the chat as well.
-      ctx.room.on("dataReceived", (payload: Uint8Array, _p, _k, topic) => {
+      ctx.room.on("dataReceived", (payload: Uint8Array, sender, _k, topic) => {
         if (topic === DataTopic.Chat) {
           try {
             const message = chatMessageSchema.parse(
@@ -415,6 +416,9 @@ export default defineAgent({
           return
         }
         if (topic !== DataTopic.AgentControl) return
+        // Enforced here, not just in the UI: only an admitted human — and
+        // only the host when they've reserved controls — may drive agents.
+        if (!controlAllowed(ctx.room, sender)) return
         try {
           const control = agentControlSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),
@@ -595,8 +599,11 @@ export default defineAgent({
     })
 
     // Mute/unmute controls and chat @-mentions arrive over data topics.
-    ctx.room.on("dataReceived", (payload: Uint8Array, _p, _k, topic) => {
+    ctx.room.on("dataReceived", (payload: Uint8Array, sender, _k, topic) => {
       if (topic === DataTopic.AgentControl) {
+        // Enforced here, not just in the UI: only an admitted human — and
+        // only the host when they've reserved controls — may drive agents.
+        if (!controlAllowed(ctx.room, sender)) return
         try {
           const control = agentControlSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),

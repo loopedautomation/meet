@@ -2,6 +2,7 @@ import { TrackSource } from "livekit-server-sdk"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authorizeHost } from "@/lib/server/host"
+import { recordKicked } from "@/lib/server/kicked"
 import { roomService } from "@/lib/server/livekit"
 import { isValidRoomSlug } from "@/lib/server/slug"
 
@@ -41,9 +42,16 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   if (action === "remove") {
-    await roomService()
-      .removeParticipant(slug, identity)
-      .catch(() => undefined)
+    // Recorded before the disconnect: the identity's still-valid token must
+    // stop counting as rejoin proof (see the token route), or a kicked user
+    // walks straight back in under a fresh identity.
+    recordKicked(slug, identity)
+    try {
+      await roomService().removeParticipant(slug, identity)
+    } catch {
+      // Failing silently here would report a removal that didn't happen.
+      return NextResponse.json({ error: "remove failed" }, { status: 502 })
+    }
     return NextResponse.json({ ok: true })
   }
 

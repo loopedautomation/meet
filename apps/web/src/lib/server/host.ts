@@ -1,6 +1,5 @@
 import { timingSafeEqual } from "node:crypto"
 import {
-  defaultRoomSettings,
   type RoomMetadata,
   type RoomSettings,
   roomMetadataSchema,
@@ -46,10 +45,11 @@ export async function authorizeHost(
   if (rooms.length === 0) return { ok: false, status: 404 }
 
   const metadata = parseRoomMetadata(rooms[0].metadata)
-  // Rooms carry the key they were created with; fall back to the derived one
-  // so a room recreated after garbage collection still authorises its host.
-  const expected = metadata.hostKey ?? deriveHostKey(slug)
-  if (!keyMatches(hostKey, expected)) return { ok: false, status: 403 }
+  // Always the derived key: room metadata is broadcast to every participant,
+  // so a key stored there is public and must never authorise anything.
+  if (!keyMatches(hostKey, deriveHostKey(slug))) {
+    return { ok: false, status: 403 }
+  }
   return { ok: true, metadata }
 }
 
@@ -57,9 +57,9 @@ export async function authorizeHost(
  * Whether this request may invite or remove agents: everyone can, unless the
  * host has turned that off, in which case only the host's key gets through.
  *
- * A missing room falls back to the defaults rather than refusing — the invite
- * routes forward to the bridge, which is the component that actually knows
- * whether the room exists.
+ * Fails closed: a room that can't be found or whose settings can't be read
+ * admits only the host key. Granting the permissive default on an error
+ * would turn a LiveKit hiccup into an authorization bypass.
  */
 export async function canManageAgents(
   slug: string,
@@ -67,13 +67,18 @@ export async function canManageAgents(
 ): Promise<boolean> {
   const rooms = await roomService()
     .listRooms([slug])
-    .catch(() => [])
-  const settings: RoomSettings = rooms[0]
-    ? roomSettingsSchema.parse(
+    .catch(() => null)
+  let settings: RoomSettings | null = null
+  if (rooms?.[0]) {
+    try {
+      settings = roomSettingsSchema.parse(
         parseRoomMetadata(rooms[0].metadata).settings ?? {},
       )
-    : defaultRoomSettings
-  if (settings.participantsCanInviteAgents) return true
+    } catch {
+      settings = null
+    }
+  }
+  if (settings?.participantsCanInviteAgents) return true
   if (!hostKey) return false
   return (await authorizeHost(slug, hostKey)).ok
 }

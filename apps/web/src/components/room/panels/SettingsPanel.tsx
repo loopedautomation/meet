@@ -1,6 +1,10 @@
 "use client"
 
-import { useMediaDeviceSelect, useRoomContext } from "@livekit/components-react"
+import {
+  useLocalParticipant,
+  useMediaDeviceSelect,
+  useRoomContext,
+} from "@livekit/components-react"
 import {
   type RoomSettings,
   serializeVideoTransform,
@@ -629,6 +633,7 @@ function DeviceSelect({
  */
 function HostControls({ slug }: { slug: string }) {
   const { isHost, settings } = useAgentPermissions()
+  const { localParticipant } = useLocalParticipant()
   // Host in the UI is a claim; the key is the evidence the settings route
   // demands. Without it this section can't do anything, so don't show a
   // section whose toggles would only ever error.
@@ -666,7 +671,13 @@ function HostControls({ slug }: { slug: string }) {
       const res = await fetch(`/api/rooms/${slug}/settings`, {
         method: "PATCH",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ settings: { [key]: value }, hostKey }),
+        body: JSON.stringify({
+          settings: { [key]: value },
+          hostKey,
+          // Stamped into room metadata (via this host-authenticated route)
+          // so agent workers can enforce host-only controls by sender.
+          hostIdentity: localParticipant.identity,
+        }),
       })
       if (!res.ok) throw new Error("save failed")
     } catch {

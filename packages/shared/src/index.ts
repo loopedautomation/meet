@@ -265,9 +265,19 @@ export const defaultRoomSettings: RoomSettings = {
  * everyone already in the room.
  */
 export const roomMetadataSchema = z.object({
+  /**
+   * Legacy only: rooms created before the host key was removed from
+   * metadata may still carry one. Never written any more — room metadata is
+   * broadcast to every participant, so a secret must not live in it.
+   */
   hostKey: z.string().optional(),
   started: z.boolean().optional(),
   startedAt: z.number().optional(),
+  /**
+   * The organiser's LiveKit identity, stamped by the host-authenticated
+   * settings route so agent workers can enforce host-only controls.
+   */
+  hostIdentity: z.string().optional(),
   settings: roomSettingsSchema.optional(),
 })
 export type RoomMetadata = z.infer<typeof roomMetadataSchema>
@@ -363,10 +373,10 @@ export type AgentStatsEvent = Extract<AgentActivityEvent, { type: "stats" }>
 
 /** Messages on the `chat` data topic. */
 export const chatMessageSchema = z.object({
-  id: z.string(),
-  from: z.string(),
-  fromName: z.string(),
-  text: z.string(),
+  id: z.string().max(64),
+  from: z.string().max(128),
+  fromName: z.string().max(128),
+  text: z.string().max(8000),
   at: z.number(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
@@ -380,12 +390,17 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>
  * orders edits so a straggling broadcast can't resurrect stale text.
  */
 export const sharedDocSchema = z.object({
-  text: z.string(),
-  /** Increments on every accepted edit; the primary ordering. */
-  rev: z.number().int().min(0),
+  // Char cap well above the store's byte cap — the store enforces bytes;
+  // this stops a pathological payload before it's even merged.
+  text: z.string().max(300_000),
+  /**
+   * Increments on every accepted edit; the primary ordering. Bounded so a
+   * malicious MAX_SAFE_INTEGER revision can't freeze everyone's updates.
+   */
+  rev: z.number().int().min(0).max(1_000_000_000),
   /** Who last wrote, so the panel can say "Scout is drafting". */
-  by: z.string(),
-  byName: z.string(),
+  by: z.string().max(128),
+  byName: z.string().max(128),
   at: z.number(),
 })
 export type SharedDoc = z.infer<typeof sharedDocSchema>
@@ -431,10 +446,10 @@ export function mergeSharedDoc(
  * both null means the person left the editor.
  */
 export const docPresenceSchema = z.object({
-  by: z.string(),
-  byName: z.string(),
+  by: z.string().max(128),
+  byName: z.string().max(128),
   /** The sender picks its own color so every peer renders the same one. */
-  color: z.string(),
+  color: z.string().max(32),
   start: z.number().int().min(0).nullable(),
   end: z.number().int().min(0).nullable(),
   at: z.number(),
@@ -506,13 +521,6 @@ export const tokenRequestSchema = z.object({
   rejoinToken: z.string().optional(),
   /** The creator's key from room creation — starts the meeting on arrival. */
   hostKey: z.string().optional(),
-  /**
-   * Explicit "start the meeting" intent from the waiting screen, for a host
-   * whose browser doesn't hold the hostKey (a different device, incognito, or
-   * cleared storage). Honoured only for an otherwise-empty room, so it starts
-   * the meeting without letting anyone barge into one already in progress.
-   */
-  startAnyway: z.boolean().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 

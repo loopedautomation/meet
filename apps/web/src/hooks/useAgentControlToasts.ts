@@ -50,10 +50,12 @@ export function useAgentControlToasts(): void {
       return
     }
     if (!parsed.success) return
-    const control = parsed.data
-    // Older clients don't stamp who acted; without a name there's no sentence
-    // worth showing, so stay quiet rather than narrate "someone".
-    if (!control.byName) return
+    // The actor's name comes from the actual LiveKit sender, not the
+    // payload — a crafted message could otherwise put words in anyone's
+    // mouth. Without a sender there's no sentence worth showing.
+    const actorName = msg.from?.name || msg.from?.identity
+    if (!actorName) return
+    const control = { ...parsed.data, byName: actorName }
 
     const agent = participantsRef.current.find(
       (p) => parseParticipantMeta(p.metadata)?.agentId === control.agentId,

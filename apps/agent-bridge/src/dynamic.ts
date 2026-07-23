@@ -1,5 +1,7 @@
 import { randomBytes } from "node:crypto"
+import { lookup } from "node:dns/promises"
 import { readFileSync, writeFileSync } from "node:fs"
+import { isIP } from "node:net"
 
 // Ad-hoc agents invited by URL (no agent-registry.yaml entry). Specs are persisted to
 // a file rather than process memory because the control API (index.ts) and
@@ -7,10 +9,11 @@ import { readFileSync, writeFileSync } from "node:fs"
 // container — dispatch metadata carries only the generated id, never the
 // token.
 //
-// NOTE: the bridge dials whatever URL is pasted, from inside the deployment
-// network. Fine for a single-tenant self-hosted deployment; a multi-tenant
-// deployment needs an allowlist / deny-internal-ranges policy here (tracked
-// in issue #6).
+// The bridge refuses to dial private, loopback, link-local, and
+// metadata-service destinations (see assertPublicAgentUrl) so a pasted URL
+// can't be used to probe the deployment's internal network. Self-hosted
+// setups that legitimately run agents on private addresses can opt out with
+// DYNAMIC_AGENTS_ALLOW_PRIVATE=1.
 
 const FILE = process.env.DYNAMIC_AGENTS_FILE ?? "/tmp/dynamic-agents.json"
 const MAX_AGE_MS = 24 * 60 * 60 * 1000
@@ -73,6 +76,64 @@ export function normalizeAgentUrl(input: string): string | null {
     parsed.pathname = "/tty"
   }
   return parsed.toString()
+}
+
+/** RFC1918/4193, loopback, link-local, unspecified, and cloud metadata. */
+function isPrivateAddress(ip: string): boolean {
+  const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip
+  if (isIP(v4) === 4) {
+    const [a, b] = v4.split(".").map(Number)
+    return (
+      a === 10 ||
+      a === 127 ||
+      a === 0 ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) ||
+      (a === 169 && b === 254) || // link-local, incl. 169.254.169.254 metadata
+      (a === 100 && b >= 64 && b <= 127) // CGNAT
+    )
+  }
+  const lower = ip.toLowerCase()
+  return (
+    lower === "::" ||
+    lower === "::1" ||
+    lower.startsWith("fc") ||
+    lower.startsWith("fd") ||
+    lower.startsWith("fe80")
+  )
+}
+
+/**
+ * SSRF guard for pasted agent URLs: resolve the host and refuse anything
+ * that lands on an internal address, so the bridge can't be pointed at the
+ * deployment's own services. Returns an error message or null when the
+ * destination is acceptable. (Resolution happens again at connect time — a
+ * DNS-rebinding TOCTOU remains; an egress firewall is the real boundary.)
+ */
+export async function assertPublicAgentUrl(
+  url: string,
+): Promise<string | null> {
+  if (process.env.DYNAMIC_AGENTS_ALLOW_PRIVATE === "1") return null
+  let host: string
+  try {
+    host = new URL(url).hostname
+  } catch {
+    return "invalid url"
+  }
+  const bare = host.replace(/^\[|\]$/g, "")
+  if (isIP(bare)) {
+    return isPrivateAddress(bare) ? "internal addresses are not allowed" : null
+  }
+  try {
+    const addrs = await lookup(bare, { all: true })
+    if (addrs.length === 0) return "could not resolve host"
+    if (addrs.some((a) => isPrivateAddress(a.address))) {
+      return "internal addresses are not allowed"
+    }
+  } catch {
+    return "could not resolve host"
+  }
+  return null
 }
 
 export type ProbedAgent = { name: string; description?: string }

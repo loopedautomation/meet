@@ -1,10 +1,6 @@
 "use client"
 
-import {
-  useIsMuted,
-  useLocalParticipant,
-  useParticipants,
-} from "@livekit/components-react"
+import { useIsMuted, useParticipants } from "@livekit/components-react"
 import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import type { Participant } from "livekit-client"
@@ -12,11 +8,11 @@ import { Track } from "livekit-client"
 import { Bot, Check, MicOff, User, UserX, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
+import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $isHost } from "@/stores/host"
 
 export function ParticipantsPanel({ slug }: { slug: string }) {
   const participants = useParticipants()
-  const { localParticipant } = useLocalParticipant()
   const [busy, setBusy] = useState<string | null>(null)
   const isHost = useStore($isHost)
   // Removal asks first — the row's X becomes a confirm button.
@@ -58,12 +54,13 @@ export function ParticipantsPanel({ slug }: { slug: string }) {
     try {
       await fetch(`/api/rooms/${slug}/admit`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          identity,
-          action,
-          requesterIdentity: localParticipant.identity,
-        }),
+        // The server derives who's admitting from the verified token in the
+        // Authorization header — a claimed identity would be spoofable.
+        headers: {
+          "content-type": "application/json",
+          ...roomAuthHeaders(slug),
+        },
+        body: JSON.stringify({ identity, action }),
       })
     } finally {
       setBusy(null)

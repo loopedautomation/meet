@@ -14,6 +14,7 @@ import {
 import { useStore } from "@nanostores/react"
 import { Check, Copy, Download } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $doc, applyDocUpdate } from "@/stores/doc"
 import {
   $docPresence,
@@ -221,7 +222,10 @@ export function DocPanel({ slug }: { slug: string }) {
         if (!body) return
         void fetch(`/api/rooms/${slug}/doc`, {
           method: "PUT",
-          headers: { "content-type": "application/json" },
+          headers: {
+            "content-type": "application/json",
+            ...roomAuthHeaders(slug),
+          },
           body: JSON.stringify(body),
         }).catch(() => undefined)
       }, PERSIST_DEBOUNCE_MS)
@@ -238,7 +242,10 @@ export function DocPanel({ slug }: { slug: string }) {
       pendingPersist.current = null
       void fetch(`/api/rooms/${slug}/doc`, {
         method: "PUT",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          ...roomAuthHeaders(slug),
+        },
         body: JSON.stringify(body),
       }).catch(() => undefined)
     },
