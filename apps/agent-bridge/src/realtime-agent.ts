@@ -14,8 +14,11 @@ import {
   type AgentActivityEvent,
   agentControlSchema,
   type CanvasOp,
+  type ChatMessage,
   chatMessageSchema,
   DataTopic,
+  mentionsName,
+  spokenMentionRegExp,
 } from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
 import {
@@ -23,6 +26,12 @@ import {
   bargeInConfigFromEnv,
   PcmRingBuffer,
 } from "./barge-in.js"
+import { collectBrainReply } from "./brain-reply.js"
+import {
+  CANVAS_PROTOCOL_NOTE,
+  CanvasBlockExtractor,
+  parseCanvasBlock,
+} from "./canvas-blocks.js"
 import { controlAllowed } from "./control-auth.js"
 import {
   GEMINI_INPUT_SAMPLE_RATE,
@@ -126,6 +135,24 @@ export async function runRealtimeAgent(opts: {
   /** Read/draw on the meeting's shared whiteboard. */
   readCanvas?: () => Promise<string>
   drawCanvas?: (ops: CanvasOp[]) => Promise<string>
+  /**
+   * Answer a chat @mention through the brain (text in, chat reply out,
+   * marker blocks acted on). Resolves with the posted text, so the voice
+   * model can be told what "it" said in chat.
+   */
+  onChatMention?: (
+    message: ChatMessage & { fromName: string },
+  ) => Promise<string | null>
+  /** Leave the meeting on request (asked aloud or in chat). */
+  leaveMeeting?: () => Promise<void>
+  /**
+   * Subscribes to the room transcriber's finalized utterances (speaker
+   * identity, display name, text) — what drives the Gemini gate's mention
+   * decisions, since that provider's gate can't rely on its own STT.
+   */
+  onUtterance?: (
+    fn: (identity: string, name: string, text: string) => void,
+  ) => void
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
   /** Fed what the agent said aloud, for the brain's record of the meeting. */
@@ -147,14 +174,16 @@ export async function runRealtimeAgent(opts: {
         : "OPENAI_API_KEY is required for realtime agents",
     )
   }
-  // Gemini Live always auto-responds to a completed turn — there is no
-  // create_response switch — so the deterministic gate behind on-mention and
-  // raise-hand cannot exist. Failing loudly beats an agent that talks when
-  // it was configured not to.
-  if (provider === "gemini" && entry.turn_policy !== "open") {
+  // Gemini's gate works differently from OpenAI's: automatic activity
+  // detection is disabled (the model cannot decide a turn ended, so it
+  // cannot decide to speak), the local VAD segments turns into a rolling
+  // buffer, and the room transcriber's finals drive the mention decision —
+  // an addressed turn is replayed to the model as an explicit activity.
+  // That needs a VAD; without one a gated Gemini agent would just be mute.
+  if (provider === "gemini" && entry.turn_policy !== "open" && !vad) {
     throw new Error(
-      `agent "${entry.id}": turn_policy "${entry.turn_policy}" requires the ` +
-        "openai realtime provider; Gemini Live cannot be gated",
+      `agent "${entry.id}": turn_policy "${entry.turn_policy}" on Gemini ` +
+        "needs the local VAD, which is unavailable",
     )
   }
   // Room audio in at the provider's rate; both providers speak 24 kHz out.
@@ -193,9 +222,13 @@ export async function runRealtimeAgent(opts: {
       "turn detection":
         entry.turn_policy === "open"
           ? "server vad"
-          : entry.turn_policy === "raise-hand"
-            ? "server vad, gated (raises hand; speaks on mention/call-on)"
-            : "server vad, gated (speaks on mention/call-on)",
+          : provider === "gemini"
+            ? entry.turn_policy === "raise-hand"
+              ? "local vad + transcript, gated (raises hand; speaks on mention/call-on)"
+              : "local vad + transcript, gated (speaks on mention/call-on)"
+            : entry.turn_policy === "raise-hand"
+              ? "server vad, gated (raises hand; speaks on mention/call-on)"
+              : "server vad, gated (speaks on mention/call-on)",
       "turn policy": entry.turn_policy,
       "echo control": "half-duplex",
       "barge-in":
@@ -252,29 +285,27 @@ export async function runRealtimeAgent(opts: {
     debug("info", `task started: "${request.slice(0, 200)}"`)
     try {
       const { text: input, images } = await attachScreenFrame(screen, request)
-      let reply = ""
       // The brain's tool activity streams to the room's activity feed, but
       // the realtime model only hears the final reply — so it can't speak to
       // what was actually done ("I filed issue #42"). Digest the tool calls
       // and hand them back with the reply.
       const actions: string[] = []
       let pendingCall: string | null = null
-      for await (const frame of brain.runTurn(input, images)) {
-        publishBrainActivity(entry.id, frame, callbacks)
-        if (frame.type === "assistant") {
-          reply += (reply ? "\n" : "") + frame.content
-        } else if (frame.type === "tool_call") {
-          pendingCall = `${frame.name}(${frame.arguments.slice(0, 120)})`
-        } else if (frame.type === "tool_result") {
-          if (actions.length < 12) {
-            const result = frame.content.replace(/\s+/g, " ").slice(0, 150)
-            actions.push(`${pendingCall ?? frame.name} -> ${result}`)
+      const reply = await collectBrainReply(
+        brain.runTurn(input, images),
+        (frame) => {
+          publishBrainActivity(entry.id, frame, callbacks)
+          if (frame.type === "tool_call") {
+            pendingCall = `${frame.name}(${frame.arguments.slice(0, 120)})`
+          } else if (frame.type === "tool_result") {
+            if (actions.length < 12) {
+              const result = frame.content.replace(/\s+/g, " ").slice(0, 150)
+              actions.push(`${pendingCall ?? frame.name} -> ${result}`)
+            }
+            pendingCall = null
           }
-          pendingCall = null
-        } else if (frame.type === "error") {
-          throw new Error(frame.error)
-        }
-      }
+        },
+      )
       const digest = actions.length
         ? `\n\n[For your own awareness — the tool actions behind this answer, so you can speak to them naturally and accurately:\n${actions.join("\n")}]`
         : ""
@@ -305,15 +336,10 @@ export async function runRealtimeAgent(opts: {
         "likely asking about — an error, a diff, a chart, the active window.",
     )
     if (!images) return "Nobody is sharing their screen at the moment."
-    let description = ""
-    for await (const frame of brain.runTurn(text, images)) {
-      publishBrainActivity(entry.id, frame, callbacks)
-      if (frame.type === "assistant") {
-        description += (description ? "\n" : "") + frame.content
-      } else if (frame.type === "error") {
-        throw new Error(frame.error)
-      }
-    }
+    const description = await collectBrainReply(
+      brain.runTurn(text, images),
+      (frame) => publishBrainActivity(entry.id, frame, callbacks),
+    )
     return description || "You couldn't make out what's on the screen."
   }
 
@@ -323,6 +349,59 @@ export async function runRealtimeAgent(opts: {
    * it. The voice model never authors persistent content, so doc writes get
    * the brain's judgment, memory and audit trail like everything else.
    */
+  /**
+   * Draw on the whiteboard on instruction: the brain composes the actual
+   * shapes — as canvas marker blocks, its native drawing vocabulary — and
+   * the bridge applies them. Mirrors updateDoc: the voice model describes
+   * intent, never authors coordinates. This is what makes drawing work on
+   * conversational realtime models (Gemini native audio especially), which
+   * cannot hold a spatial map while talking.
+   */
+  const drawOnCanvas =
+    readCanvas && drawCanvas
+      ? async (instruction: string): Promise<string> => {
+          callbacks.setState("thinking")
+          debug("info", `drawing started: "${instruction.slice(0, 200)}"`)
+          workInFlight++
+          try {
+            const board = await readCanvas()
+            const prompt =
+              "The meeting's shared whiteboard needs drawing. " +
+              `Instruction from the meeting: ${instruction}\n\n` +
+              `Current whiteboard: ${board}\n\n` +
+              `${CANVAS_PROTOCOL_NOTE}\n\n` +
+              "Reply with the canvas block(s) and nothing else — no " +
+              "prose outside the markers."
+            const reply = await collectBrainReply(
+              brain.runTurn(prompt),
+              (frame) => publishBrainActivity(entry.id, frame, callbacks),
+            )
+            const { blocks } = new CanvasBlockExtractor().feed(reply)
+            if (blocks.length === 0) {
+              debug("error", "drawing produced no canvas block")
+              return "Nothing was drawn — the drawing task produced no shapes."
+            }
+            const outcomes: string[] = []
+            for (const block of blocks) {
+              const parsed = parseCanvasBlock(block)
+              if ("error" in parsed) {
+                outcomes.push(parsed.error)
+                continue
+              }
+              outcomes.push(await drawCanvas(parsed.ops))
+            }
+            debug("info", "drawing applied")
+            return outcomes.join(" ")
+          } catch (err) {
+            debug("error", `drawing failed: ${(err as Error).message}`)
+            throw err
+          } finally {
+            workInFlight--
+            callbacks.setState(state.muted ? "muted" : "listening")
+          }
+        }
+      : undefined
+
   const updateDoc =
     readDoc && writeDoc
       ? async (instruction: string): Promise<string> => {
@@ -341,15 +420,10 @@ export async function runRealtimeAgent(opts: {
               "nothing else — no preamble, no commentary, no code fences. " +
               "Preserve everything already in the document unless the " +
               "instruction says to change it."
-            let updated = ""
-            for await (const frame of brain.runTurn(prompt)) {
-              publishBrainActivity(entry.id, frame, callbacks)
-              if (frame.type === "assistant") {
-                updated += (updated ? "\n" : "") + frame.content
-              } else if (frame.type === "error") {
-                throw new Error(frame.error)
-              }
-            }
+            const updated = await collectBrainReply(
+              brain.runTurn(prompt),
+              (frame) => publishBrainActivity(entry.id, frame, callbacks),
+            )
             const text = stripFence(updated)
             if (!text.trim()) {
               debug("error", "doc update produced no text; nothing written")
@@ -418,7 +492,10 @@ export async function runRealtimeAgent(opts: {
     readDoc,
     updateDoc,
     readCanvas,
-    drawCanvas,
+    drawCanvas: drawOnCanvas,
+    leaveMeeting: opts.leaveMeeting
+      ? () => void opts.leaveMeeting?.()
+      : undefined,
     onAgentSpoke: opts.onSpoke,
     // Offered only when a look could actually succeed. A webhook brain
     // drops images on the floor, so an agent on one must not be told it
@@ -437,9 +514,9 @@ export async function runRealtimeAgent(opts: {
         }
       : undefined,
     gate: {
-      // Substring, not word-boundary: STT often renders the name with
-      // possessives or punctuation attached ("Scout's", "scout?").
-      mention: new RegExp(entry.name.replace(/[^a-z0-9]/gi, ""), "i"),
+      // Loose matching: STT renders the name with possessives,
+      // punctuation or spacing of its own ("Scout's", "scout?", "r2 d2").
+      mention: spokenMentionRegExp(entry.name),
       // Under raise-hand, a mention only raises the hand; the floor is
       // granted exclusively by call-on.
       mentionSpeaks: () => state.turnPolicy !== "raise-hand",
@@ -491,9 +568,13 @@ export async function runRealtimeAgent(opts: {
   }
   const session =
     provider === "gemini"
-      ? // Gemini can't honor the gate (see the policy check above), and its
-        // constructor rejects one on principle — hand it gate-free options.
-        new GeminiLiveSession({ ...sessionOpts, gate: undefined })
+      ? // Manual turn detection from the start when the policy gates — the
+        // VAD mode is a setup-time choice; an open-policy session keeps
+        // Gemini's own (better) endpointing until a host gates it, which
+        // flips to manual over a reconnect.
+        new GeminiLiveSession(sessionOpts, {
+          manualTurns: entry.turn_policy !== "open",
+        })
       : new RealtimeSession(sessionOpts)
   await session.open()
   if (!session.live) throw new Error("realtime session failed to open")
@@ -550,6 +631,66 @@ export async function runRealtimeAgent(opts: {
   )
   let wasAudible = false
 
+  // ---- Gemini manual-turn gate --------------------------------------------
+  // With automatic activity detection off, room audio rolls into a bounded
+  // buffer instead of streaming to the model. The room transcriber's finals
+  // decide what happens to it: an addressed turn is replayed as an explicit
+  // activity (the model answers the actual audio); everything else reaches
+  // the model as text context only. When the gate is lifted (open policy
+  // flip, zap, call-on window), the local VAD's end-of-speech closes each
+  // turn instead — no mention needed.
+  const geminiSession = session instanceof GeminiLiveSession ? session : null
+  const manualTurns = () => geminiSession?.manualTurns ?? false
+  const TURN_RING_SECONDS = 15
+  const turnRing = geminiSession
+    ? new PcmRingBuffer(inputRate * TURN_RING_SECONDS)
+    : null
+  const turnStream = geminiSession && vad ? vad.stream() : null
+  const sendBufferedTurn = () => {
+    const pending = turnRing?.drain()
+    if (pending && pending.length > 0) {
+      geminiSession?.sendTurnAudio(
+        new Uint8Array(pending.buffer, 0, pending.length * 2),
+      )
+      return true
+    }
+    return false
+  }
+  if (turnStream) {
+    void (async () => {
+      for await (const event of turnStream) {
+        if (event.type !== VADEventType.END_OF_SPEECH) continue
+        if (!manualTurns() || !geminiSession?.gateOpen) continue
+        sendBufferedTurn()
+      }
+    })()
+  }
+  opts.onUtterance?.((identity, name, text) => {
+    if (!geminiSession || !manualTurns() || geminiSession.gateOpen) return
+    // Other agents never grant this one the floor — agent-to-agent audio
+    // loops would spiral, same rule as chat mentions.
+    if (identity.startsWith("agent-")) return
+    const gate = sessionOpts.gate
+    if (!gate) return
+    if (!gate.mention.test(text)) {
+      gate.onDecision?.(text, "deliberate")
+      geminiSession.notifyHeard(`[meeting audio] ${name}: ${text}`)
+      return
+    }
+    const speaks = gate.mentionSpeaks?.() ?? true
+    if (!speaks) {
+      gate.onDecision?.(text, "raise-hand")
+      gate.onHandRaise()
+      return
+    }
+    gate.onDecision?.(text, "speak")
+    if (!sendBufferedTurn()) {
+      // The ring was empty (flushed, or transcript raced the audio): the
+      // transcript itself becomes the turn.
+      geminiSession.notifyChat(`${name} said to you: "${text}"`)
+    }
+  })
+
   const pump = setInterval(() => {
     if (!session.live || fifos.size === 0) return
     // Mix first, unconditionally: even in the half-duplex window below, this
@@ -597,6 +738,12 @@ export async function runRealtimeAgent(opts: {
       prefix.clear()
     }
     if (!any) return
+    if (geminiSession && manualTurns()) {
+      // Manual-turn mode: the model gets audio only as explicit activities.
+      turnRing?.push(mixed)
+      turnStream?.pushFrame(new AudioFrame(mixed, inputRate, 1, samplesPerMix))
+      return
+    }
     session.appendAudio(new Uint8Array(mixed.buffer, 0, samplesPerMix * 2))
   }, MIX_INTERVAL_MS)
 
@@ -628,7 +775,12 @@ export async function runRealtimeAgent(opts: {
         // ("no, wait — I meant Tuesday") are simply lost.
         const pending = prefix.drain()
         if (pending.length > 0) {
-          session.appendAudio(new Uint8Array(pending.buffer))
+          const bytes = new Uint8Array(pending.buffer, 0, pending.length * 2)
+          if (geminiSession && manualTurns()) {
+            geminiSession.sendTurnAudio(bytes)
+          } else {
+            session.appendAudio(bytes)
+          }
         }
         callbacks.setState(idleState())
         debug(
@@ -651,9 +803,42 @@ export async function runRealtimeAgent(opts: {
         // Attribution from the actual LiveKit sender — a crafted payload
         // must not put words in someone else's mouth in the model's context.
         if (!sender || sender.identity === `agent-${entry.id}`) return
-        session.notifyChat(
-          `[meeting chat] ${sender.name || sender.identity}: ${message.text}`,
-        )
+        const line = `[meeting chat] ${sender.name || sender.identity}: ${message.text}`
+        // An @mention is a question to THIS agent — passive context isn't
+        // enough, it has to actually answer in the chat (#112). Other
+        // agents' mentions of us don't qualify; agent-to-agent chat loops
+        // would spiral.
+        if (
+          !sender.identity.startsWith("agent-") &&
+          mentionsName(message.text, entry.name)
+        ) {
+          if (opts.onChatMention) {
+            // The brain answers chat, not the voice model — it has the
+            // tools, memory and marker-block powers (doc edits, drawings)
+            // a chat request may need. The session still hears both sides
+            // as passive context so the spoken conversation stays coherent.
+            debug("info", "chat mention: replying via brain")
+            session.notifyChat(line)
+            void opts
+              .onChatMention({
+                ...message,
+                fromName: sender.name || sender.identity,
+              })
+              .then((posted) => {
+                if (posted) {
+                  session.notifyChat(
+                    `[meeting chat] ${entry.name} (you) replied: ${posted}`,
+                  )
+                }
+              })
+              .catch(() => undefined)
+          } else {
+            debug("info", `chat mention: replying in chat`)
+            session.promptChatReply(line)
+          }
+        } else {
+          session.notifyChat(line)
+        }
       } catch {}
       return
     }

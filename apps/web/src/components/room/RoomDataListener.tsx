@@ -6,10 +6,11 @@ import {
   canvasDiffSchema,
   canvasSnapshotSchema,
   chatMessageSchema,
+  chatOpSchema,
   DataTopic,
   docPresenceSchema,
+  docSyncMessageSchema,
   parseParticipantMeta,
-  sharedDocSchema,
   TYPING_STALE_MS,
 } from "@meet/shared"
 import { RoomEvent } from "livekit-client"
@@ -23,7 +24,7 @@ import {
   noteAgentDrawing,
   resetCanvas,
 } from "@/stores/canvas"
-import { applyDocUpdate, resetDoc } from "@/stores/doc"
+import { $doc, applyRemoteDocUpdate, resetDoc } from "@/stores/doc"
 import {
   removeDocPresence,
   resetDocPresence,
@@ -34,8 +35,10 @@ import {
   addChatMessage,
   clearAgentTyping,
   pruneTypingAgents,
+  removeChatMessage,
   resetRoomData,
   setAgentTyping,
+  updateChatMessage,
 } from "@/stores/roomData"
 
 /** Always-mounted subscriber: chat and agent activity survive panel toggling. */
@@ -44,38 +47,55 @@ export function RoomDataListener({ slug }: { slug: string }) {
 
   useDataChannel(DataTopic.Chat, (msg) => {
     try {
-      const parsed = chatMessageSchema.safeParse(
-        JSON.parse(new TextDecoder().decode(msg.payload)),
-      )
-      if (!parsed.success) return
-      // The payload's claimed sender is replaced with the actual LiveKit
-      // sender — anyone can type any name into a crafted data message.
-      addChatMessage(
-        msg.from
-          ? {
-              ...parsed.data,
-              from: msg.from.identity,
-              fromName: msg.from.name || msg.from.identity,
-            }
-          : parsed.data,
-      )
-      // The message landing is itself the end of composing, so clear any
-      // lingering "typing…" for its sender even if the stop signal is in flight.
-      if (msg.from) clearAgentTyping(msg.from.identity)
+      const raw = JSON.parse(new TextDecoder().decode(msg.payload))
+
+      const parsed = chatMessageSchema.safeParse(raw)
+      if (parsed.success) {
+        // The payload's claimed sender is replaced with the actual LiveKit
+        // sender — anyone can type any name into a crafted data message.
+        addChatMessage(
+          msg.from
+            ? {
+                ...parsed.data,
+                from: msg.from.identity,
+                fromName: msg.from.name || msg.from.identity,
+              }
+            : parsed.data,
+        )
+        // The message landing is itself the end of composing, so clear any
+        // lingering "typing…" for its sender even if the stop signal is in flight.
+        if (msg.from) clearAgentTyping(msg.from.identity)
+        return
+      }
+
+      // Not a new message — check whether it's an edit/delete op instead.
+      // Same rule as above: the op is only honored against the actual
+      // LiveKit sender, checked inside the store against the original
+      // message's author, never against whatever the payload claims.
+      if (!msg.from) return
+      const op = chatOpSchema.safeParse(raw)
+      if (!op.success) return
+      const by = msg.from.identity
+      if (op.data.op === "edit") {
+        updateChatMessage(op.data.id, by, op.data.text, op.data.at)
+      } else {
+        removeChatMessage(op.data.id, by)
+      }
     } catch {}
   })
 
   useDataChannel(DataTopic.AgentActivity, (msg) => {
     try {
-      // Only the bridge's agent participants publish activity; a human
-      // crafting activity packets must not be able to fake agent behavior.
-      if (!msg.from || !msg.from.identity.startsWith("agent-")) return
+      if (!msg.from) return
       const parsed = agentActivityEventSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
       if (!parsed.success) return
       // Typing is transient presence keyed by the real sender, not a logged
       // step — route it to the indicator rather than the activity feed.
+      // Unlike the feed below it's open to humans too: composing in the
+      // chat is presence anyone may claim about themselves, and the
+      // attribution is the verified sender either way.
       if (parsed.data.type === "typing") {
         setAgentTyping(
           msg.from.identity,
@@ -85,26 +105,29 @@ export function RoomDataListener({ slug }: { slug: string }) {
         )
         return
       }
+      // Only the bridge's agent participants publish real activity; a human
+      // crafting activity packets must not be able to fake agent behavior.
+      if (!msg.from.identity.startsWith("agent-")) return
       addAgentActivity(parsed.data)
     } catch {}
   })
 
   useDataChannel(DataTopic.Doc, (msg) => {
     try {
-      const parsed = sharedDocSchema.safeParse(
+      const parsed = docSyncMessageSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
       )
       if (!parsed.success) return
-      // Attribution follows the actual LiveKit sender, not payload claims.
-      applyDocUpdate(
-        msg.from
-          ? {
-              ...parsed.data,
-              by: msg.from.identity,
-              byName: msg.from.name || msg.from.identity,
-            }
-          : parsed.data,
-      )
+      if (!applyRemoteDocUpdate(parsed.data.update)) return
+      // Attribution follows the actual LiveKit sender, not payload claims —
+      // shown as "last edited by", while the text itself merged above.
+      if (msg.from) {
+        $doc.set({
+          ...$doc.get(),
+          by: msg.from.identity,
+          byName: msg.from.name || msg.from.identity,
+        })
+      }
     } catch {}
   })
 
@@ -194,18 +217,29 @@ export function RoomDataListener({ slug }: { slug: string }) {
   // first line was written sees a blank page until somebody types.
   useEffect(() => {
     let cancelled = false
-    fetch(`/api/rooms/${slug}/doc`, { headers: roomAuthHeaders(slug) })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => {
-        if (cancelled || !body) return
-        const parsed = sharedDocSchema.safeParse(body.doc)
-        if (parsed.success) applyDocUpdate(parsed.data)
-      })
-      .catch(() => undefined)
+    const fetchDocSnapshot = () => {
+      fetch(`/api/rooms/${slug}/doc`, { headers: roomAuthHeaders(slug) })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body: { snapshot?: unknown } | null) => {
+          if (cancelled || !body) return
+          if (typeof body.snapshot === "string" && body.snapshot) {
+            // A CRDT state merges with whatever broadcasts raced past it —
+            // apply order between this fetch and live updates doesn't matter.
+            applyRemoteDocUpdate(body.snapshot)
+          }
+        })
+        .catch(() => undefined)
+    }
+    fetchDocSnapshot()
+    // Refetched after a reconnect: an update lost across the gap would
+    // leave Yjs queueing everything after it — the doc looks frozen until
+    // a full state fills the hole.
+    room.on(RoomEvent.Reconnected, fetchDocSnapshot)
     return () => {
       cancelled = true
+      room.off(RoomEvent.Reconnected, fetchDocSnapshot)
     }
-  }, [slug])
+  }, [slug, room])
 
   // Same for the whiteboard. Records carry their own clocks, so this fetch
   // and any diffs racing past it converge whichever lands first.

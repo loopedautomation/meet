@@ -83,7 +83,11 @@ export function MeetingView({
   const whiteboardOpen = useStore($canvasOpen)
 
   return (
-    <div className="flex h-dvh flex-col bg-base-200">
+    // overflow-hidden + overscroll-none: the meeting is an app surface, not
+    // a document — nothing inside it may push the page into scrolling
+    // (mobile rubber-banding, sideways drift from a wide header or a
+    // dragged self-view at the edge).
+    <div className="flex h-dvh flex-col overflow-hidden overscroll-none bg-base-200">
       <RoomAudioRenderer />
       <RoomDataListener slug={slug} />
       <ControlBar slug={slug} shareBase={shareBase} startedAt={startedAt} />
@@ -219,7 +223,10 @@ function ParticipantStrip({
   children?: React.ReactNode
 }) {
   return (
-    <div className="flex shrink-0 flex-row flex-wrap justify-center gap-3 overflow-x-auto">
+    // overflow-x-auto forces overflow-y out of `visible` too, which would clip
+    // the speaking ring (a box-shadow outside the tile) — the p-1/-m-1 pair
+    // gives the ring room inside the scroll container without shifting layout.
+    <div className="-m-1 flex shrink-0 flex-row flex-wrap justify-center gap-3 overflow-x-auto p-1">
       {children}
       {tracks.map((trackRef) => (
         <div

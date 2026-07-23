@@ -1,4 +1,5 @@
 import type { CanvasColor, CanvasOp, CanvasRecord } from "@meet/shared"
+import { expandDiagram } from "./mermaid-diagram.js"
 
 // Translates the agent's drawing vocabulary into plain Excalidraw element
 // JSON — no browser, no editor. Elements are built conservatively with every
@@ -129,16 +130,18 @@ type Box = { x: number; y: number; w: number; h: number }
 const PLACE_GAP = 80
 
 /**
- * Enough of `b` is buried under `a` that both stop being readable. Touching
- * or slightly overlapping neighbours are deliberate layout; a shape landing
- * on top of another is the failure mode this guards against.
+ * The two shapes land on near enough the same footprint that neither stays
+ * readable — a repeated create stacking on top of an existing shape, the
+ * failure mode this guards against. Measured against the LARGER shape: a
+ * small shape placed inside a big one (a bar in a chart frame, a note in a
+ * region box) is deliberate nesting, not a burial.
  */
 function overlapsHeavily(a: Box, b: Box): boolean {
   const ix = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)
   const iy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y)
   if (ix <= 0 || iy <= 0) return false
-  const smaller = Math.min(a.w * a.h, b.w * b.h)
-  return smaller > 0 && (ix * iy) / smaller > 0.4
+  const larger = Math.max(a.w * a.h, b.w * b.h)
+  return larger > 0 && (ix * iy) / larger > 0.4
 }
 
 /** Shapes a new element must keep clear of: live, top-level, with area. */
@@ -214,7 +217,7 @@ function placeCreate(
 }
 
 export function buildCanvasRecords(
-  ops: CanvasOp[],
+  rawOps: CanvasOp[],
   existing: ReadonlyMap<string, CanvasRecord>,
   author: Author,
 ): BuildResult {
@@ -225,6 +228,84 @@ export function buildCanvasRecords(
   // them — so changes accumulate into a working view of the room.
   const working = new Map(existing)
   const changes = new Map<string, CanvasRecord>()
+
+  // Diagram ops expand into the primitives below before anything runs: the
+  // Mermaid topology is laid out by dagre relative to (0,0), then the whole
+  // block is placed once — at the op's x/y, or in free space like any other
+  // create — and each primitive is offset to its spot in the block.
+  const ops: CanvasOp[] = []
+  for (const op of rawOps) {
+    if (op.op !== "diagram") {
+      ops.push(op)
+      continue
+    }
+    const expanded = expandDiagram(op.id, op.mermaid)
+    if (!expanded) {
+      warnings.push(
+        `"${op.id}" wasn't valid Mermaid flowchart source; nothing was drawn for it. Use "flowchart TD" / "graph LR" node-and-edge syntax.`,
+      )
+      continue
+    }
+    const shapes = expanded.filter((child) => child.op !== "arrow")
+    const bboxW = Math.max(
+      ...shapes.map(
+        (s) => ((s as { x?: number }).x ?? 0) + (s as { w?: number }).w!,
+      ),
+      1,
+    )
+    const bboxH = Math.max(
+      ...shapes.map(
+        (s) => ((s as { y?: number }).y ?? 0) + (s as { h?: number }).h!,
+      ),
+      1,
+    )
+    // A redraw of an existing diagram is an edit, not a new drawing: anchor
+    // the block where its nodes already sit (explicit x/y still wins), so
+    // "add a cache box to the diagram" updates in place instead of laying
+    // out a duplicate in fresh space.
+    let spot: { x: number; y: number } | null = null
+    if (op.x === undefined || op.y === undefined) {
+      for (const child of shapes) {
+        const el = liveElement(
+          working.get(resolveId((child as { id: string }).id)),
+        )
+        if (el && typeof el.x === "number" && typeof el.y === "number") {
+          spot = {
+            x: (el.x as number) - ((child as { x?: number }).x ?? 0),
+            y: (el.y as number) - ((child as { y?: number }).y ?? 0),
+          }
+          break
+        }
+      }
+    }
+    spot ??= placeCreate(working, op.id, op, bboxW, bboxH)
+    for (const child of expanded) {
+      if (child.op === "arrow") {
+        // Waypoints were computed diagram-relative; shift them to the spot
+        // the block landed on, like the shapes above.
+        ops.push(
+          child.via
+            ? {
+                ...child,
+                via: child.via.map((p) => ({
+                  x: p.x + spot.x,
+                  y: p.y + spot.y,
+                })),
+              }
+            : child,
+        )
+      } else {
+        ops.push({
+          ...child,
+          x: ((child as { x?: number }).x ?? 0) + spot.x,
+          y: ((child as { y?: number }).y ?? 0) + spot.y,
+        } as CanvasOp)
+      }
+    }
+    actions.push(
+      `laid out diagram ${op.id} (${shapes.length} nodes) at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
+    )
+  }
 
   const put = (id: string, element: LooseElement) => {
     const prior = working.get(id)
@@ -434,18 +515,27 @@ export function buildCanvasRecords(
         const end = toShape
           ? center(toShape)
           : (op.toPoint ?? { x: start.x + 100, y: start.y })
+        const waypoints = (op.via ?? []).map(
+          (p) => [p.x - start.x, p.y - start.y] as [number, number],
+        )
+        const points: [number, number][] = [
+          [0, 0],
+          ...waypoints,
+          [end.x - start.x, end.y - start.y],
+        ]
         const element: LooseElement = {
           ...baseElement(id, at),
           type: "arrow",
           x: start.x,
           y: start.y,
-          width: Math.abs(end.x - start.x),
-          height: Math.abs(end.y - start.y),
+          width:
+            Math.max(...points.map((p) => p[0])) -
+            Math.min(...points.map((p) => p[0])),
+          height:
+            Math.max(...points.map((p) => p[1])) -
+            Math.min(...points.map((p) => p[1])),
           strokeColor: STROKE_COLORS[op.color ?? "black"],
-          points: [
-            [0, 0],
-            [end.x - start.x, end.y - start.y],
-          ],
+          points,
           lastCommittedPoint: null,
           startBinding: fromShape
             ? { elementId: fromId, focus: 0, gap: 4 }
@@ -646,14 +736,20 @@ export function describeCanvas(
       return ay === by ? (a.x as number) - (b.x as number) : ay - by
     })
 
+  // Reverse palette lookup so edits can reference colors by name.
+  const colorNames = new Map(
+    Object.entries(STROKE_COLORS).map(([name, hex]) => [hex, name]),
+  )
   const lines: string[] = []
   for (const [id, element] of others) {
     const text = labelOf(id)
     const size = ` ${Math.round(element.width as number)}x${Math.round(
       element.height as number,
     )}`
+    const colorName = colorNames.get(element.strokeColor as string)
+    const color = colorName && colorName !== "black" ? ` ${colorName}` : ""
     lines.push(
-      `- ${element.type}${text ? ` "${truncate(text, 60)}"` : ""} (id ${id}) at (${Math.round(
+      `-${color} ${element.type}${text ? ` "${truncate(text, 60)}"` : ""} (id ${id}) at (${Math.round(
         element.x as number,
       )}, ${Math.round(element.y as number)})${size}`,
     )

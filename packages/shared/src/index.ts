@@ -1,4 +1,7 @@
+import * as Y from "yjs"
 import { z } from "zod"
+
+export { Y }
 
 /** Data-channel topics used across web and agent-bridge. */
 export const DataTopic = {
@@ -152,29 +155,68 @@ export function parseParticipantMeta(
   }
 }
 
-/** Voices an agent may speak with (OpenAI realtime model voices). */
-export const AGENT_VOICES = [
-  "marin",
-  "cedar",
-  "alloy",
-  "ash",
-  "coral",
-  "sage",
-  "verse",
-] as const
+/**
+ * Voices an agent may speak with (OpenAI realtime model voices), with
+ * OpenAI's published character descriptors. Unlike Gemini, OpenAI states
+ * no voice gender — so the badges say only how each sounds.
+ */
+export const OPENAI_REALTIME_VOICE_INFO = {
+  marin: { tone: "Fresh" },
+  cedar: { tone: "Warm" },
+  alloy: { tone: "Neutral" },
+  ash: { tone: "Clear" },
+  coral: { tone: "Friendly" },
+  sage: { tone: "Calm" },
+  verse: { tone: "Expressive" },
+} as const satisfies Record<string, { tone: string }>
+
+export const AGENT_VOICES = Object.keys(
+  OPENAI_REALTIME_VOICE_INFO,
+) as readonly (keyof typeof OPENAI_REALTIME_VOICE_INFO)[]
 export type AgentVoice = (typeof AGENT_VOICES)[number]
 
-/** Prebuilt voices of Google's Gemini Live realtime models. */
-export const GEMINI_VOICES = [
-  "Puck",
-  "Charon",
-  "Kore",
-  "Fenrir",
-  "Aoede",
-  "Leda",
-  "Orus",
-  "Zephyr",
-] as const
+/**
+ * Prebuilt voices of Google's Gemini Live realtime models — the full
+ * 30-voice roster, with the voice gender from the Gemini-TTS docs and the
+ * one-word character from the Live API docs, so pickers can say more than
+ * a star name.
+ */
+export const GEMINI_VOICE_INFO = {
+  Puck: { gender: "M", tone: "Upbeat" },
+  Charon: { gender: "M", tone: "Informative" },
+  Kore: { gender: "F", tone: "Firm" },
+  Fenrir: { gender: "M", tone: "Excitable" },
+  Aoede: { gender: "F", tone: "Breezy" },
+  Leda: { gender: "F", tone: "Youthful" },
+  Orus: { gender: "M", tone: "Firm" },
+  Zephyr: { gender: "F", tone: "Bright" },
+  Achernar: { gender: "F", tone: "Soft" },
+  Achird: { gender: "M", tone: "Friendly" },
+  Algenib: { gender: "M", tone: "Gravelly" },
+  Algieba: { gender: "M", tone: "Smooth" },
+  Alnilam: { gender: "M", tone: "Firm" },
+  Autonoe: { gender: "F", tone: "Bright" },
+  Callirrhoe: { gender: "F", tone: "Easy-going" },
+  Despina: { gender: "F", tone: "Smooth" },
+  Enceladus: { gender: "M", tone: "Breathy" },
+  Erinome: { gender: "F", tone: "Clear" },
+  Gacrux: { gender: "F", tone: "Mature" },
+  Iapetus: { gender: "M", tone: "Clear" },
+  Laomedeia: { gender: "F", tone: "Upbeat" },
+  Pulcherrima: { gender: "F", tone: "Forward" },
+  Rasalgethi: { gender: "M", tone: "Informative" },
+  Sadachbia: { gender: "M", tone: "Lively" },
+  Sadaltager: { gender: "M", tone: "Knowledgeable" },
+  Schedar: { gender: "M", tone: "Even" },
+  Sulafat: { gender: "F", tone: "Warm" },
+  Umbriel: { gender: "M", tone: "Easy-going" },
+  Vindemiatrix: { gender: "F", tone: "Gentle" },
+  Zubenelgenubi: { gender: "M", tone: "Casual" },
+} as const satisfies Record<string, { gender: "F" | "M"; tone: string }>
+
+export const GEMINI_VOICES = Object.keys(
+  GEMINI_VOICE_INFO,
+) as readonly (keyof typeof GEMINI_VOICE_INFO)[]
 
 /** Voices of OpenAI's TTS models (the pipeline mode's speech output). */
 export const OPENAI_TTS_VOICES = [
@@ -398,84 +440,193 @@ export const chatMessageSchema = z.object({
   fromName: z.string().max(128),
   text: z.string().max(8000),
   at: z.number(),
+  /** Set when the author edits the message after sending. */
+  editedAt: z.number().optional(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
 
 /**
- * The meeting's shared markdown document, on the `doc` topic.
- *
- * Whole-document updates rather than character operations: this is a plan
- * being written during a call, where the agent drafts and people edit
- * between turns, not a Google Doc with six simultaneous typists. `rev`
- * orders edits so a straggling broadcast can't resurrect stale text.
+ * Edit/delete ops, broadcast on the same `chat` topic alongside regular
+ * messages. Deliberately shaped nothing like `chatMessageSchema` (no
+ * `from`/`fromName`/`text` triplet) so a listener that tries the message
+ * schema first rejects an op cleanly instead of half-matching it.
  */
-/**
- * Ceiling on a document revision. Bounded so a malicious MAX_SAFE_INTEGER
- * `rev` can't freeze everyone's edits: without a cap, one huge revision
- * would make every legitimate `+1` increment overflow schema validation
- * forever. No real meeting doc approaches a billion edits.
- */
-export const MAX_DOC_REV = 1_000_000_000
+export const chatOpSchema = z.discriminatedUnion("op", [
+  z.object({
+    op: z.literal("edit"),
+    id: z.string().max(64),
+    text: z.string().max(8000),
+    at: z.number(),
+  }),
+  z.object({
+    op: z.literal("delete"),
+    id: z.string().max(64),
+    at: z.number(),
+  }),
+])
+export type ChatOp = z.infer<typeof chatOpSchema>
 
-/** Next revision after `current`, clamped so it can never exceed the cap. */
-export function nextDocRev(current: number): number {
-  return Math.min(current + 1, MAX_DOC_REV)
+// ---- shared document sync --------------------------------------------------
+// The meeting's shared markdown document, on the `doc` topic — a Yjs text
+// CRDT carried over the LiveKit data channel. Every participant (clients
+// and the agent bridge) holds a Y.Doc; edits are minimal text splices that
+// merge instead of racing, so two people (or a person and an agent) typing
+// at once both land. This replaced a whole-document last-writer-wins scheme
+// whose accepted cost was dropped keystrokes under concurrency.
+//
+// Transport: incremental updates broadcast as base64 (docSyncMessageSchema);
+// durability: full encoded states PUT to the bridge store on a debounce,
+// merged bytewise there (Y.mergeUpdates — commutative and idempotent) and
+// served to late joiners as a snapshot.
+// Lives inline rather than in its own module: workspace consumers span
+// NodeNext (bridge) and Turbopack (web), which disagree on how a relative
+// import inside this transpiled package must be spelled.
+
+/** The read-side view of the document: text plus display metadata. */
+export type SharedDoc = {
+  text: string
+  by: string
+  byName: string
+  at: number
+  /** Bumped per edit; > 0 means someone has written. Cosmetic only. */
+  rev: number
 }
-
-/** An incoming rev clamped to at most one past what we already hold. */
-export function clampIncomingDocRev(
-  incomingRev: number,
-  currentRev: number,
-): number {
-  return Math.min(incomingRev, nextDocRev(currentRev))
-}
-
-export const sharedDocSchema = z.object({
-  // Char cap well above the store's byte cap — the store enforces bytes;
-  // this stops a pathological payload before it's even merged.
-  text: z.string().max(300_000),
-  /**
-   * Increments on every accepted edit; the primary ordering. Bounded by
-   * MAX_DOC_REV so a malicious revision can't freeze everyone's updates.
-   */
-  rev: z.number().int().min(0).max(MAX_DOC_REV),
-  /** Who last wrote, so the panel can say "Scout is drafting". */
-  by: z.string().max(128),
-  byName: z.string().max(128),
-  at: z.number(),
-})
-export type SharedDoc = z.infer<typeof sharedDocSchema>
 
 export const emptySharedDoc: SharedDoc = {
   text: "",
-  rev: 0,
   by: "",
   byName: "",
   at: 0,
+  rev: 0,
+}
+
+/** An incremental update on the `doc` data topic. */
+export const docSyncMessageSchema = z.object({
+  type: z.literal("doc-sync"),
+  /** base64-encoded Yjs update. */
+  update: z.string().min(1).max(1_500_000),
+})
+export type DocSyncMessage = z.infer<typeof docSyncMessageSchema>
+
+/** The PUT body for the durable store: the sender's full encoded state. */
+export const docSnapshotPutSchema = z.object({
+  update: z.string().min(1).max(2_000_000),
+})
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64")
+  }
+  let binary = ""
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
+  }
+  return btoa(binary)
+}
+
+export function base64ToBytes(b64: string): Uint8Array {
+  if (typeof Buffer !== "undefined") {
+    return new Uint8Array(Buffer.from(b64, "base64"))
+  }
+  const binary = atob(b64)
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return bytes
+}
+
+export function docText(doc: Y.Doc): Y.Text {
+  return doc.getText("text")
+}
+
+function docMeta(doc: Y.Doc): Y.Map<unknown> {
+  return doc.getMap("meta")
+}
+
+export function readSharedDoc(doc: Y.Doc): SharedDoc {
+  const meta = docMeta(doc)
+  return {
+    text: docText(doc).toString(),
+    by: (meta.get("by") as string) ?? "",
+    byName: (meta.get("byName") as string) ?? "",
+    at: (meta.get("at") as number) ?? 0,
+    rev: (meta.get("rev") as number) ?? 0,
+  }
 }
 
 /**
- * Picks the winner between what we hold and what just arrived.
- *
- * Every peer runs this on the same pair and must reach the same answer, or
- * the room's copies diverge silently — which is why the tie-breaks go all
- * the way down to comparing identities rather than stopping at "whatever
- * arrived last". Two people editing the same instant means one of them
- * loses their keystroke; that's the accepted cost of not shipping a CRDT.
+ * Set the document to `next` as a minimal splice — common prefix and suffix
+ * preserved — so a concurrent edit elsewhere in the text merges cleanly
+ * instead of being overwritten. One transaction: text and authorship move
+ * together, and observers fire once.
  */
-export function mergeSharedDoc(
-  current: SharedDoc,
-  incoming: SharedDoc,
-): SharedDoc {
-  if (incoming.rev !== current.rev) {
-    return incoming.rev > current.rev ? incoming : current
+export function setSharedDocText(
+  doc: Y.Doc,
+  next: string,
+  author: { by: string; byName: string },
+  origin?: unknown,
+): boolean {
+  const ytext = docText(doc)
+  const prev = ytext.toString()
+  if (prev === next) return false
+  let start = 0
+  while (
+    start < prev.length &&
+    start < next.length &&
+    prev[start] === next[start]
+  ) {
+    start++
   }
-  if (incoming.at !== current.at) {
-    return incoming.at > current.at ? incoming : current
+  let prevEnd = prev.length
+  let nextEnd = next.length
+  while (
+    prevEnd > start &&
+    nextEnd > start &&
+    prev[prevEnd - 1] === next[nextEnd - 1]
+  ) {
+    prevEnd--
+    nextEnd--
   }
-  // Same revision, same millisecond: fall back to a stable comparison so
-  // every participant converges on one text instead of on their own.
-  return incoming.by > current.by ? incoming : current
+  doc.transact(() => {
+    if (prevEnd > start) ytext.delete(start, prevEnd - start)
+    if (nextEnd > start) ytext.insert(start, next.slice(start, nextEnd))
+    const meta = docMeta(doc)
+    meta.set("by", author.by)
+    meta.set("byName", author.byName)
+    meta.set("at", Date.now())
+    meta.set("rev", ((meta.get("rev") as number) ?? 0) + 1)
+  }, origin)
+  return true
+}
+
+/** Apply a base64 update; unparseable payloads are dropped, not thrown. */
+export function applyDocUpdateB64(
+  doc: Y.Doc,
+  b64: string,
+  origin?: unknown,
+): boolean {
+  try {
+    Y.applyUpdate(doc, base64ToBytes(b64), origin)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** The doc's full state as a base64 update (a late joiner's seed). */
+export function encodeDocStateB64(doc: Y.Doc): string {
+  return bytesToBase64(Y.encodeStateAsUpdate(doc))
+}
+
+/**
+ * The incremental update representing everything in `doc` that happened
+ * after `sinceStateVector` (from Y.encodeStateVector taken beforehand).
+ */
+export function encodeDocDiffB64(
+  doc: Y.Doc,
+  sinceStateVector: Uint8Array,
+): string {
+  return bytesToBase64(Y.encodeStateAsUpdate(doc, sinceStateVector))
 }
 
 /**
@@ -719,6 +870,12 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     to: z.string().optional(),
     fromPoint: canvasPointSchema.optional(),
     toPoint: canvasPointSchema.optional(),
+    /**
+     * Optional waypoints (page pixels) the arrow routes through between its
+     * ends — how diagram layout keeps a long back-edge from cutting
+     * straight through the boxes it passes.
+     */
+    via: z.array(canvasPointSchema).max(16).optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
   }),
@@ -749,6 +906,18 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("clear"),
+  }),
+  // A whole structured diagram from Mermaid flowchart source: the bridge
+  // parses the topology and lays it out with a real graph-layout algorithm,
+  // so models describe boxes-and-arrows without ever guessing coordinates.
+  // The op expands into rect/ellipse/arrow primitives, ids prefixed
+  // "<id>.<node>", placed as one block in free space (or at x/y if given).
+  z.object({
+    op: z.literal("diagram"),
+    id: z.string().min(1),
+    mermaid: z.string().min(1).max(20_000),
+    x: z.number().optional(),
+    y: z.number().optional(),
   }),
 ])
 export type CanvasOp = z.infer<typeof canvasOpSchema>
@@ -824,3 +993,41 @@ export const agentInfoSchema = z.object({
   ttsVoice: z.string().optional(),
 })
 export type AgentInfo = z.infer<typeof agentInfoSchema>
+
+// ---- @mention matching ------------------------------------------------------
+// One definition of "was this agent addressed", shared by the web's mention
+// picker and both agent-bridge modes. Names come from registries and LiveKit
+// participant info, so they can contain spaces and regex metacharacters —
+// interpolating them into a RegExp unescaped mis-matches or throws (#112).
+
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * Does `text` contain a chat @mention of `name`? Whitespace inside the name
+ * is matched loosely (the picker inserts "@Full Name" verbatim, but humans
+ * retype it with whatever spacing), and the name must end at a word
+ * boundary so "@Scout" doesn't hit "@Scouting".
+ */
+export function mentionsName(text: string, name: string): boolean {
+  const parts = name.trim().split(/\s+/).filter(Boolean).map(escapeRegExp)
+  if (parts.length === 0) return false
+  return new RegExp(`@${parts.join("\\s+")}(?![\\w-])`, "i").test(text)
+}
+
+/**
+ * A regex matching `name` as heard in a spoken transcript. STT renders
+ * names with arbitrary punctuation, possessives and spacing ("Scout's",
+ * "scout-team", "R2 D2"), so match the name's alphanumeric runs in order
+ * with anything non-alphanumeric between them.
+ */
+export function spokenMentionRegExp(name: string): RegExp {
+  const parts = name
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map(escapeRegExp)
+  // An all-punctuation name can't be heard; match nothing rather than everything.
+  if (parts.length === 0) return /(?!)/
+  return new RegExp(parts.join("[^a-zA-Z0-9]*"), "i")
+}

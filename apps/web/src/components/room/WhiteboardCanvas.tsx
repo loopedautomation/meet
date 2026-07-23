@@ -183,6 +183,13 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
       ) {
         continue
       }
+      // A cache tombstone with a still-live scene element is a remote
+      // delete/clear the editor hasn't applied yet — re-authoring it here
+      // would resurrect the shape with a fresher LWW clock and the delete
+      // would silently lose. Skip it; the scene rebuild drops it next.
+      if (cached?.isDeleted === true && element.isDeleted !== true) {
+        continue
+      }
       // Version churn without a content change is Excalidraw's own
       // bookkeeping (fractional-index assignment on restore, binding
       // repairs): fold it into the cache but don't re-author the element —
@@ -212,6 +219,7 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
   // Incoming: cache changes (remote diffs, late snapshot fetch) → editor.
   // Batched: a chunked agent diff arrives as many cache writes in one tick,
   // and one scene rebuild covers them all.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: onSceneChange reads only refs and stores; identity is the sole input that must resubscribe
   useEffect(() => {
     const unlisten = $canvasRecords.listen((records, _old, changedKey) => {
       if (records[changedKey]?.by === identity) return
@@ -220,6 +228,12 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
         remoteFlushTimer.current = null
         const api = apiRef.current
         if (!api) return
+        // Fold in any local edit Excalidraw has committed but not yet
+        // delivered through onChange — a delete or drag landing while an
+        // agent's reveal streams in. Rebuilding without it would silently
+        // revert the edit; capturing it first re-authors it on top of the
+        // just-merged remote clock, so it wins the LWW race instead.
+        onSceneChange()
         try {
           api.updateScene({
             // biome-ignore lint/suspicious/noExplicitAny: opaque element JSON

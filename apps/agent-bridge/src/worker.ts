@@ -18,21 +18,30 @@ import {
   type AgentActivityEvent,
   type AgentState,
   agentControlSchema,
+  applyDocUpdateB64,
   type CanvasDiff,
   type CanvasOp,
   type CanvasPresence,
+  type CanvasRecord,
   type ChatMessage,
+  canvasDiffSchema,
   chatMessageSchema,
   chunkCanvasChanges,
   DataTopic,
   type DocPresence,
   docCursorColor,
+  docSyncMessageSchema,
+  encodeDocDiffB64,
+  mentionsName,
+  mergeCanvasRecord,
   type ParticipantMeta,
   parseParticipantMeta,
+  readSharedDoc,
   type SharedDoc,
-  sharedDocSchema,
+  setSharedDocText,
   TRANSCRIPTION_TOPIC,
   TYPING_HEARTBEAT_MS,
+  Y,
 } from "@meet/shared"
 import {
   CURSOR_FRAME_MS,
@@ -44,9 +53,24 @@ import {
 } from "./agent-presence.js"
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
+import { collectBrainReply } from "./brain-reply.js"
+import {
+  CANVAS_PROTOCOL_NOTE,
+  CanvasBlockExtractor,
+  parseCanvasBlock,
+} from "./canvas-blocks.js"
 import { buildCanvasRecords } from "./canvas-records.js"
 import { controlAllowed } from "./control-auth.js"
-import { DOC_PROTOCOL_NOTE, DocBlockExtractor } from "./doc-blocks.js"
+import {
+  type AgentChatOp,
+  CHAT_OPS_PROTOCOL_NOTE,
+  ChatOpsBlockExtractor,
+  DOC_PROTOCOL_NOTE,
+  DocBlockExtractor,
+  extractLeaveMarker,
+  LEAVE_PROTOCOL_NOTE,
+  parseChatOpsBlock,
+} from "./doc-blocks.js"
 import {
   dynamicAgentsPublicOnly,
   getDynamicAgent,
@@ -58,15 +82,16 @@ import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import {
   describeRoster,
   fetchCanvas,
-  fetchSharedDoc,
   fetchTranscript,
   formatCanvas,
   formatSharedDoc,
   formatTranscript,
+  persistSharedDoc,
   postCanvasDiff,
   postDebugEvent,
   pushBounded,
-  saveSharedDoc,
+  requestAgentRemoval,
+  seedSharedDoc,
   withMeetingContext,
 } from "./meeting-context.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
@@ -142,10 +167,6 @@ function applyMode(
   if (mode === "gemini") {
     return {
       ...entry,
-      // Gemini Live cannot be gated (it always auto-responds), so choosing
-      // it is also choosing an open floor — a gated registry policy would
-      // otherwise kill the job at startup.
-      turn_policy: "open",
       realtime:
         entry.realtime?.provider === "gemini"
           ? entry.realtime
@@ -291,6 +312,9 @@ export default defineAgent({
         })
         .catch(() => undefined)
     }
+    // The agent's own recent chat messages, so the brain can refer back to
+    // them — and edit or delete them via chat-ops blocks.
+    const recentChat: { id: string; text: string }[] = []
     const publishChat = (text: string) => {
       const message: ChatMessage = {
         id: `${entry.id}-${Date.now()}`,
@@ -299,12 +323,51 @@ export default defineAgent({
         text,
         at: Date.now(),
       }
+      recentChat.push({ id: message.id, text })
+      if (recentChat.length > 8) recentChat.shift()
       local
         .publishData(new TextEncoder().encode(JSON.stringify(message)), {
           reliable: true,
           topic: DataTopic.Chat,
         })
         .catch(() => undefined)
+    }
+
+    /**
+     * Edit/delete one of the agent's own messages, exactly as a person
+     * does: a chat op on the chat topic, authorized on every client by the
+     * sender being the message's author. Restricted to ids in recentChat —
+     * the brain must not even attempt to touch someone else's message.
+     */
+    const publishChatOp = (op: AgentChatOp): string => {
+      const own = recentChat.find((m) => m.id === op.id)
+      if (!own) return `"${op.id}" isn't one of your recent messages.`
+      const wire =
+        op.op === "edit"
+          ? { op: "edit" as const, id: op.id, text: op.text, at: Date.now() }
+          : { op: "delete" as const, id: op.id, at: Date.now() }
+      if (op.op === "edit") own.text = op.text
+      else recentChat.splice(recentChat.indexOf(own), 1)
+      local
+        .publishData(new TextEncoder().encode(JSON.stringify(wire)), {
+          reliable: true,
+          topic: DataTopic.Chat,
+        })
+        .catch(() => undefined)
+      return op.op === "edit" ? `edited ${op.id}` : `deleted ${op.id}`
+    }
+
+    /** Leave on request: goodbye first, then a clean server-side removal. */
+    const leaveMeeting = async () => {
+      postDebugEvent(
+        roomName,
+        `agent:${entry.id}`,
+        "info",
+        "leaving on request",
+      )
+      // Let the goodbye reach speakers/chat before the tile drops.
+      await sleep(2000)
+      await requestAgentRemoval(roomName, entry.id)
     }
 
     // "typing…" while the agent composes a chat reply. A heartbeat keeps a
@@ -375,24 +438,52 @@ export default defineAgent({
     }
     const agentCursorColor = docCursorColor(`agent-${entry.id}`, -1)
 
+    // The worker's replica of the shared document CRDT: seeded from the
+    // store, kept current by every doc-sync broadcast, and the base for the
+    // agent's own writes.
+    const docYDoc = new Y.Doc()
+    // The doc state as of the brain's last read. The brain replies with a
+    // COMPLETE document composed from that read — humans may have typed
+    // since. Splicing its reply against this frozen base and merging the
+    // fork back in turns the staleness into ordinary CRDT concurrency:
+    // the human's mid-think edit and the agent's rewrite both land.
+    let docReadState: Uint8Array | null = null
+    const readDocText = async (): Promise<string> => {
+      await seedSharedDoc(roomName, docYDoc)
+      docReadState = Y.encodeStateAsUpdate(docYDoc)
+      return readSharedDoc(docYDoc).text
+    }
+
     /**
      * Write the shared document and tell the room. Persisting alone isn't
      * enough — anyone with the Doc panel open is watching the data channel,
      * and would keep showing the old text until they reloaded.
      */
     const publishDoc = async (text: string): Promise<string> => {
-      const saved = await saveSharedDoc(
-        roomName,
-        text,
-        `agent-${entry.id}`,
-        entry.name,
-      )
-      if (!saved) return "The document couldn't be saved."
+      await seedSharedDoc(roomName, docYDoc)
+      const base = new Y.Doc()
+      Y.applyUpdate(base, docReadState ?? Y.encodeStateAsUpdate(docYDoc))
+      const before = Y.encodeStateVector(docYDoc)
+      const changed = setSharedDocText(base, text, {
+        by: `agent-${entry.id}`,
+        byName: entry.name,
+      })
+      Y.applyUpdate(docYDoc, Y.encodeStateAsUpdate(base))
+      if (!changed) return "The document already reads exactly like that."
+      await persistSharedDoc(roomName, docYDoc)
       local
-        .publishData(new TextEncoder().encode(JSON.stringify(saved)), {
-          reliable: true,
-          topic: DataTopic.Doc,
-        })
+        .publishData(
+          new TextEncoder().encode(
+            JSON.stringify({
+              type: "doc-sync",
+              update: encodeDocDiffB64(docYDoc, before),
+            }),
+          ),
+          {
+            reliable: true,
+            topic: DataTopic.Doc,
+          },
+        )
         .catch(() => undefined)
       // The agent's caret sweeps through what it just wrote, then leaves —
       // the update lands instantly; this is how the room sees who did it.
@@ -418,6 +509,20 @@ export default defineAgent({
       return "Saved. Everyone can see the updated document."
     }
 
+    // The worker's own view of the whiteboard, seeded at join and kept
+    // current from broadcast diffs and the agent's own draws. Exists so
+    // pipeline turns can describe the board synchronously (the context
+    // injector below can't await a fetch).
+    const canvasCache = new Map<string, CanvasRecord>()
+    const mergeIntoCanvasCache = (changes: CanvasRecord[]) => {
+      for (const change of changes) {
+        canvasCache.set(
+          change.id,
+          mergeCanvasRecord(canvasCache.get(change.id), change),
+        )
+      }
+    }
+
     /**
      * Draw on the shared whiteboard and tell the room, mirroring publishDoc:
      * persist first (so a client that reacts to the broadcast and refetches
@@ -425,10 +530,17 @@ export default defineAgent({
      * clients exchange among themselves.
      */
     const publishCanvasOps = async (ops: CanvasOp[]): Promise<string> => {
+      // Build against the store merged into the live cache, not the store
+      // alone: client snapshot PUTs trail their edits by seconds, and an
+      // agent drawing from that stale view both misplaces shapes and bases
+      // its LWW clocks low enough to revert a move or delete a person made
+      // moments ago. The cache has their broadcast diffs the instant they
+      // happen.
       const snapshot = await fetchCanvas(roomName)
+      mergeIntoCanvasCache(snapshot.records)
       const { changes, summary, warnings } = buildCanvasRecords(
         ops,
-        new Map(snapshot.records.map((r) => [r.id, r])),
+        canvasCache,
         { identity: `agent-${entry.id}`, name: entry.name },
       )
       if (changes.length === 0) {
@@ -443,6 +555,7 @@ export default defineAgent({
       if (!(await postCanvasDiff(roomName, diff))) {
         return "The drawing couldn't be saved."
       }
+      mergeIntoCanvasCache(changes)
       // The full batch is already durable; the room watches it appear shape
       // by shape, the agent's cursor gliding to each one first. Queued and
       // unawaited so the model keeps talking while its hand draws.
@@ -490,16 +603,24 @@ export default defineAgent({
       })
       return [summary, ...warnings].join(" ").trim()
     }
-    const readCanvas = async (): Promise<string> =>
-      formatCanvas(await fetchCanvas(roomName)) || "The whiteboard is empty."
+    const readCanvas = async (): Promise<string> => {
+      mergeIntoCanvasCache((await fetchCanvas(roomName)).records)
+      return (
+        formatCanvas({ records: [...canvasCache.values()] }) ||
+        "The whiteboard is empty."
+      )
+    }
 
     // Meeting context: what was said before the agent joined (from the
     // control API's transcript store) plus who's in the room. Wrapping the
     // brain injects it into the first turn on every path — voice, chat
     // mention, or realtime ask_agent delegation.
     const priorTranscript = formatTranscript(await fetchTranscript(roomName))
-    const priorDoc = formatSharedDoc(await fetchSharedDoc(roomName))
-    const priorCanvas = formatCanvas(await fetchCanvas(roomName))
+    await readDocText()
+    const priorDoc = formatSharedDoc(readSharedDoc(docYDoc))
+    const canvasSnapshot = await fetchCanvas(roomName)
+    mergeIntoCanvasCache(canvasSnapshot.records)
+    const priorCanvas = formatCanvas(canvasSnapshot)
     const meetingContext = [
       `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
       priorDoc,
@@ -513,10 +634,13 @@ export default defineAgent({
       priorTranscript
         ? `Transcript of the meeting before you joined:\n${priorTranscript}`
         : "",
-      // Realtime brains write the doc through the voice model's
-      // update_shared_doc tool instead; telling them about marker blocks
-      // would have them wrap ordinary replies in one.
+      // Realtime brains write the doc and canvas through the voice model's
+      // tools instead; telling them about marker blocks would have them wrap
+      // ordinary replies in one.
       entry.realtime ? "" : DOC_PROTOCOL_NOTE,
+      entry.realtime ? "" : CANVAS_PROTOCOL_NOTE,
+      // Realtime agents leave via their leave_meeting tool instead.
+      entry.realtime ? "" : LEAVE_PROTOCOL_NOTE,
     ]
       .filter(Boolean)
       .join("\n\n")
@@ -534,13 +658,38 @@ export default defineAgent({
     // has no read tool, so without this it would rewrite from the stale copy
     // it saw at join time and clobber everything typed since.
     let docSince: SharedDoc | null = null
+    // Same for the whiteboard: who last drew since the brain's last turn
+    // (pipeline path only), so the fresh board rides into the next turn.
+    let canvasSinceBy: string | null = null
+    // Outcomes of the brain's own canvas blocks — where shapes landed,
+    // auto-placement nudges, validation errors. A marker block can't return
+    // a value mid-turn, so results ride into the next one.
+    const canvasOutcomes: string[] = []
     const brain = withMeetingContext(rawBrain, meetingContext, () => {
       const parts: string[] = []
       if (docSince) {
         parts.push(
           `[${docSince.byName || docSince.by} updated the shared document. ${formatSharedDoc(docSince)}]`,
         )
+        // The brain is about to see this text — writes it makes now are
+        // composed against it, so future splices diff from here.
+        docReadState = Y.encodeStateAsUpdate(docYDoc)
         docSince = null
+      }
+      const outcomes = canvasOutcomes.splice(0)
+      if (outcomes.length) {
+        parts.push(
+          `[Whiteboard results from your last turn:]\n${outcomes.join("\n")}`,
+        )
+      }
+      if (canvasSinceBy) {
+        parts.push(
+          `[${canvasSinceBy} drew on the whiteboard. ${
+            formatCanvas({ records: [...canvasCache.values()] }) ||
+            "The whiteboard is now empty."
+          }]`,
+        )
+        canvasSinceBy = null
       }
       const heard = heardSince.splice(0)
       if (heard.length) {
@@ -565,13 +714,164 @@ export default defineAgent({
       postDebugEvent(roomName, `agent:${entry.id}`, "info", "left the room")
     })
 
+    /**
+     * A canvas marker block from the brain: validate, draw through the same
+     * path the realtime tool uses, and buffer the outcome (positions,
+     * auto-placement nudges, validation errors) for the brain's next turn.
+     */
+    const drawCanvasBlock = async (block: string): Promise<string> => {
+      const parsed = parseCanvasBlock(block)
+      const outcome =
+        "error" in parsed
+          ? `${parsed.error} Fix the block and try again.`
+          : await publishCanvasOps(parsed.ops)
+      pushBounded(canvasOutcomes, outcome)
+      return outcome
+    }
+
+    /**
+     * Chat mentions get a chat reply — text in, text out, straight to the
+     * brain; tool activity streams to the activity feed. Shared by both
+     * paths: pipeline agents have no other chat channel, and realtime
+     * agents route chat here too so the brain's judgment, tools and
+     * marker-block powers (doc edits, drawings) answer instead of the
+     * voice model. Returns the posted text so the realtime layer can tell
+     * its voice model what "it" said in chat.
+     */
+    const replyInChat = async (
+      message: ChatMessage,
+    ): Promise<string | null> => {
+      // The brain sees its own recent messages by id, so "delete that" and
+      // "fix the typo" resolve to concrete chat ops.
+      const ownChat = recentChat.length
+        ? `\n[Your recent chat messages — ${recentChat
+            .map((m) => `(id ${m.id}) "${m.text.slice(0, 80)}"`)
+            .join(
+              ", ",
+            )}]\n[${CHAT_OPS_PROTOCOL_NOTE}]\n[${LEAVE_PROTOCOL_NOTE}]`
+        : `\n[${LEAVE_PROTOCOL_NOTE}]`
+      const { text: input, images } = await attachScreenFrame(
+        screen,
+        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}${ownChat}`,
+      )
+      setState(sessionState.muted ? "muted" : "thinking")
+      setTyping(true)
+      try {
+        const reply = await collectBrainReply(
+          brain.runTurn(input, images),
+          (frame) => {
+            const at = Date.now()
+            if (frame.type === "tool_call") {
+              publishActivity({
+                type: "tool_call",
+                agentId: entry.id,
+                name: frame.name,
+                arguments: frame.arguments,
+                at,
+              })
+            } else if (frame.type === "tool_result") {
+              publishActivity({
+                type: "tool_result",
+                agentId: entry.id,
+                name: frame.name,
+                content: frame.content.slice(0, 8000),
+                durationMs: frame.durationMs,
+                at,
+              })
+            }
+          },
+        )
+        // Chat-asked doc edits and drawings come back as marker blocks too —
+        // act on them and keep them out of the chat.
+        const { spoken: afterDocs, blocks: docs } =
+          new DocBlockExtractor().feed(reply)
+        for (const doc of docs) {
+          const outcome = await publishDoc(doc)
+          publishActivity({
+            type: "tool_result",
+            agentId: entry.id,
+            name: "update_shared_doc",
+            content: outcome,
+            durationMs: 0,
+            at: Date.now(),
+          })
+        }
+        const { spoken: afterCanvas, blocks: drawings } =
+          new CanvasBlockExtractor().feed(afterDocs)
+        for (const block of drawings) {
+          const outcome = await drawCanvasBlock(block)
+          publishActivity({
+            type: "tool_result",
+            agentId: entry.id,
+            name: "draw_on_canvas",
+            content: outcome,
+            durationMs: 0,
+            at: Date.now(),
+          })
+        }
+        // Edits/deletes of the agent's own messages ride the same way.
+        const { spoken: afterChatOps, blocks: chatOpsBlocks } =
+          new ChatOpsBlockExtractor().feed(afterCanvas)
+        let opsApplied = 0
+        for (const block of chatOpsBlocks) {
+          const parsed = parseChatOpsBlock(block)
+          const outcomes =
+            "error" in parsed
+              ? [parsed.error]
+              : parsed.ops.map((op) => {
+                  const outcome = publishChatOp(op)
+                  if (/^(edited|deleted)/.test(outcome)) opsApplied++
+                  return outcome
+                })
+          publishActivity({
+            type: "tool_result",
+            agentId: entry.id,
+            name: "chat_message_ops",
+            content: outcomes.join(" "),
+            durationMs: 0,
+            at: Date.now(),
+          })
+        }
+        const { text: spoken, leave } = extractLeaveMarker(afterChatOps)
+        const posted = spoken.trim()
+          ? spoken.trim()
+          : docs.length
+            ? "(I've updated the shared document.)"
+            : drawings.length
+              ? "(I've drawn on the whiteboard.)"
+              : opsApplied || leave
+                ? null
+                : null
+        if (posted) publishChat(posted)
+        if (leave) void leaveMeeting()
+        return posted
+      } catch (err) {
+        const busy = err instanceof Error && /in progress/.test(err.message)
+        publishChat(
+          busy
+            ? "(I'm mid-task right now — ask me again in a moment.)"
+            : "(Sorry, I couldn't process that.)",
+        )
+        return null
+      } finally {
+        setTyping(false)
+        setState(sessionState.muted ? "muted" : "listening")
+      }
+    }
+
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
       // The brain's ears: every finalized utterance in the room (the room
       // transcriber's segments) lands in the heard buffer, so each brain
       // turn carries the conversation itself, not just the voice model's
-      // summary of it.
+      // summary of it. The realtime agent also subscribes — a gated Gemini
+      // session's mention detection runs on these finals.
+      const utteranceListeners: ((
+        identity: string,
+        name: string,
+        text: string,
+      ) => void)[] = []
       ctx.room.registerTextStreamHandler(
         TRANSCRIPTION_TOPIC,
         (reader, info) => {
@@ -585,10 +885,11 @@ export default defineAgent({
               const speaker = [...ctx.room.remoteParticipants.values()].find(
                 (p) => p.identity === info.identity,
               )
-              pushBounded(
-                heardSince,
-                `${speaker?.name || info.identity}: ${text}`,
-              )
+              const name = speaker?.name || info.identity
+              pushBounded(heardSince, `${name}: ${text}`)
+              for (const listener of utteranceListeners) {
+                listener(info.identity, name, text)
+              }
             } catch {
               // stream aborted mid-read; nothing to record
             }
@@ -675,11 +976,17 @@ export default defineAgent({
         // speaks, so barge-in has to be heard locally. Same prewarmed VAD the
         // pipeline path uses for turn detection.
         vad: ctx.proc.userData.vad as silero.VAD | undefined,
-        readDoc: async () => (await fetchSharedDoc(roomName)).text,
+        readDoc: readDocText,
         writeDoc: publishDoc,
         readCanvas,
         drawCanvas: publishCanvasOps,
         context: meetingContext,
+        // Chat @mentions go to the brain, not the voice model: the brain's
+        // tools, memory, and marker blocks (doc edits, drawings) can answer
+        // a chat request; the voice model only gets told what was said.
+        onChatMention: replyInChat,
+        leaveMeeting,
+        onUtterance: (fn) => utteranceListeners.push(fn),
         onSpoke: (text) =>
           pushBounded(heardSince, `${entry.name} (you, aloud): ${text}`),
       })
@@ -695,7 +1002,14 @@ export default defineAgent({
       entry,
       brain,
       sessionState,
-      { publishActivity, publishChat, setState, writeDoc: publishDoc },
+      {
+        publishActivity,
+        publishChat,
+        setState,
+        writeDoc: publishDoc,
+        drawCanvas: drawCanvasBlock,
+        leave: () => void leaveMeeting(),
+      },
       screen,
       { roster: () => describeRoster(ctx.room) },
     )
@@ -909,8 +1223,7 @@ export default defineAgent({
           // Attribution from the actual LiveKit sender, not payload claims.
           if (!sender || sender.identity.startsWith("agent-")) return
           const senderName = sender.name || sender.identity
-          const mention = new RegExp(`@${entry.name}\\b`, "i")
-          if (!mention.test(message.text)) {
+          if (!mentionsName(message.text, entry.name)) {
             // Not for us directly — queue as context for the next turn.
             chatSince.push(`${senderName}: ${message.text}`)
             return
@@ -921,87 +1234,37 @@ export default defineAgent({
           // ignore malformed chat messages
         }
       } else if (topic === DataTopic.Doc) {
-        // A participant saved the shared document (DocPanel broadcasts every
-        // save). Own writes never arrive here — LiveKit doesn't echo data
-        // back to the sender — so this is always someone else's edit.
+        // Someone else edited the shared document: fold their CRDT update
+        // into the worker's replica. Own writes never arrive here — LiveKit
+        // doesn't echo data back to the sender.
         try {
-          const doc = sharedDocSchema.parse(
+          const msg = docSyncMessageSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),
           )
+          applyDocUpdateB64(docYDoc, msg.update)
+          const view = readSharedDoc(docYDoc)
           docSince = {
-            ...doc,
-            byName: sender?.name || sender?.identity || doc.byName,
+            ...view,
+            byName: sender?.name || sender?.identity || view.byName,
           }
         } catch {
           // ignore malformed doc messages
         }
+      } else if (topic === DataTopic.Canvas) {
+        // Someone else drew (clients and agents broadcast element diffs).
+        // Folded into the worker's cache so the brain's next turn can carry
+        // a fresh description of the board.
+        try {
+          const diff = canvasDiffSchema.parse(
+            JSON.parse(new TextDecoder().decode(payload)),
+          )
+          mergeIntoCanvasCache(diff.changes)
+          canvasSinceBy = sender?.name || sender?.identity || diff.fromName
+        } catch {
+          // ignore malformed canvas messages
+        }
       }
     })
-
-    // Chat mentions get a chat reply — text in, text out; tool activity
-    // still streams to the activity feed.
-    const replyInChat = async (message: ChatMessage) => {
-      const { text: input, images } = await attachScreenFrame(
-        screen,
-        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}`,
-      )
-      setState(sessionState.muted ? "muted" : "thinking")
-      setTyping(true)
-      try {
-        let reply = ""
-        for await (const frame of brain.runTurn(input, images)) {
-          const at = Date.now()
-          if (frame.type === "assistant") {
-            reply += (reply ? "\n" : "") + frame.content
-          } else if (frame.type === "tool_call") {
-            publishActivity({
-              type: "tool_call",
-              agentId: entry.id,
-              name: frame.name,
-              arguments: frame.arguments,
-              at,
-            })
-          } else if (frame.type === "tool_result") {
-            publishActivity({
-              type: "tool_result",
-              agentId: entry.id,
-              name: frame.name,
-              content: frame.content.slice(0, 8000),
-              durationMs: frame.durationMs,
-              at,
-            })
-          } else if (frame.type === "error") {
-            throw new Error(frame.error)
-          }
-        }
-        // A chat-asked doc edit comes back as a marker block too — save it
-        // and keep it out of the chat.
-        const { spoken, docs } = new DocBlockExtractor().feed(reply)
-        for (const doc of docs) {
-          const outcome = await publishDoc(doc)
-          publishActivity({
-            type: "tool_result",
-            agentId: entry.id,
-            name: "update_shared_doc",
-            content: outcome,
-            durationMs: 0,
-            at: Date.now(),
-          })
-        }
-        if (spoken.trim()) publishChat(spoken.trim())
-        else if (docs.length) publishChat("(I've updated the shared document.)")
-      } catch (err) {
-        const busy = err instanceof Error && /in progress/.test(err.message)
-        publishChat(
-          busy
-            ? "(I'm mid-task right now — ask me again in a moment.)"
-            : "(Sorry, I couldn't process that.)",
-        )
-      } finally {
-        setTyping(false)
-        setState(sessionState.muted ? "muted" : "listening")
-      }
-    }
 
     await session.start({
       agent,

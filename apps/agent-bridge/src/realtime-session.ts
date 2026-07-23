@@ -6,12 +6,6 @@
 // permissions and audit trail. No SDK — the protocol is JSON events over a
 // websocket.
 
-import {
-  type CanvasOp,
-  canvasColorSchema,
-  canvasOpBatchSchema,
-} from "@meet/shared"
-
 /** The audio format both directions of the session speak: 24 kHz mono PCM16. */
 export const REALTIME_SAMPLE_RATE = 24_000
 
@@ -38,6 +32,9 @@ export const UPDATE_DOC_TOOL = "update_shared_doc"
 /** The tool the realtime model calls to look at the shared screen. */
 export const LOOK_TOOL = "look_at_screen"
 
+/** The tool the realtime model calls to leave the meeting on request. */
+export const LEAVE_TOOL = "leave_meeting"
+
 /** The tools the realtime model calls to read and draw on the whiteboard. */
 export const READ_CANVAS_TOOL = "read_canvas"
 export const DRAW_CANVAS_TOOL = "draw_on_canvas"
@@ -60,6 +57,13 @@ export interface VoiceSession {
   appendAudio(pcm: Uint8Array): void
   say(text: string): void
   notifyChat(line: string): void
+  /**
+   * A chat message that addressed the agent by name: surface it AND elicit
+   * a reply into the chat (send_chat_message), without speaking. Plain
+   * notifyChat only adds context, so a realtime agent would otherwise stay
+   * silent to @mentions forever (#112).
+   */
+  promptChatReply(line: string): void
   setGateOpen(open: boolean): void
   callOn(): void
   cancelResponse(): void
@@ -90,12 +94,15 @@ export type RealtimeSessionOptions = {
   updateDoc?: (instruction: string) => Promise<string>
   /**
    * The meeting's shared whiteboard. Reading returns a text description of
-   * every shape with its id; drawing takes a batch of primitive ops. Both
-   * or neither — a model that can draw but not read would trample what
-   * others drew.
+   * every shape with its id; drawing hands an *instruction* to the brain,
+   * which composes the actual shapes — same contract as updateDoc, and for
+   * the same reason: voice models are conversational, not spatial, and a
+   * batch of guessed pixel coordinates from one is how diagrams end up in
+   * a heap. Both or neither — a model that can draw but not read would
+   * trample what others drew.
    */
   readCanvas?: () => Promise<string>
-  drawCanvas?: (ops: CanvasOp[]) => Promise<string>
+  drawCanvas?: (instruction: string) => Promise<string>
   /**
    * Look at the screen someone is sharing and describe it. The realtime
    * model has no eyes of its own here — this captures a frame and puts it
@@ -106,6 +113,8 @@ export type RealtimeSessionOptions = {
    * can't promise a look it cannot take.
    */
   lookAtScreen?: () => Promise<string>
+  /** Leave the meeting on request; removal happens shortly after. */
+  leaveMeeting?: () => void
   /** Speak these 24 kHz mono PCM16 bytes into the room. */
   onAudio: (pcm: Uint8Array) => void
   /** The human started talking over us — cut off whatever is still playing. */
@@ -167,7 +176,12 @@ export type ToolDeclaration = {
 export function toolDeclarations(
   opts: Pick<
     RealtimeSessionOptions,
-    "readDoc" | "updateDoc" | "readCanvas" | "drawCanvas" | "lookAtScreen"
+    | "readDoc"
+    | "updateDoc"
+    | "readCanvas"
+    | "drawCanvas"
+    | "lookAtScreen"
+    | "leaveMeeting"
   >,
 ): ToolDeclaration[] {
   return [
@@ -270,114 +284,27 @@ export function toolDeclarations(
             name: DRAW_CANVAS_TOOL,
             description:
               "Draw on the meeting's shared whiteboard, which everyone can " +
-              "see live. Send a batch of simple operations: rectangles, " +
-              "ellipses, sticky notes, text, freehand lines, and arrows " +
-              "that connect shapes by id. Coordinates are page pixels: lay " +
-              "diagrams out left-to-right or top-down starting near (0,0) " +
-              "on roughly a 1600x1000 area, size boxes around 160x80, and " +
-              "leave ~80px gaps. Omit x/y to auto-place a shape in free " +
-              "space; every result reports where each shape landed — use " +
-              "those positions when placing the next ones, never reuse the " +
-              "same spot. Give every shape a short memorable id " +
-              "(e.g. 'api') so you can connect, move or update it later. " +
-              "Build complex diagrams incrementally across several calls " +
-              "while you talk — draw a part, say what it is, draw the " +
-              "next. If others may have drawn, call read_canvas first. " +
-              "Never narrate coordinates or ids out loud.",
+              "see live. Describe WHAT to draw or change — the shapes, " +
+              "their labels, and how they connect — and it is drawn for " +
+              "you with proper layout; never mention pixels or " +
+              "coordinates. Works for new diagrams, additions, edits " +
+              "('make the queue red', 'remove the cache box') and clearing " +
+              "the board. Keep talking while it draws — the sketch appears " +
+              "within moments and everyone sees it. If others may have " +
+              "drawn, call read_canvas first and reference existing " +
+              "shapes by their labels.",
             parameters: {
               type: "object",
               properties: {
-                ops: {
-                  type: "array",
-                  description: "Operations applied in order.",
-                  items: {
-                    type: "object",
-                    properties: {
-                      op: {
-                        type: "string",
-                        enum: [
-                          "rect",
-                          "ellipse",
-                          "text",
-                          "note",
-                          "arrow",
-                          "draw",
-                          "move",
-                          "update",
-                          "delete",
-                          "clear",
-                        ],
-                      },
-                      id: {
-                        type: "string",
-                        description:
-                          "Short id, e.g. 'api'. Required for every op " +
-                          "except clear.",
-                      },
-                      x: {
-                        type: "number",
-                        description:
-                          "Page-pixel position. Omit on creates to " +
-                          "auto-place clear of existing shapes.",
-                      },
-                      y: { type: "number" },
-                      w: { type: "number" },
-                      h: { type: "number" },
-                      label: {
-                        type: "string",
-                        description: "Label on rect/ellipse/arrow shapes.",
-                      },
-                      text: {
-                        type: "string",
-                        description: "Content of text/note shapes.",
-                      },
-                      color: {
-                        type: "string",
-                        enum: [...canvasColorSchema.options],
-                      },
-                      fill: { type: "string", enum: ["none", "semi", "solid"] },
-                      size: { type: "string", enum: ["s", "m", "l", "xl"] },
-                      from: {
-                        type: "string",
-                        description: "Arrow start: a shape id to attach to.",
-                      },
-                      to: {
-                        type: "string",
-                        description: "Arrow end: a shape id to attach to.",
-                      },
-                      fromPoint: {
-                        type: "object",
-                        description: "Arrow start as a free point instead.",
-                        properties: {
-                          x: { type: "number" },
-                          y: { type: "number" },
-                        },
-                      },
-                      toPoint: {
-                        type: "object",
-                        description: "Arrow end as a free point instead.",
-                        properties: {
-                          x: { type: "number" },
-                          y: { type: "number" },
-                        },
-                      },
-                      points: {
-                        type: "array",
-                        description: "Freehand polyline, in page pixels.",
-                        items: {
-                          type: "object",
-                          properties: {
-                            x: { type: "number" },
-                            y: { type: "number" },
-                          },
-                        },
-                      },
-                    },
-                    required: ["op"],
-                  },
+                instruction: {
+                  type: "string",
+                  description:
+                    "What to draw or change, in full sentences and " +
+                    "self-contained: the shapes or diagram wanted, every " +
+                    "label to use, and how parts connect or relate.",
                 },
               },
-              required: ["ops"],
+              required: ["instruction"],
             },
           },
         ]
@@ -396,6 +323,19 @@ export function toolDeclarations(
               "a moment, so say something short first ('let me look'). " +
               "Each call sees the screen as it is at that moment: call it " +
               "again rather than relying on what you saw earlier.",
+            parameters: { type: "object", properties: {} },
+          },
+        ]
+      : []),
+    ...(opts.leaveMeeting
+      ? [
+          {
+            name: LEAVE_TOOL,
+            description:
+              "Leave the meeting. Call this ONLY when someone asks you to " +
+              "leave, go, or show yourself out. Say a brief goodbye FIRST, " +
+              "then call it — you'll be disconnected moments later. Never " +
+              "call it on your own initiative.",
             parameters: { type: "object", properties: {} },
           },
         ]
@@ -600,6 +540,11 @@ export class RealtimeSession implements VoiceSession {
           )
         } else if (event.name === LOOK_TOOL) {
           void this.#lookAtScreen(String(event.call_id))
+        } else if (event.name === LEAVE_TOOL) {
+          void this.#docTool(String(event.call_id), async () => {
+            this.#opts.leaveMeeting?.()
+            return "You're leaving the meeting now — say nothing further."
+          })
         } else {
           void this.#delegate({
             call_id: String(event.call_id),
@@ -724,17 +669,13 @@ export class RealtimeSession implements VoiceSession {
   }
 
   async #drawCanvas(rawArguments: string): Promise<string> {
-    const parsed = canvasOpBatchSchema.safeParse(
-      (JSON.parse(rawArguments) as { ops?: unknown }).ops,
-    )
-    // Malformed ops go back as text, not an exception: the model can fix
-    // its batch and retry instead of falling silent.
-    if (!parsed.success) {
-      const issue = parsed.error.issues[0]
-      return `Those drawing operations were invalid (${issue?.path.join(".")}: ${issue?.message}). Fix the batch and try again.`
+    const instruction = (JSON.parse(rawArguments) as { instruction?: unknown })
+      .instruction
+    if (typeof instruction !== "string" || !instruction.trim()) {
+      return "No drawing instruction was provided."
     }
     return (
-      (await this.#opts.drawCanvas?.(parsed.data)) ??
+      (await this.#opts.drawCanvas?.(instruction)) ??
       "You can't draw right now."
     )
   }
@@ -808,6 +749,28 @@ export class RealtimeSession implements VoiceSession {
         type: "message",
         role: "user",
         content: [{ type: "input_text", text: line }],
+      },
+    })
+  }
+
+  /**
+   * An addressed chat message: inject it like notifyChat, then create a
+   * text-only response so the model answers into the chat via its
+   * send_chat_message tool instead of aloud. Skipped while a response is
+   * in flight — the injected line still lands as context for later.
+   */
+  promptChatReply(line: string) {
+    this.notifyChat(line)
+    if (this.#responding) return
+    this.#send({
+      type: "response.create",
+      response: {
+        output_modalities: ["text"],
+        instructions:
+          "You were just addressed in the meeting's text chat (the last " +
+          "[meeting chat] message). Reply briefly into the chat with the " +
+          `${CHAT_TOOL} tool — text only, do not speak. If you genuinely ` +
+          "have nothing to add, reply with a short acknowledgement.",
       },
     })
   }

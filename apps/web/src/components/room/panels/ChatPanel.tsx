@@ -1,11 +1,16 @@
 "use client"
 
 import { useDataChannel, useLocalParticipant } from "@livekit/components-react"
-import { type ChatMessage, DataTopic } from "@meet/shared"
+import {
+  type ChatMessage,
+  type ChatOp,
+  DataTopic,
+  TYPING_HEARTBEAT_MS,
+} from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { SendHorizontal } from "lucide-react"
+import { Pencil, SendHorizontal, Trash2 } from "lucide-react"
 import { nanoid } from "nanoid"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   completeMention,
   MentionPicker,
@@ -13,7 +18,13 @@ import {
   mentionQuery,
   useMentionables,
 } from "@/components/room/panels/MentionPicker"
-import { $chatMessages, $typingAgents, addChatMessage } from "@/stores/roomData"
+import {
+  $chatMessages,
+  $typingAgents,
+  addChatMessage,
+  removeChatMessage,
+  updateChatMessage,
+} from "@/stores/roomData"
 
 /**
  * Render message text with URLs as real links. `break-all` on the anchor so
@@ -38,11 +49,159 @@ function linkify(text: string): React.ReactNode[] {
   )
 }
 
-/** "Ada is typing…", "Ada and Ben are typing…", "3 agents are typing…". */
+/** "Ada is typing…", "Ada and Ben are typing…", "3 people are typing…". */
 function typingLabel(names: string[]): string {
   if (names.length === 1) return `${names[0]} is typing`
   if (names.length === 2) return `${names[0]} and ${names[1]} are typing`
-  return `${names.length} agents are typing`
+  return `${names.length} people are typing`
+}
+
+function ChatMessageRow({
+  message,
+  own,
+  grouped,
+  lastInGroup,
+  isEditing,
+  editText,
+  onEditTextChange,
+  onStartEdit,
+  onCancelEdit,
+  onSaveEdit,
+  confirmingDelete,
+  onConfirmDelete,
+  onDelete,
+  onCancelDeleteConfirm,
+}: {
+  message: ChatMessage
+  own: boolean
+  grouped: boolean
+  lastInGroup: boolean
+  isEditing: boolean
+  editText: string
+  onEditTextChange: (text: string) => void
+  onStartEdit: () => void
+  onCancelEdit: () => void
+  onSaveEdit: () => void
+  confirmingDelete: boolean
+  onConfirmDelete: () => void
+  onDelete: () => void
+  onCancelDeleteConfirm: () => void
+}) {
+  return (
+    <li
+      className={`group chat ${own ? "chat-end" : "chat-start"} ${grouped ? "mt-1 !pt-0" : "not-first:mt-2"} ${lastInGroup ? "" : "!pb-0"}`}
+    >
+      {!grouped && (
+        <div className="chat-header text-base-content/50 text-xs">
+          {!own && (
+            <span className="mr-1 font-medium text-base-content">
+              {message.fromName}
+            </span>
+          )}
+          <time>
+            {new Date(message.at).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </time>
+        </div>
+      )}
+      {isEditing ? (
+        <div className="chat-bubble min-w-0 max-w-[85%] bg-transparent p-0">
+          <input
+            autoFocus
+            className="input input-sm w-full"
+            value={editText}
+            onChange={(e) => onEditTextChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault()
+                onSaveEdit()
+              } else if (e.key === "Escape") {
+                e.preventDefault()
+                onCancelEdit()
+              }
+            }}
+            onBlur={onSaveEdit}
+          />
+        </div>
+      ) : (
+        <div
+          className={`chat-bubble relative min-h-0 min-w-0 max-w-[85%] rounded-lg px-2.5 py-1 whitespace-pre-wrap break-words text-sm ${
+            own ? "chat-bubble-primary" : ""
+          } ${
+            lastInGroup
+              ? own
+                ? "rounded-br-none"
+                : "rounded-bl-none"
+              : "before:hidden"
+          }`}
+        >
+          {linkify(message.text)}
+          {own && (
+            <MessageActions
+              onStartEdit={onStartEdit}
+              confirmingDelete={confirmingDelete}
+              onConfirmDelete={onConfirmDelete}
+              onDelete={onDelete}
+              onCancelDeleteConfirm={onCancelDeleteConfirm}
+            />
+          )}
+        </div>
+      )}
+      {own && !isEditing && message.editedAt && (
+        <div className="chat-footer text-base-content/40 text-xs">edited</div>
+      )}
+    </li>
+  )
+}
+
+function MessageActions({
+  onStartEdit,
+  confirmingDelete,
+  onConfirmDelete,
+  onDelete,
+  onCancelDeleteConfirm,
+}: {
+  onStartEdit: () => void
+  confirmingDelete: boolean
+  onConfirmDelete: () => void
+  onDelete: () => void
+  onCancelDeleteConfirm: () => void
+}) {
+  return (
+    <div className="pointer-events-none absolute top-1/2 right-full flex -translate-y-1/2 items-center gap-1 pr-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus]:pointer-events-auto has-[:focus]:opacity-100">
+      <button
+        type="button"
+        className="btn btn-ghost btn-xs btn-circle"
+        aria-label="Edit message"
+        title="Edit"
+        onClick={onStartEdit}
+      >
+        <Pencil className="size-3" />
+      </button>
+      {confirmingDelete ? (
+        <button
+          type="button"
+          className="btn btn-error btn-xs"
+          onClick={onDelete}
+          onBlur={onCancelDeleteConfirm}
+        >
+          Delete?
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs btn-circle text-error"
+          aria-label="Delete message"
+          title="Delete"
+          onClick={onConfirmDelete}
+        >
+          <Trash2 className="size-3" />
+        </button>
+      )}
+    </div>
+  )
 }
 
 export function ChatPanel() {
@@ -51,6 +210,11 @@ export function ChatPanel() {
   const typing = useStore($typingAgents)
   const typingNames = Object.values(typing).map((t) => t.name)
   const [draft, setDraft] = useState("")
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState("")
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
+    null,
+  )
   const bottomRef = useRef<HTMLDivElement>(null)
   const mentionables = useMentionables()
   const query = mentionQuery(draft)
@@ -75,6 +239,38 @@ export function ChatPanel() {
   }
 
   const { send } = useDataChannel(DataTopic.Chat)
+  const { send: sendActivity } = useDataChannel(DataTopic.AgentActivity)
+
+  // Human typing presence, on the same topic and event agents use (the
+  // listener attributes by verified sender, so agentId carries no weight).
+  // Heartbeat while composing; peers prune stale indicators themselves, so
+  // a dropped "stopped" signal can't stick.
+  const typingSentAt = useRef(0)
+  const sendTyping = useCallback(
+    (typing: boolean) => {
+      typingSentAt.current = typing ? Date.now() : 0
+      void sendActivity(
+        new TextEncoder().encode(
+          JSON.stringify({
+            type: "typing",
+            agentId: "",
+            typing,
+            at: Date.now(),
+          }),
+        ),
+        { topic: DataTopic.AgentActivity, reliable: false },
+      )
+    },
+    [sendActivity],
+  )
+  const draftChanged = (value: string) => {
+    setDraft(value)
+    if (!value.trim()) {
+      if (typingSentAt.current) sendTyping(false)
+    } else if (Date.now() - typingSentAt.current > TYPING_HEARTBEAT_MS) {
+      sendTyping(true)
+    }
+  }
 
   // Follow the conversation: jump on open, glide on each new message.
   // biome-ignore lint/correctness/useExhaustiveDependencies: messages drives the scroll
@@ -94,6 +290,7 @@ export function ChatPanel() {
       at: Date.now(),
     }
     setDraft("")
+    if (typingSentAt.current) sendTyping(false)
     addChatMessage(message)
     await send(new TextEncoder().encode(JSON.stringify(message)), {
       topic: DataTopic.Chat,
@@ -101,9 +298,44 @@ export function ChatPanel() {
     })
   }
 
+  const startEdit = (m: ChatMessage) => {
+    setConfirmingDeleteId(null)
+    setEditingId(m.id)
+    setEditText(m.text)
+  }
+
+  const cancelEdit = () => {
+    setEditingId(null)
+    setEditText("")
+  }
+
+  const saveEdit = async (id: string) => {
+    const text = editText.trim()
+    setEditingId(null)
+    setEditText("")
+    if (!text) return
+    const at = Date.now()
+    updateChatMessage(id, localParticipant.identity, text, at)
+    const op: ChatOp = { op: "edit", id, text, at }
+    await send(new TextEncoder().encode(JSON.stringify(op)), {
+      topic: DataTopic.Chat,
+      reliable: true,
+    })
+  }
+
+  const deleteMessage = async (id: string) => {
+    setConfirmingDeleteId(null)
+    const op: ChatOp = { op: "delete", id, at: Date.now() }
+    removeChatMessage(id, localParticipant.identity)
+    await send(new TextEncoder().encode(JSON.stringify(op)), {
+      topic: DataTopic.Chat,
+      reliable: true,
+    })
+  }
+
   return (
     <div className="flex h-full flex-col">
-      <ul className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4">
+      <ul className="min-h-0 flex-1 overflow-y-auto p-4">
         {messages.length === 0 && (
           <li className="text-base-content/50 text-sm">
             No messages yet. Mention an agent with @Name to ask it in text.
@@ -116,36 +348,33 @@ export function ChatPanel() {
           // the repeated name/stamp is dropped.
           const prev = messages[i - 1]
           const minute = (at: number) => Math.floor(at / 60_000)
-          const grouped =
-            prev && prev.from === m.from && minute(prev.at) === minute(m.at)
+          const grouped = Boolean(
+            prev && prev.from === m.from && minute(prev.at) === minute(m.at),
+          )
+          const next = messages[i + 1]
+          const lastInGroup = !(
+            next &&
+            next.from === m.from &&
+            minute(next.at) === minute(m.at)
+          )
           return (
-            <li
+            <ChatMessageRow
               key={m.id}
-              className={`chat ${own ? "chat-end" : "chat-start"} ${grouped ? "!pt-0" : ""}`}
-            >
-              {!grouped && (
-                <div className="chat-header text-base-content/50 text-xs">
-                  {!own && (
-                    <span className="mr-1 font-medium text-base-content">
-                      {m.fromName}
-                    </span>
-                  )}
-                  <time>
-                    {new Date(m.at).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </time>
-                </div>
-              )}
-              <div
-                className={`chat-bubble min-w-0 max-w-[85%] whitespace-pre-wrap break-words text-sm ${
-                  own ? "chat-bubble-primary" : ""
-                }`}
-              >
-                {linkify(m.text)}
-              </div>
-            </li>
+              message={m}
+              own={own}
+              grouped={grouped}
+              lastInGroup={lastInGroup}
+              isEditing={editingId === m.id}
+              editText={editText}
+              onEditTextChange={setEditText}
+              onStartEdit={() => startEdit(m)}
+              onCancelEdit={cancelEdit}
+              onSaveEdit={() => saveEdit(m.id)}
+              confirmingDelete={confirmingDeleteId === m.id}
+              onConfirmDelete={() => setConfirmingDeleteId(m.id)}
+              onDelete={() => deleteMessage(m.id)}
+              onCancelDeleteConfirm={() => setConfirmingDeleteId(null)}
+            />
           )
         })}
         <div ref={bottomRef} />
@@ -176,8 +405,11 @@ export function ChatPanel() {
           className="input input-sm flex-1"
           placeholder="Send a message — @ to mention"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => draftChanged(e.target.value)}
           onKeyDown={pickerKeys}
+          onBlur={() => {
+            if (typingSentAt.current) sendTyping(false)
+          }}
         />
         <button
           type="submit"

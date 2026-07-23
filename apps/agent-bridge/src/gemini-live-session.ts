@@ -6,17 +6,17 @@
 // Protocol differences that matter here:
 //  - input audio is 16 kHz PCM16 (output is 24 kHz, same as OpenAI)
 //  - tool call arguments arrive as objects, not JSON strings
-//  - the model always auto-responds to a completed turn; there is no
-//    create_response switch, so the deterministic turn gate the OpenAI
-//    session offers cannot be implemented — gated turn policies are
-//    rejected upstream for this provider.
+//  - there is no create_response switch, so gating works by disabling
+//    automatic activity detection instead (manual-turn mode): the bridge
+//    segments turns with its local VAD and only closes an activity when
+//    the gate allows a response — see realtime-agent's Gemini gate.
 
-import { canvasOpBatchSchema } from "@meet/shared"
 import {
   CANCEL_TOOL,
   CHAT_TOOL,
   DELEGATE_TOOL,
   DRAW_CANVAS_TOOL,
+  LEAVE_TOOL,
   LOOK_TOOL,
   READ_CANVAS_TOOL,
   READ_DOC_TOOL,
@@ -39,6 +39,17 @@ const HOST =
 
 /** How long a task may take before it goes to the background. */
 const TASK_ACK_MS = 8_000
+
+/**
+ * Reconnect policy: Gemini Live drops sessions mid-meeting (observed 1011
+ * "Internal error" and 1007 content-type rejections) and the agent would
+ * otherwise fall silent for the rest of the call. Bounded backoff; the
+ * attempt counter resets once a reconnected session completes setup, so
+ * only consecutive failures exhaust it.
+ */
+const RECONNECT_MAX_ATTEMPTS = 5
+const RECONNECT_BASE_DELAY_MS = 1_000
+const RECONNECT_MAX_DELAY_MS = 15_000
 
 type FunctionCall = { id: string; name: string; args?: Record<string, unknown> }
 
@@ -80,17 +91,36 @@ export class GeminiLiveSession implements VoiceSession {
   #suppressTurn = false
   /** The current turn's spoken transcript, flushed on turnComplete. */
   #spokenBuf = ""
+  #reconnectAttempts = 0
+  #reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  /** True once any session completed setup — reconnects get a resume note. */
+  #wasConnected = false
 
-  constructor(opts: RealtimeSessionOptions) {
+  /**
+   * Manual-turn mode: automatic activity detection disabled, so the model
+   * responds ONLY when the bridge closes an activity (sendTurnAudio) or
+   * completes a client-content turn. This is what makes Gemini gateable:
+   * a model that cannot decide a turn ended cannot decide to speak.
+   * Fixed per connection (it's a setup field); flipping an auto session to
+   * manual rides the reconnect machinery.
+   */
+  #manual: boolean
+  #gateOpen = false
+
+  constructor(
+    opts: RealtimeSessionOptions,
+    config?: { manualTurns?: boolean },
+  ) {
     this.#opts = opts
-    if (opts.gate) {
-      // Not silently: an agent configured to be gated but running ungated
-      // would speak when it was promised to stay silent.
-      throw new Error(
-        "Gemini Live has no deterministic turn gate; gated turn policies " +
-          "require the openai realtime provider",
-      )
-    }
+    this.#manual = config?.manualTurns ?? false
+  }
+
+  get gateOpen(): boolean {
+    return this.#gateOpen
+  }
+
+  get manualTurns(): boolean {
+    return this.#manual
   }
 
   get live(): boolean {
@@ -107,6 +137,14 @@ export class GeminiLiveSession implements VoiceSession {
   }
 
   async open(): Promise<void> {
+    this.#connect()
+    await this.#ready
+  }
+
+  #connect(): void {
+    this.#ready = new Promise<void>((resolve) => {
+      this.#resolveReady = resolve
+    })
     const url = `${HOST}?key=${encodeURIComponent(this.#opts.apiKey)}`
     const ws = new WebSocket(url)
     this.#ws = ws
@@ -127,6 +165,15 @@ export class GeminiLiveSession implements VoiceSession {
           // Transcribe the model's own speech so the brain's meeting record
           // includes the agent's side of the conversation.
           outputAudioTranscription: {},
+          // Manual mode: the bridge segments turns and closes activities;
+          // the model never auto-responds to what it overhears.
+          ...(this.#manual
+            ? {
+                realtimeInputConfig: {
+                  automaticActivityDetection: { disabled: true },
+                },
+              }
+            : {}),
           tools: [{ functionDeclarations: toolDeclarations(this.#opts) }],
         },
       })
@@ -144,20 +191,66 @@ export class GeminiLiveSession implements VoiceSession {
     }
     ws.onerror = () => this.#opts.onError?.("gemini live websocket error")
     ws.onclose = (ev) => {
-      this.#closed = true
+      if (this.#ws !== ws) return // superseded by a newer reconnect
       // Gemini closes the socket on setup errors (bad model, bad key)
-      // instead of sending an error frame — surface the reason.
-      if (ev.code !== 1000 && ev.reason) {
-        this.#opts.onError?.(`gemini live closed: ${ev.code} ${ev.reason}`)
+      // instead of sending an error frame — surface the reason. Abnormal
+      // closes with an empty reason still get logged, or a drop-and-
+      // reconnect cycle is invisible in the debug events.
+      if (ev.code !== 1000) {
+        this.#opts.onError?.(
+          `gemini live closed: ${ev.code}${ev.reason ? ` ${ev.reason}` : ""}`,
+        )
       }
       this.#resolveReady() // never strand a caller waiting on a dead socket
+      if (this.#closed) return
+      // A mid-turn drop leaves half-spoken state behind; reset it so the
+      // reconnected session starts a clean turn, and flush queued playout.
+      if (this.#responding) this.#opts.onInterrupt()
+      this.#responding = false
+      this.#suppressTurn = false
+      this.#spokenBuf = ""
+      this.#scheduleReconnect()
     }
+  }
 
-    await this.#ready
+  #scheduleReconnect(): void {
+    const attempt = ++this.#reconnectAttempts
+    if (attempt > RECONNECT_MAX_ATTEMPTS) {
+      this.#closed = true
+      this.#opts.onError?.(
+        `gemini live: gave up after ${RECONNECT_MAX_ATTEMPTS} reconnect attempts`,
+      )
+      return
+    }
+    const delay = Math.min(
+      RECONNECT_BASE_DELAY_MS * 2 ** (attempt - 1),
+      RECONNECT_MAX_DELAY_MS,
+    )
+    this.#opts.onError?.(
+      `gemini live: reconnecting in ${delay}ms (attempt ${attempt}/${RECONNECT_MAX_ATTEMPTS})`,
+    )
+    this.#reconnectTimer = setTimeout(() => {
+      this.#reconnectTimer = null
+      if (!this.#closed) this.#connect()
+    }, delay)
   }
 
   #handle(message: ServerMessage) {
     if (message.setupComplete) {
+      this.#reconnectAttempts = 0
+      if (this.#wasConnected) {
+        // A reconnected session has no conversation history — the setup
+        // resends the instructions, but the model must not greet the room
+        // as if it just arrived. Context only; no turnComplete, so the
+        // model doesn't auto-respond to it.
+        this.#sendUserText(
+          "[Your voice connection dropped briefly and is now restored, " +
+            "mid-meeting. Continue naturally from the live audio; do not " +
+            "greet the room again or mention the interruption.]",
+          false,
+        )
+      }
+      this.#wasConnected = true
       this.#resolveReady()
       return
     }
@@ -259,14 +352,11 @@ export class GeminiLiveSession implements VoiceSession {
         break
       case DRAW_CANVAS_TOOL:
         void this.#docTool(call, async () => {
-          // Gemini delivers arguments as objects, already parsed.
-          const parsed = canvasOpBatchSchema.safeParse(call.args?.ops)
-          if (!parsed.success) {
-            const issue = parsed.error.issues[0]
-            return `Those drawing operations were invalid (${issue?.path.join(".")}: ${issue?.message}). Fix the batch and try again.`
-          }
+          const instruction = call.args?.instruction
+          if (typeof instruction !== "string" || !instruction.trim())
+            return "No drawing instruction was provided."
           return (
-            (await this.#opts.drawCanvas?.(parsed.data)) ??
+            (await this.#opts.drawCanvas?.(instruction)) ??
             "You can't draw right now."
           )
         })
@@ -278,6 +368,12 @@ export class GeminiLiveSession implements VoiceSession {
             (await this.#opts.lookAtScreen?.()) ??
             "You can't see the screen right now.",
         )
+        break
+      case LEAVE_TOOL:
+        void this.#docTool(call, async () => {
+          this.#opts.leaveMeeting?.()
+          return "You're leaving the meeting now — say nothing further."
+        })
         break
       case DELEGATE_TOOL:
         void this.#delegate(call)
@@ -367,8 +463,64 @@ export class GeminiLiveSession implements VoiceSession {
     this.#sendUserText(line)
   }
 
-  /** No-op: Gemini Live cannot be gated (rejected in the constructor). */
-  setGateOpen(_open: boolean) {}
+  /**
+   * An addressed chat message: Gemini has no text-only response mode, so
+   * the injected turn carries the instruction to answer through the chat
+   * tool rather than aloud.
+   */
+  promptChatReply(line: string) {
+    this.#sendUserText(
+      `${line}\n[You were addressed by name in the meeting's text chat. ` +
+        `Reply briefly into the chat using the ${CHAT_TOOL} tool; don't ` +
+        "read your reply aloud.]",
+    )
+  }
+
+  /**
+   * The gate itself lives in realtime-agent (mention detection runs on the
+   * room transcript there); this records the state its audio routing reads.
+   * Closing the gate on a session that started with automatic turn
+   * detection can't be honored in place — the VAD mode is a setup-time
+   * choice — so it flips to manual and rides the reconnect machinery.
+   */
+  setGateOpen(open: boolean) {
+    this.#gateOpen = open
+    if (!open && !this.#manual) {
+      this.#manual = true
+      if (this.#ws?.readyState === WebSocket.OPEN) this.#ws.close()
+    }
+  }
+
+  /**
+   * Feed one detected human turn as an explicit activity — the ONLY path
+   * that lets the model respond to room audio in manual mode.
+   */
+  sendTurnAudio(pcm: Uint8Array) {
+    if (!pcm.length) return
+    this.#send({ realtimeInput: { activityStart: {} } })
+    // Chunked: one giant frame risks the server's message size limit.
+    const chunk = 32 * 1024
+    for (let i = 0; i < pcm.length; i += chunk) {
+      this.#send({
+        realtimeInput: {
+          audio: {
+            data: Buffer.from(pcm.subarray(i, i + chunk)).toString("base64"),
+            mimeType: `audio/pcm;rate=${GEMINI_INPUT_SAMPLE_RATE}`,
+          },
+        },
+      })
+    }
+    this.#send({ realtimeInput: { activityEnd: {} } })
+  }
+
+  /**
+   * Room speech the gate withheld, as text context — the model stays part
+   * of the conversation it isn't allowed to answer. No turnComplete, so
+   * this can never trigger a response.
+   */
+  notifyHeard(line: string) {
+    this.#sendUserText(line, false)
+  }
 
   /** A human called on the agent: give it the floor for one response. */
   callOn() {
@@ -398,6 +550,9 @@ export class GeminiLiveSession implements VoiceSession {
   /** Push 16 kHz mono PCM16 audio from the room into the session. */
   appendAudio(pcm: Uint8Array) {
     if (!pcm.length) return
+    // Manual mode: free-streamed audio belongs to no activity — turns
+    // arrive through sendTurnAudio instead.
+    if (this.#manual) return
     this.#send({
       realtimeInput: {
         audio: {
@@ -410,6 +565,8 @@ export class GeminiLiveSession implements VoiceSession {
 
   close() {
     this.#closed = true
+    if (this.#reconnectTimer) clearTimeout(this.#reconnectTimer)
+    this.#reconnectTimer = null
     this.#ws?.close()
   }
 }
