@@ -4,8 +4,11 @@ import { z } from "zod"
 export const DataTopic = {
   AgentActivity: "agent-activity",
   AgentControl: "agent-control",
+  Canvas: "canvas",
+  CanvasPresence: "canvas-presence",
   Chat: "chat",
   Doc: "doc",
+  DocPresence: "doc-presence",
   ScreenShare: "screen-share",
 } as const
 
@@ -28,6 +31,63 @@ export const AGENT_DEAFENED_ATTRIBUTE = "agent.deafened"
 
 /** Participant attribute holding an agent's effective turn policy. */
 export const AGENT_POLICY_ATTRIBUTE = "agent.policy"
+
+/** "1"/"0": whether talking over this agent cuts it off (barge-in). */
+export const AGENT_BARGE_IN_ATTRIBUTE = "agent.bargein"
+
+/**
+ * How a participant's camera feed should be displayed, e.g. "90,h" —
+ * rotation degrees plus flip flags. Published as an attribute so every
+ * client renders the same orientation with plain CSS; the encoded track
+ * itself is untouched.
+ */
+export const VIDEO_TRANSFORM_ATTRIBUTE = "video.transform"
+
+export type VideoTransform = {
+  rotation: 0 | 90 | 180 | 270
+  flipH: boolean
+  flipV: boolean
+}
+
+export const defaultVideoTransform: VideoTransform = {
+  rotation: 0,
+  flipH: false,
+  flipV: false,
+}
+
+export function serializeVideoTransform(t: VideoTransform): string {
+  const parts = [String(t.rotation)]
+  if (t.flipH) parts.push("h")
+  if (t.flipV) parts.push("v")
+  return parts.join(",")
+}
+
+export function parseVideoTransform(raw: string | undefined): VideoTransform {
+  if (!raw) return defaultVideoTransform
+  const parts = raw.split(",")
+  const rotation = Number(parts[0])
+  return {
+    rotation:
+      rotation === 90 || rotation === 180 || rotation === 270 ? rotation : 0,
+    flipH: parts.includes("h"),
+    flipV: parts.includes("v"),
+  }
+}
+
+/**
+ * The CSS transform for a feed, composing the published transform with the
+ * local self-view mirror (mirror and flipH cancel each other out).
+ */
+export function videoTransformCss(
+  t: VideoTransform,
+  mirror = false,
+): string | undefined {
+  const parts: string[] = []
+  if (t.rotation !== 0) parts.push(`rotate(${t.rotation}deg)`)
+  if (t.flipH !== mirror) parts.push("scaleX(-1)")
+  if (t.flipV) parts.push("scaleY(-1)")
+  return parts.length ? parts.join(" ") : undefined
+}
 
 /**
  * Participant attribute a client sets (value "active") once its in-browser
@@ -162,6 +222,9 @@ export const agentControlSchema = z.object({
     // Change how the agent takes turns for the rest of the meeting,
     // overriding the registry default. Carries `policy`.
     "set-turn-policy",
+    // Allow or forbid barge-in (speech cutting the agent off mid-reply).
+    // Carries `bargeIn`.
+    "set-barge-in",
     // Not a control the bridge acts on — removal goes through the control
     // API. Broadcast purely so the room can say who did it, like every
     // other agent control.
@@ -169,6 +232,7 @@ export const agentControlSchema = z.object({
   ]),
   agentId: z.string(),
   policy: turnPolicySchema.optional(),
+  bargeIn: z.boolean().optional(),
   /**
    * Who pressed the button. Optional so older clients still parse, and
    * carried on the message rather than resolved from the sender identity:
@@ -203,9 +267,19 @@ export const defaultRoomSettings: RoomSettings = {
  * everyone already in the room.
  */
 export const roomMetadataSchema = z.object({
+  /**
+   * Legacy only: rooms created before the host key was removed from
+   * metadata may still carry one. Never written any more — room metadata is
+   * broadcast to every participant, so a secret must not live in it.
+   */
   hostKey: z.string().optional(),
   started: z.boolean().optional(),
   startedAt: z.number().optional(),
+  /**
+   * The organiser's LiveKit identity, stamped by the host-authenticated
+   * settings route so agent workers can enforce host-only controls.
+   */
+  hostIdentity: z.string().optional(),
   settings: roomSettingsSchema.optional(),
 })
 export type RoomMetadata = z.infer<typeof roomMetadataSchema>
@@ -248,6 +322,10 @@ export function describeAgentControl(
       return control.policy
         ? `set ${agentName}'s response mode to ${control.policy}`
         : null
+    case "set-barge-in":
+      return control.bargeIn === undefined
+        ? null
+        : `turned barge-in ${control.bargeIn ? "on" : "off"} for ${agentName}`
     default:
       return null
   }
@@ -297,10 +375,10 @@ export type AgentStatsEvent = Extract<AgentActivityEvent, { type: "stats" }>
 
 /** Messages on the `chat` data topic. */
 export const chatMessageSchema = z.object({
-  id: z.string(),
-  from: z.string(),
-  fromName: z.string(),
-  text: z.string(),
+  id: z.string().max(64),
+  from: z.string().max(128),
+  fromName: z.string().max(128),
+  text: z.string().max(8000),
   at: z.number(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
@@ -313,13 +391,39 @@ export type ChatMessage = z.infer<typeof chatMessageSchema>
  * between turns, not a Google Doc with six simultaneous typists. `rev`
  * orders edits so a straggling broadcast can't resurrect stale text.
  */
+/**
+ * Ceiling on a document revision. Bounded so a malicious MAX_SAFE_INTEGER
+ * `rev` can't freeze everyone's edits: without a cap, one huge revision
+ * would make every legitimate `+1` increment overflow schema validation
+ * forever. No real meeting doc approaches a billion edits.
+ */
+export const MAX_DOC_REV = 1_000_000_000
+
+/** Next revision after `current`, clamped so it can never exceed the cap. */
+export function nextDocRev(current: number): number {
+  return Math.min(current + 1, MAX_DOC_REV)
+}
+
+/** An incoming rev clamped to at most one past what we already hold. */
+export function clampIncomingDocRev(
+  incomingRev: number,
+  currentRev: number,
+): number {
+  return Math.min(incomingRev, nextDocRev(currentRev))
+}
+
 export const sharedDocSchema = z.object({
-  text: z.string(),
-  /** Increments on every accepted edit; the primary ordering. */
-  rev: z.number().int().min(0),
+  // Char cap well above the store's byte cap — the store enforces bytes;
+  // this stops a pathological payload before it's even merged.
+  text: z.string().max(300_000),
+  /**
+   * Increments on every accepted edit; the primary ordering. Bounded by
+   * MAX_DOC_REV so a malicious revision can't freeze everyone's updates.
+   */
+  rev: z.number().int().min(0).max(MAX_DOC_REV),
   /** Who last wrote, so the panel can say "Scout is drafting". */
-  by: z.string(),
-  byName: z.string(),
+  by: z.string().max(128),
+  byName: z.string().max(128),
   at: z.number(),
 })
 export type SharedDoc = z.infer<typeof sharedDocSchema>
@@ -357,6 +461,280 @@ export function mergeSharedDoc(
 }
 
 /**
+ * Where someone's cursor sits in the shared document right now.
+ *
+ * Ephemeral by design: sent lossy on the `doc-presence` topic, never
+ * persisted, and pruned by receivers when it goes quiet. `start`/`end` are
+ * offsets into the sender's copy of the doc text (equal for a bare caret);
+ * both null means the person left the editor.
+ */
+export const docPresenceSchema = z.object({
+  by: z.string().max(128),
+  byName: z.string().max(128),
+  /** The sender picks its own color so every peer renders the same one. */
+  color: z.string().max(32),
+  start: z.number().int().min(0).nullable(),
+  end: z.number().int().min(0).nullable(),
+  at: z.number(),
+})
+export type DocPresence = z.infer<typeof docPresenceSchema>
+
+/** The first ten people get predefined, well-separated cursor colors. */
+export const DOC_CURSOR_COLORS = [
+  "#2563eb", // blue
+  "#dc2626", // red
+  "#16a34a", // green
+  "#9333ea", // purple
+  "#ea580c", // orange
+  "#0891b2", // cyan
+  "#db2777", // pink
+  "#ca8a04", // yellow
+  "#4f46e5", // indigo
+  "#0d9488", // teal
+] as const
+
+/**
+ * Cursor color for a participant: palette by join order for the first ten,
+ * then a hue derived from the identity so late joiners still get a stable
+ * color without any coordination.
+ */
+export function docCursorColor(identity: string, joinIndex: number): string {
+  if (joinIndex >= 0 && joinIndex < DOC_CURSOR_COLORS.length) {
+    return DOC_CURSOR_COLORS[joinIndex]
+  }
+  let hash = 0
+  for (let i = 0; i < identity.length; i++) {
+    hash = (hash * 31 + identity.charCodeAt(i)) | 0
+  }
+  return `hsl(${((hash % 360) + 360) % 360} 70% 45%)`
+}
+
+/**
+ * The meeting's shared whiteboard, on the `canvas` topic.
+ *
+ * Where the shared doc is one LWW value, the canvas is a map of them: each
+ * Excalidraw element syncs independently with its own clock, so two people
+ * drawing different shapes never conflict, and the worst concurrent case —
+ * both editing the same shape — costs one edit, the same accepted trade as
+ * `mergeSharedDoc`. The element itself is carried opaquely; only the clock
+ * is meeting-protocol. Deletions ride Excalidraw's own `isDeleted` flag,
+ * which must outlive the delete broadcast so a straggling edit of a deleted
+ * shape loses to the deletion instead of resurrecting it.
+ */
+export const canvasRecordSchema = z.object({
+  /** The Excalidraw element id. */
+  id: z.string(),
+  /** The Excalidraw element JSON (null kept for wire compatibility). */
+  record: z.record(z.string(), z.unknown()).nullable(),
+  /** Bumped by the writer on every edit; the primary ordering. */
+  v: z.number().int().min(0),
+  at: z.number(),
+  by: z.string(),
+})
+export type CanvasRecord = z.infer<typeof canvasRecordSchema>
+
+/** Per-record winner pick; same convergence contract as `mergeSharedDoc`. */
+export function mergeCanvasRecord(
+  current: CanvasRecord | undefined,
+  incoming: CanvasRecord,
+): CanvasRecord {
+  if (!current) return incoming
+  if (incoming.v !== current.v) {
+    return incoming.v > current.v ? incoming : current
+  }
+  if (incoming.at !== current.at) {
+    return incoming.at > current.at ? incoming : current
+  }
+  return incoming.by > current.by ? incoming : current
+}
+
+/** A batch of record puts/tombstones on the reliable `canvas` topic. */
+export const canvasDiffSchema = z.object({
+  type: z.literal("diff"),
+  from: z.string(),
+  fromName: z.string(),
+  changes: z.array(canvasRecordSchema).min(1),
+})
+export type CanvasDiff = z.infer<typeof canvasDiffSchema>
+
+/**
+ * The GET/PUT envelope for the bridge's canvas store. Version skew is
+ * Excalidraw's problem — clients pass fetched elements through
+ * `restoreElements`, so no schema descriptor rides along.
+ */
+export const canvasSnapshotSchema = z.object({
+  records: z.array(canvasRecordSchema),
+})
+export type CanvasSnapshot = z.infer<typeof canvasSnapshotSchema>
+
+export const emptyCanvasSnapshot: CanvasSnapshot = {
+  records: [],
+}
+
+/** Page-space cursor on the lossy `canvas-presence` topic. */
+export const canvasPresenceSchema = z.object({
+  type: z.literal("cursor"),
+  from: z.string(),
+  name: z.string(),
+  x: z.number(),
+  y: z.number(),
+  at: z.number(),
+  /**
+   * The sender's cursor is leaving the board (an agent finished drawing).
+   * Without this, a finished cursor lingers until the staleness prune.
+   */
+  gone: z.boolean().optional(),
+})
+export type CanvasPresence = z.infer<typeof canvasPresenceSchema>
+
+// Cursor colors come from the doc's palette (`docCursorColor`) so one person
+// is one color everywhere — the whiteboard adds only its own timings.
+export const CANVAS_PRESENCE_THROTTLE_MS = 100
+export const CANVAS_PRESENCE_HEARTBEAT_MS = 3_000
+export const CANVAS_PRESENCE_STALE_MS = 8_000
+
+/** Snapshot cap. Freehand strokes are fat; the doc's 256KB would pinch. */
+export const MAX_CANVAS_BYTES = 1024 * 1024
+
+/**
+ * LiveKit reliable data messages cap out around 15KiB; diffs are chunked
+ * under that. A record too big even alone still ships (the transport
+ * fragments lossily rather than us silently dropping content) — callers
+ * should downsample oversized freehand strokes before publishing instead.
+ */
+export const MAX_CANVAS_MESSAGE_BYTES = 14_000
+
+export function chunkCanvasChanges(
+  changes: CanvasRecord[],
+  maxBytes = MAX_CANVAS_MESSAGE_BYTES,
+): CanvasRecord[][] {
+  const chunks: CanvasRecord[][] = []
+  let chunk: CanvasRecord[] = []
+  let size = 0
+  for (const change of changes) {
+    const bytes = JSON.stringify(change).length
+    if (chunk.length > 0 && size + bytes > maxBytes) {
+      chunks.push(chunk)
+      chunk = []
+      size = 0
+    }
+    chunk.push(change)
+    size += bytes
+  }
+  if (chunk.length > 0) chunks.push(chunk)
+  return chunks
+}
+
+/**
+ * The drawing vocabulary agents use — deliberately simpler than raw canvas
+ * elements (page-pixel coords, short author-chosen ids, arrows that connect
+ * shapes by id). The bridge translates ops into Excalidraw elements.
+ * Shared so a future brain-facing control endpoint speaks the same language.
+ */
+const canvasPointSchema = z.object({ x: z.number(), y: z.number() })
+
+export const canvasColorSchema = z.enum([
+  "black",
+  "grey",
+  "light-violet",
+  "violet",
+  "blue",
+  "light-blue",
+  "yellow",
+  "orange",
+  "green",
+  "light-green",
+  "light-red",
+  "red",
+  "white",
+])
+export type CanvasColor = z.infer<typeof canvasColorSchema>
+
+export const canvasOpSchema = z.discriminatedUnion("op", [
+  z.object({
+    op: z.literal("rect"),
+    id: z.string().min(1),
+    x: z.number(),
+    y: z.number(),
+    w: z.number().positive(),
+    h: z.number().positive(),
+    label: z.string().optional(),
+    color: canvasColorSchema.optional(),
+    fill: z.enum(["none", "semi", "solid"]).optional(),
+  }),
+  z.object({
+    op: z.literal("ellipse"),
+    id: z.string().min(1),
+    x: z.number(),
+    y: z.number(),
+    w: z.number().positive(),
+    h: z.number().positive(),
+    label: z.string().optional(),
+    color: canvasColorSchema.optional(),
+    fill: z.enum(["none", "semi", "solid"]).optional(),
+  }),
+  z.object({
+    op: z.literal("text"),
+    id: z.string().min(1),
+    x: z.number(),
+    y: z.number(),
+    text: z.string().min(1),
+    size: z.enum(["s", "m", "l", "xl"]).optional(),
+    color: canvasColorSchema.optional(),
+  }),
+  z.object({
+    op: z.literal("note"),
+    id: z.string().min(1),
+    x: z.number(),
+    y: z.number(),
+    text: z.string().min(1),
+    color: canvasColorSchema.optional(),
+  }),
+  z.object({
+    op: z.literal("arrow"),
+    id: z.string().min(1),
+    /** Shape ids to attach the ends to; free points as the alternative. */
+    from: z.string().optional(),
+    to: z.string().optional(),
+    fromPoint: canvasPointSchema.optional(),
+    toPoint: canvasPointSchema.optional(),
+    label: z.string().optional(),
+    color: canvasColorSchema.optional(),
+  }),
+  z.object({
+    op: z.literal("draw"),
+    id: z.string().min(1),
+    points: z.array(canvasPointSchema).min(2),
+    color: canvasColorSchema.optional(),
+  }),
+  z.object({
+    op: z.literal("move"),
+    id: z.string().min(1),
+    x: z.number(),
+    y: z.number(),
+  }),
+  z.object({
+    op: z.literal("update"),
+    id: z.string().min(1),
+    label: z.string().optional(),
+    text: z.string().optional(),
+    color: canvasColorSchema.optional(),
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
+  }),
+  z.object({
+    op: z.literal("delete"),
+    id: z.string().min(1),
+  }),
+  z.object({
+    op: z.literal("clear"),
+  }),
+])
+export type CanvasOp = z.infer<typeof canvasOpSchema>
+
+export const canvasOpBatchSchema = z.array(canvasOpSchema).min(1).max(50)
+
+/**
  * Only one screen share owns the stage. Starting a share broadcasts a
  * "takeover" on the `screen-share` topic; whoever else was sharing stops,
  * and viewers prefer the newest sharer. `at` breaks ties so the older share
@@ -391,13 +769,6 @@ export const tokenRequestSchema = z.object({
   rejoinToken: z.string().optional(),
   /** The creator's key from room creation — starts the meeting on arrival. */
   hostKey: z.string().optional(),
-  /**
-   * Explicit "start the meeting" intent from the waiting screen, for a host
-   * whose browser doesn't hold the hostKey (a different device, incognito, or
-   * cleared storage). Honoured only for an otherwise-empty room, so it starts
-   * the meeting without letting anyone barge into one already in progress.
-   */
-  startAnyway: z.boolean().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 
@@ -426,5 +797,9 @@ export const agentInfoSchema = z.object({
   // realtimeProvider means the agent defaults to pipeline mode.
   realtimeProvider: z.enum(["openai", "gemini"]).optional(),
   ttsProvider: z.enum(["openai", "elevenlabs"]).optional(),
+  // Registry-configured voices, so the invite UI can pre-select the real
+  // default instead of an arbitrary first list item.
+  realtimeVoice: z.string().optional(),
+  ttsVoice: z.string().optional(),
 })
 export type AgentInfo = z.infer<typeof agentInfoSchema>

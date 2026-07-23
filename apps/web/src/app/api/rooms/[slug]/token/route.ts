@@ -1,9 +1,12 @@
+import { timingSafeEqual } from "node:crypto"
 import type { ParticipantMeta } from "@meet/shared"
 import { parseParticipantMeta, tokenRequestSchema } from "@meet/shared"
 import { AccessToken, TokenVerifier } from "livekit-server-sdk"
 import { nanoid } from "nanoid"
 import { NextResponse } from "next/server"
+import { isKicked } from "@/lib/server/kicked"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
+import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import {
   deriveHostKey,
   isRecreatableRoomSlug,
@@ -11,6 +14,24 @@ import {
 } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
+
+function keyMatches(given: string | undefined, expected: string): boolean {
+  if (!given) return false
+  const a = Buffer.from(given)
+  const b = Buffer.from(expected)
+  return a.length === b.length && timingSafeEqual(a, b)
+}
+
+/** The token's subject, decoded only after its signature has verified. */
+function tokenSubject(token: string): string | undefined {
+  try {
+    return JSON.parse(
+      Buffer.from(token.split(".")[1] ?? "", "base64url").toString(),
+    ).sub as string | undefined
+  } catch {
+    return undefined
+  }
+}
 
 export async function POST(request: Request, { params }: Params) {
   const { slug } = await params
@@ -37,15 +58,24 @@ export async function POST(request: Request, { params }: Params) {
         { status: 404 },
       )
     }
+    // Recreation makes real LiveKit rooms from guessed slugs; without a lid
+    // it's an unauthenticated resource-creation amplifier.
+    if (
+      rateLimited(`recreate:${clientKey(request)}`, 10, 10 * 60 * 1000) ||
+      rateLimited("recreate:global", 120, 10 * 60 * 1000)
+    ) {
+      return NextResponse.json(
+        { error: "too many requests, try again shortly" },
+        { status: 429 },
+      )
+    }
     const recreated = await roomService()
       .createRoom({
         name: slug,
         emptyTimeout: 300,
         departureTimeout: 60,
-        metadata: JSON.stringify({
-          hostKey: deriveHostKey(slug),
-          started: false,
-        }),
+        // Never the hostKey: room metadata is broadcast to every participant.
+        metadata: JSON.stringify({ started: false }),
       })
       .catch(() => null)
     if (!recreated) {
@@ -58,40 +88,42 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   const room = existing[0]
-  let roomMeta: { hostKey?: string; started?: boolean; startedAt?: number } = {}
+  let roomMeta: { started?: boolean; startedAt?: number } = {}
   try {
     roomMeta = JSON.parse(room.metadata || "{}")
   } catch {}
-  const isCreator = !!roomMeta.hostKey && body.data.hostKey === roomMeta.hostKey
+  // Against the derived key, never a metadata copy — metadata is public to
+  // the room, so a key read from it would authorise the people it gates.
+  const isCreator = keyMatches(body.data.hostKey, deriveHostKey(slug))
 
   // Count humans already inside — a lingering transcriber or agent must never
   // count, so joining "alone with the transcriber" still reads as an empty
   // room. Both the start gate and the waiting-room fallback below key off it.
-  let participantCount = 0
+  // Fails closed: an error here must not read as "empty room" — that would
+  // turn a LiveKit hiccup into direct admission for whoever asked first.
+  let participantCount: number
   try {
     participantCount = (await roomService().listParticipants(slug)).filter(
       (p) => parseParticipantMeta(p.metadata)?.kind === "human",
     ).length
   } catch {
-    participantCount = 0
+    return NextResponse.json(
+      { error: "room state unavailable, try again" },
+      { status: 503 },
+    )
   }
 
   // The meeting starts when its creator arrives — a request presenting the
-  // hostKey minted at creation, which flips the started flag. But that key
-  // lives only in the creating browser's localStorage, so a host opening the
-  // link elsewhere (another device, incognito, cleared storage) can't present
-  // it; without a fallback only a key holder could ever start it, deadlocking
-  // the room. So the waiting screen offers a manual start, which we honour for
-  // an otherwise-empty room — it opens the meeting without letting anyone
-  // barge into one already under way. Everyone else gets 425 and polls.
+  // derived hostKey, which flips the started flag. There is deliberately no
+  // unauthenticated "start anyway" escape hatch any more: it let anyone with
+  // a guessed code open and take over a scheduled meeting before its host
+  // arrived. A host on a device without the key waits like everyone else.
   // (Rooms without metadata predate this gate — treat them as started.)
   const started = roomMeta.started !== false
-  const canStart =
-    isCreator || (!!body.data.startAnyway && participantCount === 0)
-  if (!started && !canStart) {
+  if (!started && !isCreator) {
     return NextResponse.json({ notStarted: true }, { status: 425 })
   }
-  if (!started && canStart) {
+  if (!started && isCreator) {
     // Stamp the start moment: the call timer anchors here, so a meeting
     // that reconvenes in a reused (not yet GC'd) room starts from 0:00
     // instead of inheriting the room's creation time.
@@ -101,11 +133,17 @@ export async function POST(request: Request, { params }: Params) {
       .catch(() => undefined)
   }
 
-  // Waiting room: the creator (or, in legacy/open rooms, the first human
-  // into an empty room) enters directly; everyone after knocks — they join
-  // with a restricted token (no publish/subscribe/data) and "waiting"
+  // Waiting room: the creator enters directly; everyone after knocks — they
+  // join with a restricted token (no publish/subscribe/data) and "waiting"
   // metadata until someone inside admits them (see ../admit/route.ts).
-  const isHost = isCreator || participantCount === 0
+  //
+  // "First human into an empty room walks in" applies ONLY to legacy rooms
+  // that predate the start gate (no metadata at all). For managed rooms it
+  // was a race: anyone polling the token endpoint between the host starting
+  // the room and actually connecting — or during a momentary empty spell —
+  // skipped the waiting room entirely.
+  const legacyOpenRoom = roomMeta.started === undefined
+  const isHost = isCreator || (legacyOpenRoom && participantCount === 0)
   let waiting = !isHost
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()
@@ -113,30 +151,25 @@ export async function POST(request: Request, { params }: Params) {
   // A refresh presents its previous token as proof of admission: accept it
   // if it verifies for this room with admitted (human) metadata, or — for a
   // knocker upgrading their proof right after admission — if its identity is
-  // currently connected with human metadata.
+  // currently connected with human metadata. Identities removed by
+  // moderation are refused either way: a kick must end the session, not
+  // hand out a fresh identity.
   if (waiting && body.data.rejoinToken) {
     try {
       const claims = await new TokenVerifier(apiKey, apiSecret).verify(
         body.data.rejoinToken,
       )
-      if (claims.video?.room === slug) {
+      const sub = tokenSubject(body.data.rejoinToken)
+      if (claims.video?.room === slug && sub && !isKicked(slug, sub)) {
         const kind = parseParticipantMeta(claims.metadata)?.kind
         if (kind === "human") {
           waiting = false
         } else if (kind === "waiting") {
-          const sub = JSON.parse(
-            Buffer.from(
-              body.data.rejoinToken.split(".")[1] ?? "",
-              "base64url",
-            ).toString(),
-          ).sub as string | undefined
-          const live = sub
-            ? (
-                await roomService()
-                  .listParticipants(slug)
-                  .catch(() => [])
-              ).find((p) => p.identity === sub)
-            : undefined
+          const live = (
+            await roomService()
+              .listParticipants(slug)
+              .catch(() => [])
+          ).find((p) => p.identity === sub)
           if (live && parseParticipantMeta(live.metadata)?.kind === "human") {
             waiting = false
           }
@@ -162,7 +195,9 @@ export async function POST(request: Request, { params }: Params) {
     identity,
     name: body.data.displayName,
     metadata: JSON.stringify(meta),
-    ttl: "2h",
+    // Short-ish: an unexpired token doubles as rejoin proof, so its lifetime
+    // bounds how long a removed participant's saved token stays dangerous.
+    ttl: "1h",
   })
   token.addGrant({
     room: slug,
@@ -170,7 +205,10 @@ export async function POST(request: Request, { params }: Params) {
     // Never roomCreate: meeting creation is gated by the management
     // password; a join token must not be able to resurrect an ended room.
     roomCreate: false,
-    roomAdmin: isHost,
+    // Never roomAdmin: that's a LiveKit-level moderation grant usable
+    // directly against the LiveKit service APIs, bypassing every host check
+    // in this app. Moderation goes through the host-key routes instead.
+    roomAdmin: false,
     canPublish: !waiting,
     canSubscribe: !waiting,
     canPublishData: !waiting,
@@ -192,8 +230,8 @@ export async function POST(request: Request, { params }: Params) {
     participantCount,
     waiting,
     // Only the creator organises the meeting's agents. In open deployments
-    // (no host gate) the first human in acts as host, as before.
-    isHost: isCreator || (!roomMeta.hostKey && isHost),
+    // (no management gate) the first human in acts as host, as before.
+    isHost,
     roomStartedAt,
   })
 }

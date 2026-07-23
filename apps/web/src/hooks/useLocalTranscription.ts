@@ -217,7 +217,12 @@ export function useLocalTranscription(enabled: boolean) {
         node.connect(sink)
         sink.connect(audioCtx.destination)
       } catch (err) {
-        console.warn(`local STT audio tap failed, using server: ${err}`)
+        // Cancellation aborts the in-flight addModule (closing the context
+        // rejects it with AbortError) — that's this effect cleaning up after
+        // a mic toggle or re-render, not a failure worth logging.
+        if (!cancelled) {
+          console.warn(`local STT audio tap failed, using server: ${err}`)
+        }
         return teardown()
       }
 

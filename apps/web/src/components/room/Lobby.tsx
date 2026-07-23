@@ -6,7 +6,11 @@ import { toast } from "react-toastify"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import type { JoinPreferences } from "@/components/room/RoomClient"
+import { Select } from "@/components/ui/Select"
 import { useMediaPreview } from "@/hooks/useMediaPreview"
+import { cleanDeviceLabel } from "@/lib/deviceLabel"
+import { readDevicePref, setDevicePref } from "@/stores/devicePrefs"
+import { $joinCameraOff, $joinMuted } from "@/stores/preferences"
 
 function readStoredString(key: string): string {
   if (typeof window === "undefined") return ""
@@ -40,8 +44,11 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
   const [restored, setRestored] = useState(false)
   useEffect(() => {
     setDisplayName(readStoredString("displayName"))
-    setAudioEnabled(readStoredToggle("audioEnabled"))
-    setVideoEnabled(readStoredToggle("videoEnabled"))
+    // "Always join muted / camera off" beats last call's state.
+    setAudioEnabled($joinMuted.get() ? false : readStoredToggle("audioEnabled"))
+    setVideoEnabled(
+      $joinCameraOff.get() ? false : readStoredToggle("videoEnabled"),
+    )
     setRestored(true)
   }, [])
   useEffect(() => {
@@ -62,6 +69,29 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
     videoDeviceId,
     videoRef,
   })
+
+  // Restore a previously chosen device — but only once it's confirmed present,
+  // so a stale id (a device since unplugged) can't fail the preview's exact
+  // getUserMedia. The initial acquire runs on the OS default; this switches to
+  // the saved device after enumeration. Runs once per kind, when its list lands.
+  const audioRestored = useRef(false)
+  const videoRestored = useRef(false)
+  useEffect(() => {
+    if (!audioRestored.current && mics.length > 0) {
+      const saved = readDevicePref("audioinput")
+      if (saved && mics.some((m) => m.deviceId === saved)) {
+        setAudioDeviceId(saved)
+      }
+      audioRestored.current = true
+    }
+    if (!videoRestored.current && cameras.length > 0) {
+      const saved = readDevicePref("videoinput")
+      if (saved && cameras.some((c) => c.deviceId === saved)) {
+        setVideoDeviceId(saved)
+      }
+      videoRestored.current = true
+    }
+  }, [mics, cameras])
 
   useEffect(() => {
     if (mediaError) toast.error(mediaError)
@@ -161,36 +191,40 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
           {mics.length > 0 && (
             <label className="form-control w-full">
               <span className="label-text pb-1 text-xs">Microphone</span>
-              <select
-                className="select w-full"
+              <Select
+                size="md"
                 value={audioDeviceId ?? ""}
-                onChange={(e) => setAudioDeviceId(e.target.value || undefined)}
-              >
-                <option value="">Default microphone</option>
-                {mics.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || "Microphone"}
-                  </option>
-                ))}
-              </select>
+                onChange={(e) => {
+                  const id = e.target.value || undefined
+                  setAudioDeviceId(id)
+                  setDevicePref("audioinput", id ?? "")
+                }}
+                placeholder="Default microphone"
+                options={mics.map((d) => ({
+                  value: d.deviceId,
+                  label: cleanDeviceLabel(d.label) || "Microphone",
+                }))}
+              />
             </label>
           )}
 
           {cameras.length > 0 && (
             <label className="form-control w-full">
               <span className="label-text pb-1 text-xs">Camera</span>
-              <select
-                className="select w-full"
+              <Select
+                size="md"
                 value={videoDeviceId ?? ""}
-                onChange={(e) => setVideoDeviceId(e.target.value || undefined)}
-              >
-                <option value="">Default camera</option>
-                {cameras.map((d) => (
-                  <option key={d.deviceId} value={d.deviceId}>
-                    {d.label || "Camera"}
-                  </option>
-                ))}
-              </select>
+                onChange={(e) => {
+                  const id = e.target.value || undefined
+                  setVideoDeviceId(id)
+                  setDevicePref("videoinput", id ?? "")
+                }}
+                placeholder="Default camera"
+                options={cameras.map((d) => ({
+                  value: d.deviceId,
+                  label: cleanDeviceLabel(d.label) || "Camera",
+                }))}
+              />
             </label>
           )}
 

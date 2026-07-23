@@ -9,6 +9,7 @@ import * as elevenlabs from "@livekit/agents-plugin-elevenlabs"
 import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
+  AGENT_BARGE_IN_ATTRIBUTE,
   AGENT_DEAFENED_ATTRIBUTE,
   AGENT_MUTED_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
@@ -17,24 +18,50 @@ import {
   type AgentActivityEvent,
   type AgentState,
   agentControlSchema,
+  type CanvasDiff,
+  type CanvasOp,
+  type CanvasPresence,
   type ChatMessage,
   chatMessageSchema,
+  chunkCanvasChanges,
   DataTopic,
+  type DocPresence,
+  docCursorColor,
   type ParticipantMeta,
+  parseParticipantMeta,
+  TRANSCRIPTION_TOPIC,
 } from "@meet/shared"
+import {
+  CURSOR_FRAME_MS,
+  caretSweep,
+  cursorLeg,
+  groupForReveal,
+  REVEAL_BEAT_MS,
+  revealLegMs,
+} from "./agent-presence.js"
 import { LoopedVoiceAgent, SessionState } from "./agent-session.js"
 import { bargeInConfigFromEnv } from "./barge-in.js"
-import { getDynamicAgent } from "./dynamic.js"
+import { buildCanvasRecords } from "./canvas-records.js"
+import { controlAllowed } from "./control-auth.js"
+import {
+  dynamicAgentsPublicOnly,
+  getDynamicAgent,
+  publicOnlyLookup,
+} from "./dynamic.js"
 import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import {
   describeRoster,
+  fetchCanvas,
   fetchSharedDoc,
   fetchTranscript,
+  formatCanvas,
   formatSharedDoc,
   formatTranscript,
+  postCanvasDiff,
   postDebugEvent,
+  pushBounded,
   saveSharedDoc,
   withMeetingContext,
 } from "./meeting-context.js"
@@ -44,7 +71,9 @@ import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
 
 type DispatchMeta = {
   agentId: string
-  mode?: "realtime" | "gemini" | "pipeline"
+  // "pipeline" is the OpenAI STT/TTS pipeline; "elevenlabs" the same
+  // pipeline speaking through ElevenLabs.
+  mode?: "realtime" | "gemini" | "pipeline" | "elevenlabs"
   voice?: string
 }
 
@@ -68,7 +97,30 @@ function applyMode(
   mode?: DispatchMeta["mode"],
 ): ResolvedEntry {
   if (mode === "pipeline") {
-    return entry.realtime ? { ...entry, realtime: undefined } : entry
+    // The OpenAI pipeline, explicitly — an agent whose registry pipeline is
+    // ElevenLabs still converts, or the mode choice would silently not take.
+    const tts =
+      entry.tts.provider === "openai"
+        ? entry.tts
+        : ({
+            provider: "openai",
+            model: "gpt-4o-mini-tts",
+            voice: "alloy",
+          } as const)
+    return { ...entry, realtime: undefined, tts }
+  }
+  if (mode === "elevenlabs") {
+    const tts =
+      entry.tts.provider === "elevenlabs"
+        ? entry.tts
+        : ({
+            provider: "elevenlabs",
+            model: process.env.ELEVENLABS_MODEL ?? "eleven_turbo_v2_5",
+            // Registry entries pick their own voice id; the override default
+            // has to name one, since ElevenLabs has no generic fallback.
+            voice: process.env.ELEVENLABS_VOICE_ID ?? "21m00Tcm4TlvDq8ikWAM",
+          } as const)
+    return { ...entry, realtime: undefined, tts }
   }
   if (mode === "realtime" && entry.realtime?.provider !== "openai") {
     const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
@@ -83,14 +135,22 @@ function applyMode(
       },
     }
   }
-  if (mode === "gemini" && entry.realtime?.provider !== "gemini") {
+  if (mode === "gemini") {
     return {
       ...entry,
-      realtime: {
-        provider: "gemini" as const,
-        model: process.env.GEMINI_REALTIME_MODEL ?? GEMINI_LIVE_DEFAULT_MODEL,
-        voice: "Puck",
-      },
+      // Gemini Live cannot be gated (it always auto-responds), so choosing
+      // it is also choosing an open floor — a gated registry policy would
+      // otherwise kill the job at startup.
+      turn_policy: "open",
+      realtime:
+        entry.realtime?.provider === "gemini"
+          ? entry.realtime
+          : {
+              provider: "gemini" as const,
+              model:
+                process.env.GEMINI_REALTIME_MODEL ?? GEMINI_LIVE_DEFAULT_MODEL,
+              voice: "Puck",
+            },
     }
   }
   return entry
@@ -114,7 +174,7 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
   if (agentId.startsWith("dyn-")) {
     const spec = getDynamicAgent(agentId)
     if (!spec) throw new Error(`unknown dynamic agent: ${agentId}`)
-    return applyMode(
+    const dyn = applyMode(
       {
         id: agentId,
         name: spec.name,
@@ -133,6 +193,7 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
       },
       mode,
     )
+    return applyVoice(dyn, voice)
   }
   const entry = loadRegistry().find((a) => a.id === agentId)
   if (!entry) throw new Error(`unknown agent: ${agentId}`)
@@ -167,6 +228,13 @@ export default defineAgent({
       url: entry.brain.url,
       token: entry.directToken ?? brainToken(entry),
       conversationId: `${roomName}-${entry.id}`,
+      // Dynamic (pasted-URL) agents connect through a DNS lookup that
+      // refuses private addresses at dial time — the invite-time SSRF check
+      // alone is bypassable by a rebinding domain. Registry agents come
+      // from the operator's own config and may legitimately be internal.
+      ...(entry.id.startsWith("dyn-") && dynamicAgentsPublicOnly()
+        ? { lookup: publicOnlyLookup }
+        : {}),
     }
     const rawBrain: Brain =
       entry.brain.kind === "tty"
@@ -204,6 +272,13 @@ export default defineAgent({
         .catch(() => undefined)
     }
     publishPolicy()
+    // Barge-in starts at the deployment default; the "set-barge-in" control
+    // flips it per meeting (realtime handles its own flips in realtime-agent).
+    local
+      .setAttributes({
+        [AGENT_BARGE_IN_ATTRIBUTE]: bargeIn.enabled ? "1" : "0",
+      })
+      .catch(() => undefined)
     const publishActivity = (event: AgentActivityEvent) => {
       local
         .publishData(new TextEncoder().encode(JSON.stringify(event)), {
@@ -230,6 +305,25 @@ export default defineAgent({
 
     const screen = new ScreenCapture(ctx.room)
 
+    // The agent's visible hand. Presence frames are lossy fire-and-forget,
+    // and animations queue so overlapping tool calls play out in order
+    // rather than teleporting the cursor around.
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => setTimeout(resolve, ms))
+    let presenceChain: Promise<void> = Promise.resolve()
+    const queuePresence = (run: () => Promise<void>) => {
+      presenceChain = presenceChain.then(run).catch(() => undefined)
+    }
+    const publishLossy = (topic: string, payload: unknown) => {
+      local
+        .publishData(new TextEncoder().encode(JSON.stringify(payload)), {
+          reliable: false,
+          topic,
+        })
+        .catch(() => undefined)
+    }
+    const agentCursorColor = docCursorColor(`agent-${entry.id}`, -1)
+
     /**
      * Write the shared document and tell the room. Persisting alone isn't
      * enough — anyone with the Doc panel open is watching the data channel,
@@ -249,8 +343,104 @@ export default defineAgent({
           topic: DataTopic.Doc,
         })
         .catch(() => undefined)
+      // The agent's caret sweeps through what it just wrote, then leaves —
+      // the update lands instantly; this is how the room sees who did it.
+      queuePresence(async () => {
+        const caret = (start: number | null, end: number | null) => {
+          const presence: DocPresence = {
+            by: `agent-${entry.id}`,
+            byName: entry.name,
+            color: agentCursorColor,
+            start,
+            end,
+            at: Date.now(),
+          }
+          publishLossy(DataTopic.DocPresence, presence)
+        }
+        for (const offset of caretSweep(text.length, 14)) {
+          caret(offset, offset)
+          await sleep(90)
+        }
+        await sleep(400)
+        caret(null, null)
+      })
       return "Saved. Everyone can see the updated document."
     }
+
+    /**
+     * Draw on the shared whiteboard and tell the room, mirroring publishDoc:
+     * persist first (so a client that reacts to the broadcast and refetches
+     * sees a store at least as new), then broadcast the same diff message
+     * clients exchange among themselves.
+     */
+    const publishCanvasOps = async (ops: CanvasOp[]): Promise<string> => {
+      const snapshot = await fetchCanvas(roomName)
+      const { changes, summary, warnings } = buildCanvasRecords(
+        ops,
+        new Map(snapshot.records.map((r) => [r.id, r])),
+        { identity: `agent-${entry.id}`, name: entry.name },
+      )
+      if (changes.length === 0) {
+        return `Nothing was drawn. ${warnings.join(" ")}`.trim()
+      }
+      const diff: CanvasDiff = {
+        type: "diff",
+        from: `agent-${entry.id}`,
+        fromName: entry.name,
+        changes,
+      }
+      if (!(await postCanvasDiff(roomName, diff))) {
+        return "The drawing couldn't be saved."
+      }
+      // The full batch is already durable; the room watches it appear shape
+      // by shape, the agent's cursor gliding to each one first. Queued and
+      // unawaited so the model keeps talking while its hand draws.
+      const broadcast = (batch: typeof changes) => {
+        for (const chunk of chunkCanvasChanges(batch)) {
+          local
+            .publishData(
+              new TextEncoder().encode(
+                JSON.stringify({ ...diff, changes: chunk }),
+              ),
+              { reliable: true, topic: DataTopic.Canvas },
+            )
+            .catch(() => undefined)
+        }
+      }
+      const cursor = (x: number, y: number, gone = false) => {
+        const presence: CanvasPresence = {
+          type: "cursor",
+          from: `agent-${entry.id}`,
+          name: entry.name,
+          x,
+          y,
+          at: Date.now(),
+          ...(gone ? { gone } : {}),
+        }
+        publishLossy(DataTopic.CanvasPresence, presence)
+      }
+      queuePresence(async () => {
+        const groups = groupForReveal(changes)
+        const legMs = revealLegMs(groups.length)
+        const steps = Math.max(2, Math.round(legMs / CURSOR_FRAME_MS))
+        let from = groups.find((g) => g.at)?.at ?? null
+        for (const group of groups) {
+          if (group.at && from) {
+            for (const frame of cursorLeg(from, group.at, steps)) {
+              cursor(frame.x, frame.y)
+              await sleep(CURSOR_FRAME_MS)
+            }
+            from = group.at
+          }
+          broadcast(group.changes)
+          await sleep(REVEAL_BEAT_MS)
+        }
+        if (from) cursor(from.x, from.y, true)
+      })
+      return [summary, ...warnings].join(" ").trim()
+    }
+    const readCanvas = async (): Promise<string> =>
+      formatCanvas(await fetchCanvas(roomName)) || "The whiteboard is empty."
 
     // Meeting context: what was said before the agent joined (from the
     // control API's transcript store) plus who's in the room. Wrapping the
@@ -258,9 +448,11 @@ export default defineAgent({
     // mention, or realtime ask_agent delegation.
     const priorTranscript = formatTranscript(await fetchTranscript(roomName))
     const priorDoc = formatSharedDoc(await fetchSharedDoc(roomName))
+    const priorCanvas = formatCanvas(await fetchCanvas(roomName))
     const meetingContext = [
       `Participants in the meeting when you joined: ${describeRoster(ctx.room)}.`,
       priorDoc,
+      priorCanvas,
       // Say so explicitly: an agent that doesn't know a share exists can't
       // offer to look at it, and one that doesn't know it's blind will
       // happily invent what's on screen.
@@ -276,11 +468,26 @@ export default defineAgent({
     // Chat messages the brain hasn't seen yet; drained into its next turn so
     // pipeline agents follow the room's text chat, not just @mentions.
     const chatSince: string[] = []
+    // What the room said and did since the brain last ran — spoken turns,
+    // chat, roster changes. Fed by the realtime branch below, so a brain
+    // fronted by a speech-to-speech model stays part of the conversation
+    // itself rather than seeing only what the voice model forwards. (The
+    // pipeline path leaves it empty: its brain hears every turn directly,
+    // and the room transcriber's copy would duplicate them.)
+    const heardSince: string[] = []
     const brain = withMeetingContext(rawBrain, meetingContext, () => {
+      const parts: string[] = []
+      const heard = heardSince.splice(0)
+      if (heard.length) {
+        parts.push(
+          `[Heard in the meeting since your last turn:]\n${heard.join("\n")}`,
+        )
+      }
       const lines = chatSince.splice(0)
-      return lines.length
-        ? `[Meeting chat since your last turn:]\n${lines.join("\n")}`
-        : ""
+      if (lines.length) {
+        parts.push(`[Meeting chat since your last turn:]\n${lines.join("\n")}`)
+      }
+      return parts.join("\n\n")
     })
 
     postDebugEvent(
@@ -296,11 +503,71 @@ export default defineAgent({
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
+      // The brain's ears: every finalized utterance in the room (the room
+      // transcriber's segments) lands in the heard buffer, so each brain
+      // turn carries the conversation itself, not just the voice model's
+      // summary of it.
+      ctx.room.registerTextStreamHandler(
+        TRANSCRIPTION_TOPIC,
+        (reader, info) => {
+          void (async () => {
+            try {
+              if (info.identity === `agent-${entry.id}`) return
+              const attrs = reader.info.attributes
+              if (attrs?.["lk.transcription_final"] !== "true") return
+              const text = (await reader.readAll()).trim()
+              if (!text) return
+              const speaker = [...ctx.room.remoteParticipants.values()].find(
+                (p) => p.identity === info.identity,
+              )
+              pushBounded(
+                heardSince,
+                `${speaker?.name || info.identity}: ${text}`,
+              )
+            } catch {
+              // stream aborted mid-read; nothing to record
+            }
+          })()
+        },
+      )
+      const noteRoster =
+        (verb: string) =>
+        (p: { identity: string; name?: string; metadata?: string }) => {
+          const meta = parseParticipantMeta(p.metadata)
+          if (meta?.kind === "service" || meta?.kind === "waiting") return
+          pushBounded(
+            heardSince,
+            `[${p.name || p.identity} ${verb} the meeting]`,
+          )
+        }
+      ctx.room.on("participantConnected", noteRoster("joined"))
+      ctx.room.on("participantDisconnected", noteRoster("left"))
       // Chat handling lives with the realtime session: every room chat
       // message is surfaced to the model as context, and it posts replies
-      // itself via the send_chat_message tool (see realtime-agent.ts).
-      ctx.room.on("dataReceived", (payload: Uint8Array, _p, _k, topic) => {
+      // itself via the send_chat_message tool (see realtime-agent.ts). The
+      // heard buffer gets a copy too, so the brain follows the chat as well.
+      ctx.room.on("dataReceived", (payload: Uint8Array, sender, _k, topic) => {
+        if (topic === DataTopic.Chat) {
+          try {
+            const message = chatMessageSchema.parse(
+              JSON.parse(new TextDecoder().decode(payload)),
+            )
+            // Attribution from the actual LiveKit sender — the payload's
+            // claimed name would let anyone put words in another's mouth
+            // inside the model's context.
+            if (sender && !sender.identity.startsWith("agent-")) {
+              pushBounded(
+                heardSince,
+                `${sender.name || sender.identity} (in chat): ${message.text}`,
+              )
+            }
+          } catch {}
+          return
+        }
         if (topic !== DataTopic.AgentControl) return
+        // Enforced here, not just in the UI: only an admitted human — and
+        // only the host when they've reserved controls — may drive agents.
+        if (!controlAllowed(ctx.room, sender)) return
         try {
           const control = agentControlSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),
@@ -345,7 +612,11 @@ export default defineAgent({
         vad: ctx.proc.userData.vad as silero.VAD | undefined,
         readDoc: async () => (await fetchSharedDoc(roomName)).text,
         writeDoc: publishDoc,
+        readCanvas,
+        drawCanvas: publishCanvasOps,
         context: meetingContext,
+        onSpoke: (text) =>
+          pushBounded(heardSince, `${entry.name} (you, aloud): ${text}`),
       })
       return
     }
@@ -479,8 +750,11 @@ export default defineAgent({
     })
 
     // Mute/unmute controls and chat @-mentions arrive over data topics.
-    ctx.room.on("dataReceived", (payload: Uint8Array, _p, _k, topic) => {
+    ctx.room.on("dataReceived", (payload: Uint8Array, sender, _k, topic) => {
       if (topic === DataTopic.AgentControl) {
+        // Enforced here, not just in the UI: only an admitted human — and
+        // only the host when they've reserved controls — may drive agents.
+        if (!controlAllowed(ctx.room, sender)) return
         try {
           const control = agentControlSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),
@@ -501,6 +775,22 @@ export default defineAgent({
           } else if (control.type === "set-turn-policy" && control.policy) {
             sessionState.turnPolicy = control.policy
             publishPolicy()
+          } else if (
+            control.type === "set-barge-in" &&
+            control.bargeIn !== undefined
+          ) {
+            // The SDK reads interruption config live from its options; there
+            // is no public setter, so reach through the deprecated alias.
+            try {
+              ;(
+                session.options as unknown as { allowInterruptions?: boolean }
+              ).allowInterruptions = control.bargeIn
+            } catch {}
+            local
+              .setAttributes({
+                [AGENT_BARGE_IN_ATTRIBUTE]: control.bargeIn ? "1" : "0",
+              })
+              .catch(() => undefined)
           } else if (control.type === "zap") {
             // Wake the agent: unmuted and answering every turn for the zap
             // window, then back to its usual policy. "zapped" is the visible
@@ -551,15 +841,17 @@ export default defineAgent({
           const message = chatMessageSchema.parse(
             JSON.parse(new TextDecoder().decode(payload)),
           )
-          if (message.from.startsWith("agent-")) return
+          // Attribution from the actual LiveKit sender, not payload claims.
+          if (!sender || sender.identity.startsWith("agent-")) return
+          const senderName = sender.name || sender.identity
           const mention = new RegExp(`@${entry.name}\\b`, "i")
           if (!mention.test(message.text)) {
             // Not for us directly — queue as context for the next turn.
-            chatSince.push(`${message.fromName}: ${message.text}`)
+            chatSince.push(`${senderName}: ${message.text}`)
             return
           }
-          console.log(`[${entry.id}] chat mention from ${message.fromName}`)
-          void replyInChat(message)
+          console.log(`[${entry.id}] chat mention from ${senderName}`)
+          void replyInChat({ ...message, fromName: senderName })
         } catch {
           // ignore malformed chat messages
         }

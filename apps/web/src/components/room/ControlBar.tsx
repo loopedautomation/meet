@@ -8,7 +8,12 @@ import {
   useParticipants,
   useRoomContext,
 } from "@livekit/components-react"
-import { HAND_ATTRIBUTE, parseParticipantMeta } from "@meet/shared"
+import {
+  HAND_ATTRIBUTE,
+  parseParticipantMeta,
+  serializeVideoTransform,
+  VIDEO_TRANSFORM_ATTRIBUTE,
+} from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionQuality, type LocalParticipant } from "livekit-client"
 import {
@@ -23,9 +28,9 @@ import {
   Mic,
   MicOff,
   MonitorUp,
+  PenLine,
   ScrollText,
   Settings,
-  Sparkles,
   Users,
   Video,
   VideoOff,
@@ -33,14 +38,25 @@ import {
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Modal } from "@/components/ui/Modal"
-import { useBackgroundBlur } from "@/hooks/useBackgroundBlur"
-import {
-  supportsVoiceIsolation,
-  useVoiceIsolation,
-} from "@/hooks/useVoiceIsolation"
-import { $blur, setBlur } from "@/stores/blur"
+import { useCameraEffect } from "@/hooks/useCameraEffect"
+import { useIncomingVideo } from "@/hooks/useIncomingVideo"
+import { useMeetingSounds } from "@/hooks/useMeetingSounds"
+import { usePushToTalk } from "@/hooks/usePushToTalk"
+import { useStickyDevices } from "@/hooks/useStickyDevices"
+import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
+import { cleanDeviceLabel } from "@/lib/deviceLabel"
+import { $cameraEffect } from "@/stores/cameraEffect"
+import { $canvasOpen, $canvasUnseen } from "@/stores/canvas"
+import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
+import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
 import { $openPanel, togglePanel } from "@/stores/panels"
-import { $voiceIsolation, setVoiceIsolation } from "@/stores/voiceIsolation"
+import {
+  $autoDataSaver,
+  $meetingSounds,
+  $pushToTalk,
+} from "@/stores/preferences"
+import { $videoTransform } from "@/stores/videoTransform"
+import { $voiceIsolation } from "@/stores/voiceIsolation"
 
 export function ControlBar({
   slug,
@@ -63,16 +79,39 @@ export function ControlBar({
   // red button shouldn't drop you out of the call and back through the lobby.
   const [confirmLeave, setConfirmLeave] = useState(false)
   const openPanel = useStore($openPanel)
+  const whiteboardOpen = useStore($canvasOpen)
+  const canvasUnseen = useStore($canvasUnseen)
   const participants = useParticipants()
   const waitingCount = participants.filter(
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
   ).length
 
-  const blur = useStore($blur)
-  useBackgroundBlur(blur)
+  const cameraEffect = useStore($cameraEffect)
+  useCameraEffect(cameraEffect)
 
   const voiceIsolation = useStore($voiceIsolation)
   useVoiceIsolation(voiceIsolation)
+
+  const incomingVideoOff = useStore($incomingVideoOff)
+  useIncomingVideo(incomingVideoOff)
+
+  usePushToTalk(useStore($pushToTalk))
+  useMeetingSounds(useStore($meetingSounds))
+  const autoDataSaver = useStore($autoDataSaver)
+
+  // Keep the chosen mic/camera pinned against OS auto-switching on hot-plug.
+  useStickyDevices()
+
+  // Publish the camera orientation so every client renders this feed the
+  // same way — the track itself is untouched, viewers apply CSS.
+  const videoTransform = useStore($videoTransform)
+  useEffect(() => {
+    localParticipant
+      ?.setAttributes({
+        [VIDEO_TRANSFORM_ATTRIBUTE]: serializeVideoTransform(videoTransform),
+      })
+      .catch(() => undefined)
+  }, [videoTransform, localParticipant])
 
   const { handRaised, toggleHand } = useRaiseHand(localParticipant)
 
@@ -86,10 +125,18 @@ export function ControlBar({
       quality !== lastQuality.current &&
       (quality === ConnectionQuality.Poor || quality === ConnectionQuality.Lost)
     ) {
-      toast.warning("Your connection is unstable — call quality may suffer.")
+      // Auto data-saver: a degrading link sheds incoming video by itself.
+      if (autoDataSaver && !$incomingVideoOff.get()) {
+        setIncomingVideoOff(true)
+        toast.info(
+          "Connection is unstable — incoming video turned off to save bandwidth (Settings > Connection to undo).",
+        )
+      } else {
+        toast.warning("Your connection is unstable — call quality may suffer.")
+      }
     }
     lastQuality.current = quality
-  }, [quality])
+  }, [quality, autoDataSaver])
 
   const toggle = (
     action: () => Promise<unknown>,
@@ -204,21 +251,9 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="audioinput" persistKey="audioDeviceId">
-            {supportsVoiceIsolation() && (
-              <li>
-                <button
-                  type="button"
-                  className="whitespace-nowrap"
-                  onClick={() => setVoiceIsolation(!voiceIsolation)}
-                >
-                  <Sparkles className="size-4" />
-                  Enhanced noise removal
-                  {voiceIsolation && <Check className="size-4 text-success" />}
-                </button>
-              </li>
-            )}
-          </DeviceMenu>
+          {/* Noise removal and blur live in Settings — these menus are for
+              picking devices only. */}
+          <DeviceMenu kind="audioinput" />
         </div>
         <div className="join">
           <div
@@ -240,19 +275,7 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="videoinput" persistKey="videoDeviceId">
-            <li>
-              <button
-                type="button"
-                className="whitespace-nowrap"
-                onClick={() => setBlur(!blur)}
-              >
-                <Sparkles className="size-4" />
-                Blur background
-                {blur && <Check className="size-4 text-success" />}
-              </button>
-            </li>
-          </DeviceMenu>
+          <DeviceMenu kind="videoinput" />
         </div>
         <div
           className="tooltip tooltip-bottom"
@@ -389,6 +412,23 @@ export function ControlBar({
             <FileText className="size-5" />
           </button>
         </div>
+        <div className="tooltip tooltip-bottom" data-tip="Whiteboard">
+          <button
+            type="button"
+            className={`btn btn-circle indicator ${whiteboardOpen ? "btn-primary" : "btn-ghost"}`}
+            onClick={() => {
+              const opening = !$canvasOpen.get()
+              $canvasOpen.set(opening)
+              if (opening) $canvasUnseen.set(false)
+            }}
+            aria-label="Whiteboard"
+          >
+            {canvasUnseen && !whiteboardOpen && (
+              <span className="badge indicator-item badge-primary badge-xs" />
+            )}
+            <PenLine className="size-5" />
+          </button>
+        </div>
         <div className="tooltip tooltip-bottom" data-tip="Settings">
           <button
             type="button"
@@ -463,18 +503,30 @@ function CallTimer({ startedAt }: { startedAt: number }) {
  */
 function DeviceMenu({
   kind,
-  persistKey,
   children,
 }: {
-  kind: "audioinput" | "videoinput"
-  persistKey: string
+  kind: DeviceKind
   children?: React.ReactNode
 }) {
   const { devices, activeDeviceId, setActiveMediaDevice } =
     useMediaDeviceSelect({ kind })
+  // Camera menus preview: the tile at the top shows the hovered device (or
+  // the current one), so a switch can be judged before it's clicked. Open
+  // state is tracked so the preview camera runs only while the menu shows.
+  const [open, setOpen] = useState(false)
+  const [hovered, setHovered] = useState<string | null>(null)
 
   return (
-    <div className="dropdown dropdown-bottom">
+    <div
+      className="dropdown dropdown-bottom"
+      onFocusCapture={() => setOpen(true)}
+      onBlurCapture={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+          setOpen(false)
+          setHovered(null)
+        }
+      }}
+    >
       <button
         type="button"
         tabIndex={0}
@@ -483,7 +535,14 @@ function DeviceMenu({
       >
         <ChevronDown className="size-3" />
       </button>
-      <ul className="menu dropdown-content z-30 mt-1 w-64 rounded-box bg-base-100 p-2 shadow-lg ring-1 ring-base-300">
+      {/* Wide enough that device names read in full — the trigger button can
+          truncate, the options themselves shouldn't. Long outliers wrap. */}
+      <ul className="menu dropdown-content z-30 mt-1 w-80 max-w-[90vw] rounded-box bg-base-100 p-2 shadow-lg ring-1 ring-base-300">
+        {kind === "videoinput" && open && (
+          <li className="pointer-events-none mb-2">
+            <CameraPreview deviceId={hovered ?? activeDeviceId} />
+          </li>
+        )}
         {devices.map((d) => (
           <li key={d.deviceId}>
             <button
@@ -491,15 +550,20 @@ function DeviceMenu({
               // DaisyUI v5 highlights the active menu row with `menu-active`
               // (renamed from `active` in v4).
               className={d.deviceId === activeDeviceId ? "menu-active" : ""}
+              onMouseEnter={() =>
+                kind === "videoinput" && setHovered(d.deviceId)
+              }
+              onMouseLeave={() => setHovered(null)}
               onClick={() => {
+                // Pin before switching so useStickyDevices sees the new choice
+                // when LiveKit emits ActiveDeviceChanged and doesn't fight it.
+                setDevicePref(kind, d.deviceId)
                 void setActiveMediaDevice(d.deviceId)
-                try {
-                  localStorage.setItem(persistKey, d.deviceId)
-                } catch {}
               }}
             >
-              <span className="truncate">
-                {d.label || (kind === "audioinput" ? "Microphone" : "Camera")}
+              <span className="min-w-0 break-words">
+                {cleanDeviceLabel(d.label) ||
+                  (kind === "audioinput" ? "Microphone" : "Camera")}
               </span>
               {d.deviceId === activeDeviceId && (
                 <Check className="size-4 shrink-0 text-success" />
@@ -510,5 +574,57 @@ function DeviceMenu({
         {children}
       </ul>
     </div>
+  )
+}
+
+/**
+ * The camera the pointer is over, live. A fresh capture per device — the
+ * stream restarts on hover moves, which beats holding every camera open.
+ */
+function CameraPreview({ deviceId }: { deviceId: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    let stream: MediaStream | null = null
+    setFailed(false)
+    void navigator.mediaDevices
+      .getUserMedia({
+        video: { deviceId: deviceId ? { exact: deviceId } : undefined },
+      })
+      .then((s) => {
+        if (cancelled) {
+          for (const t of s.getTracks()) t.stop()
+          return
+        }
+        stream = s
+        if (videoRef.current) videoRef.current.srcObject = s
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true)
+      })
+    return () => {
+      cancelled = true
+      for (const t of stream?.getTracks() ?? []) t.stop()
+    }
+  }, [deviceId])
+
+  if (failed) {
+    return (
+      <span className="block rounded-field bg-base-300 p-2 text-center text-xs">
+        Preview unavailable
+      </span>
+    )
+  }
+  return (
+    // biome-ignore lint/a11y/useMediaCaption: local camera preview
+    <video
+      ref={videoRef}
+      autoPlay
+      muted
+      playsInline
+      className="aspect-video w-full scale-x-[-1] rounded-field bg-base-300 object-cover p-0"
+    />
   )
 }

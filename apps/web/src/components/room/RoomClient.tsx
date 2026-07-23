@@ -10,7 +10,15 @@ import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
+import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
+import {
+  $autoGain,
+  $sendQuality,
+  AUTO_RESOLUTION,
+  SEND_QUALITY_RESOLUTION,
+  type SendQuality,
+} from "@/stores/preferences"
 
 const queryClient = new QueryClient()
 
@@ -45,15 +53,21 @@ export function RoomClient({
   const [awaitingStart, setAwaitingStart] = useState<JoinPreferences | null>(
     null,
   )
-  // True while a manual "start the meeting" request is in flight.
-  const [starting, setStarting] = useState(false)
+  // Booked (cal.com) links carry the room's host key in the URL fragment —
+  // the only way a scheduled room can be started, since no browser "created"
+  // it. Stash it and scrub the address bar so it isn't shared onward by
+  // copy-pasting the URL from the browser.
+  useEffect(() => {
+    try {
+      const match = window.location.hash.match(/[#&]hk=([0-9a-f]{64})/)
+      if (!match) return
+      localStorage.setItem(`hostKey:${slug}`, match[1])
+      history.replaceState(null, "", window.location.pathname)
+    } catch {}
+  }, [slug])
 
   const handleJoin = useCallback(
-    async (
-      prefs: JoinPreferences,
-      rejoinToken?: string,
-      startAnyway = false,
-    ) => {
+    async (prefs: JoinPreferences, rejoinToken?: string) => {
       setAdmitted(false)
       let hostKey: string | undefined
       try {
@@ -67,7 +81,6 @@ export function RoomClient({
             displayName: prefs.displayName,
             rejoinToken,
             hostKey,
-            startAnyway,
           }),
         })
         if (res.status === 404) {
@@ -169,15 +182,9 @@ export function RoomClient({
   }, [awaitingStart, session, handleJoin])
 
   if (awaitingStart && !session) {
-    const startNow = () => {
-      setStarting(true)
-      // startAnyway=true: honoured server-side only for an empty room, so this
-      // opens the meeting for a host without the local hostKey without letting
-      // anyone barge into a call already in progress.
-      handleJoin(awaitingStart, undefined, true).finally(() =>
-        setStarting(false),
-      )
-    }
+    // No unauthenticated "start anyway" any more: it let anyone with the
+    // link open (and take over) a meeting before its real host arrived.
+    // Only the browser holding the host key can start the room.
     return (
       <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="animate-pulse font-medium text-lg">
@@ -186,17 +193,9 @@ export function RoomClient({
         <p className="text-base-content/60 text-sm">
           You'll join automatically once the host arrives.
         </p>
-        <button
-          type="button"
-          className="btn btn-primary btn-brutalist mt-3"
-          onClick={startNow}
-          disabled={starting}
-        >
-          {starting && <span className="loading loading-spinner loading-sm" />}
-          Start the meeting
-        </button>
         <p className="text-base-content/50 text-xs">
-          If you're the host, start it now.
+          If you're the host, open the meeting from the browser you created it
+          in (or your booking link).
         </p>
       </main>
     )
@@ -225,23 +224,53 @@ export function RoomClient({
     typeof window !== "undefined" &&
     window.matchMedia("(max-width: 639px)").matches
 
+  // Seed LiveKit's active device with the chosen input (the lobby writes the
+  // same pref useStickyDevices reads). Setting it here means the very first
+  // captured track — and every unmute after — uses the picked device rather
+  // than the OS default. An empty pref leaves LiveKit on the system default.
+  const audioDeviceId =
+    session.prefs.audioDeviceId || readDevicePref("audioinput") || undefined
+  const videoDeviceId =
+    session.prefs.videoDeviceId || readDevicePref("videoinput") || undefined
+
   return (
     <LiveKitRoom
       token={session.token.token}
       serverUrl={session.token.serverUrl}
       options={{
+        // Auto quality adapts to network conditions: simulcast publishes
+        // layered resolutions, dynacast pauses layers nobody is consuming,
+        // and adaptiveStream sizes what we receive to what's on screen.
+        // Congestion control then walks the send bitrate up and down.
+        dynacast: true,
+        adaptiveStream: true,
         // Keep the browser DSP on and layer enhanced voice isolation on top
         // per the saved preference; where unsupported the extra flag is simply
         // ignored. Set as a capture default so unmuting inherits it too.
         audioCaptureDefaults: {
+          deviceId: audioDeviceId,
           voiceIsolation: readVoiceIsolationPref(),
           echoCancellation: true,
           noiseSuppression: true,
-          autoGainControl: true,
+          autoGainControl: $autoGain.get(),
         },
-        videoCaptureDefaults: portraitCapture
-          ? { resolution: { width: 720, height: 1280 } }
-          : undefined,
+        videoCaptureDefaults: {
+          deviceId: videoDeviceId,
+          // Send-quality cap wins over the portrait default: it exists for
+          // uplink-poor connections, which phones often are. "auto" captures
+          // 1080p; what actually goes out adapts to the network (simulcast
+          // layers + congestion control, dynacast below).
+          ...($sendQuality.get() !== "auto"
+            ? {
+                resolution:
+                  SEND_QUALITY_RESOLUTION[
+                    $sendQuality.get() as Exclude<SendQuality, "auto">
+                  ],
+              }
+            : portraitCapture
+              ? { resolution: { width: 720, height: 1280 } }
+              : { resolution: AUTO_RESOLUTION }),
+        },
       }}
       // Waiting participants join without media; on admission WaitingRoom
       // brings devices up per the lobby preferences. Otherwise join with the

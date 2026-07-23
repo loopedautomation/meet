@@ -10,8 +10,10 @@ import {
   TrackSource,
 } from "@livekit/rtc-node"
 import {
+  AGENT_BARGE_IN_ATTRIBUTE,
   type AgentActivityEvent,
   agentControlSchema,
+  type CanvasOp,
   chatMessageSchema,
   DataTopic,
 } from "@meet/shared"
@@ -21,17 +23,18 @@ import {
   bargeInConfigFromEnv,
   PcmRingBuffer,
 } from "./barge-in.js"
-import type { TtyServerFrame } from "./looped-tty.js"
-import type { Brain } from "./looped-webhook.js"
-import { postDebugEvent } from "./meeting-context.js"
+import { controlAllowed } from "./control-auth.js"
 import {
   GEMINI_INPUT_SAMPLE_RATE,
   GeminiLiveSession,
 } from "./gemini-live-session.js"
+import type { TtyServerFrame } from "./looped-tty.js"
+import type { Brain } from "./looped-webhook.js"
+import { postDebugEvent } from "./meeting-context.js"
 import {
   REALTIME_SAMPLE_RATE,
-  type RealtimeSessionOptions,
   RealtimeSession,
+  type RealtimeSessionOptions,
 } from "./realtime-session.js"
 import type { AgentEntry } from "./registry.js"
 import { attachScreenFrame, type ScreenCapture } from "./screen-capture.js"
@@ -48,29 +51,37 @@ const instructions = (
   context?: string,
 ) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting ` +
-  "with several people. You are a guest, not the host: most of the " +
-  "conversation is between the humans and is not for you. Stay silent unless " +
-  "you are addressed by name, asked a direct question, or you have something " +
+  "with several people. You are the agent's voice, not its mind: your " +
+  "knowledge, memory, tools and permissions live behind the do_task tool, " +
+  "and every answer of substance comes from there. Never answer from what " +
+  "you happen to know — anything factual, anything about systems, data, " +
+  "people, documents or past conversations, any opinion on the work, and " +
+  "any action goes through do_task, even when you feel sure of the answer. " +
+  "You handle only the conversational surface yourself: greetings, brief " +
+  "acknowledgments, a clarifying question when a request is ambiguous, and " +
+  "faithfully relaying results without adding facts of your own. If a task " +
+  "fails or your tools are unreachable, say so plainly rather than " +
+  "improvising an answer. A task is you doing the work — speak about it in " +
+  "the first person ('I'll look that up', 'I've filed it'), never as " +
+  "asking or waiting on another agent, and never mention runs, tasks, " +
+  "tools or delegation out loud. If a task continues in the background, " +
+  "you'll get a [task finished] note with the outcome; until it arrives, " +
+  "don't guess at results, and use cancel_task if someone tells you to " +
+  "stop. You are a guest, not the host: most of the conversation is " +
+  "between the humans and is not for you. Stay silent unless you are " +
+  "addressed by name, asked a direct question, or you have something " +
   "genuinely important to contribute — never comment on, summarize, or " +
-  "acknowledge what people say to each other. When unsure whether to speak, " +
-  "don't; if you have a useful aside or link, post it with " +
+  "acknowledge what people say to each other. When unsure whether to " +
+  "speak, don't; if you have a useful aside or link, post it with " +
   "send_chat_message instead of talking. Keep spoken replies concise and " +
-  "conversational — a sentence or two unless asked for more. Answer " +
-  "questions yourself whenever you can; reach for the do_task tool only " +
-  "when you need your tools, your memory, or to take an action. A task is " +
-  "you doing the work — speak about it in the first person ('I'll look " +
-  "that up', 'I've filed it'), never as asking or waiting on another " +
-  "agent, and never mention runs, tasks, tools or delegation out loud. If " +
-  "a task continues in the background, you'll get a [task finished] note " +
-  "with the outcome; until it arrives, don't guess at results, and use " +
-  "cancel_task if someone tells you to stop. Messages " +
+  "conversational — a sentence or two unless asked for more. Messages " +
   "prefixed [meeting chat] are the room's text chat: read them for context " +
   "and reply in chat (or aloud only if addressed there)." +
   " The meeting has a shared markdown document everyone can see and edit. " +
-  "When someone asks you to write something up, capture a decision, or draft " +
-  "a plan, read it and write it back with your changes folded in — never " +
-  "just your own addition, or you'll delete their work. Say briefly what you " +
-  "changed rather than reading the document out loud." +
+  "When someone asks you to write something up, capture a decision, or " +
+  "draft a plan, use update_shared_doc and describe the change in full — " +
+  "the document is rewritten for you with everyone's work preserved. Say " +
+  "briefly what changed rather than reading the document out loud." +
   " Your audio may be gated by the meeting's host: while it is, you are " +
   "only given the floor when someone addresses you by name or calls on you " +
   "after you raise your hand, and between turns you may be asked silently " +
@@ -112,11 +123,16 @@ export async function runRealtimeAgent(opts: {
   /** Read/write the meeting's shared markdown document. */
   readDoc?: () => Promise<string>
   writeDoc?: (text: string) => Promise<string>
+  /** Read/draw on the meeting's shared whiteboard. */
+  readCanvas?: () => Promise<string>
+  drawCanvas?: (ops: CanvasOp[]) => Promise<string>
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
+  /** Fed what the agent said aloud, for the brain's record of the meeting. */
+  onSpoke?: (text: string) => void
 }): Promise<void> {
   const { ctx, entry, realtime, brain, state, callbacks, screen, vad } = opts
-  const { readDoc, writeDoc } = opts
+  const { readDoc, writeDoc, readCanvas, drawCanvas } = opts
   const local = ctx.room.localParticipant
   if (!local) throw new Error("no local participant")
   const provider = realtime.provider
@@ -173,7 +189,7 @@ export async function runRealtimeAgent(opts: {
       mode: "realtime",
       "speech-to-speech": `${provider}/${realtime.model}`,
       voice: realtime.voice,
-      brain: "looped-af (tty, via do_task)",
+      brain: `looped-af (${entry.brain.kind}, relay — all substance via do_task)`,
       "turn detection":
         entry.turn_policy === "open"
           ? "server vad"
@@ -205,13 +221,37 @@ export async function runRealtimeAgent(opts: {
     })
 
   // ---- delegate: realtime model -> looped agent brain ---------------------
+  /** Room debug log, tagged with this agent: which layer acted, and when. */
+  const debug = (level: "info" | "error", message: string) => {
+    if (ctx.room.name) {
+      postDebugEvent(ctx.room.name, `agent:${entry.id}`, level, message)
+    }
+  }
   let workInFlight = 0
+  // The model occasionally fires the same do_task twice for one utterance;
+  // the second identical ask gets told to wait rather than a second brain
+  // run — which could execute real-world actions twice.
+  const inFlight = new Set<string>()
+  const requestKey = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim()
   const delegate = async (request: string): Promise<string> => {
+    const key = requestKey(request)
+    if (inFlight.has(key)) {
+      debug(
+        "info",
+        `task deduped (already in flight): "${request.slice(0, 200)}"`,
+      )
+      return (
+        "You are already working on exactly that — wait for its outcome " +
+        "instead of starting it again."
+      )
+    }
+    inFlight.add(key)
     const startedAt = Date.now()
     workInFlight++
     callbacks.setState("thinking")
-    const { text: input, images } = await attachScreenFrame(screen, request)
+    debug("info", `task started: "${request.slice(0, 200)}"`)
     try {
+      const { text: input, images } = await attachScreenFrame(screen, request)
       let reply = ""
       // The brain's tool activity streams to the room's activity feed, but
       // the realtime model only hears the final reply — so it can't speak to
@@ -238,8 +278,13 @@ export async function runRealtimeAgent(opts: {
       const digest = actions.length
         ? `\n\n[For your own awareness — the tool actions behind this answer, so you can speak to them naturally and accurately:\n${actions.join("\n")}]`
         : ""
+      debug("info", `task done in ${Date.now() - startedAt}ms`)
       return (reply || "(the task produced no summary)") + digest
+    } catch (err) {
+      debug("error", `task failed: ${(err as Error).message}`)
+      throw err
     } finally {
+      inFlight.delete(key)
       workInFlight--
       stats.latencyMs["brain delegation"] = Date.now() - startedAt
       publishStats()
@@ -271,6 +316,57 @@ export async function runRealtimeAgent(opts: {
     }
     return description || "You couldn't make out what's on the screen."
   }
+
+  /**
+   * Update the shared doc on instruction: the brain composes the new
+   * document (with the current text in front of it) and the bridge persists
+   * it. The voice model never authors persistent content, so doc writes get
+   * the brain's judgment, memory and audit trail like everything else.
+   */
+  const updateDoc =
+    readDoc && writeDoc
+      ? async (instruction: string): Promise<string> => {
+          callbacks.setState("thinking")
+          debug("info", `doc update started: "${instruction.slice(0, 200)}"`)
+          workInFlight++
+          try {
+            const current = await readDoc()
+            const prompt =
+              "The meeting's shared markdown document needs updating. " +
+              `Instruction from the meeting: ${instruction}\n\n` +
+              (current.trim()
+                ? `Current document:\n<<<DOC\n${current}\nDOC>>>\n\n`
+                : "The document is currently empty.\n\n") +
+              "Reply with the complete updated document in markdown and " +
+              "nothing else — no preamble, no commentary, no code fences. " +
+              "Preserve everything already in the document unless the " +
+              "instruction says to change it."
+            let updated = ""
+            for await (const frame of brain.runTurn(prompt)) {
+              publishBrainActivity(entry.id, frame, callbacks)
+              if (frame.type === "assistant") {
+                updated += (updated ? "\n" : "") + frame.content
+              } else if (frame.type === "error") {
+                throw new Error(frame.error)
+              }
+            }
+            const text = stripFence(updated)
+            if (!text.trim()) {
+              debug("error", "doc update produced no text; nothing written")
+              return "The update produced no document; nothing was changed."
+            }
+            const outcome = await writeDoc(text)
+            debug("info", "doc update saved")
+            return outcome
+          } catch (err) {
+            debug("error", `doc update failed: ${(err as Error).message}`)
+            throw err
+          } finally {
+            workInFlight--
+            callbacks.setState(state.muted ? "muted" : "listening")
+          }
+        }
+      : undefined
 
   // captureFrame is async and chunks internally — concurrent calls interleave
   // their chunks and play back as scrambled speech. Serialize all writes, and
@@ -320,7 +416,10 @@ export async function runRealtimeAgent(opts: {
     },
     sendChat: callbacks.publishChat,
     readDoc,
-    writeDoc,
+    updateDoc,
+    readCanvas,
+    drawCanvas,
+    onAgentSpoke: opts.onSpoke,
     // Offered only when a look could actually succeed. A webhook brain
     // drops images on the floor, so an agent on one must not be told it
     // can see — it would answer confidently about a screen it never saw.
@@ -354,14 +453,7 @@ export async function runRealtimeAgent(opts: {
       // can be diagnosed: was the turn even transcribed, and what did the
       // transcript say?
       onDecision: (transcript, decision) => {
-        if (ctx.room.name) {
-          postDebugEvent(
-            ctx.room.name,
-            `agent:${entry.id}`,
-            "info",
-            `gate ${decision}: "${transcript.slice(0, 200)}"`,
-          )
-        }
+        debug("info", `gate ${decision}: "${transcript.slice(0, 200)}"`)
       },
     },
     onAudio: (pcm) => {
@@ -394,9 +486,7 @@ export async function runRealtimeAgent(opts: {
     },
     onError: (msg) => {
       console.error(`[${entry.id}] realtime: ${msg}`)
-      if (ctx.room.name) {
-        postDebugEvent(ctx.room.name, `agent:${entry.id}`, "error", msg)
-      }
+      debug("error", msg)
     },
   }
   const session =
@@ -541,19 +631,15 @@ export async function runRealtimeAgent(opts: {
           session.appendAudio(new Uint8Array(pending.buffer))
         }
         callbacks.setState(idleState())
-        if (ctx.room.name) {
-          postDebugEvent(
-            ctx.room.name,
-            `agent:${entry.id}`,
-            "info",
-            `barge-in: cut off after ${Math.round(event.speechDuration)}ms of speech`,
-          )
-        }
+        debug(
+          "info",
+          `barge-in: cut off after ${Math.round(event.speechDuration)}ms of speech`,
+        )
       }
     })()
   }
 
-  ctx.room.on("dataReceived", (payload, _p, _k, topic) => {
+  ctx.room.on("dataReceived", (payload, sender, _k, topic) => {
     if (topic === DataTopic.Chat) {
       // Surface the room's text chat to the model as passive context; the
       // instructions tell it to reply in chat (or ignore it) rather than
@@ -562,14 +648,19 @@ export async function runRealtimeAgent(opts: {
         const message = chatMessageSchema.parse(
           JSON.parse(new TextDecoder().decode(payload)),
         )
-        if (message.from === `agent-${entry.id}`) return
+        // Attribution from the actual LiveKit sender — a crafted payload
+        // must not put words in someone else's mouth in the model's context.
+        if (!sender || sender.identity === `agent-${entry.id}`) return
         session.notifyChat(
-          `[meeting chat] ${message.fromName}: ${message.text}`,
+          `[meeting chat] ${sender.name || sender.identity}: ${message.text}`,
         )
       } catch {}
       return
     }
     if (topic !== DataTopic.AgentControl) return
+    // Enforced here, not just in the UI: only an admitted human — and only
+    // the host when they've reserved controls — may drive agents.
+    if (!controlAllowed(ctx.room, sender)) return
     try {
       const control = agentControlSchema.parse(
         JSON.parse(new TextDecoder().decode(payload)),
@@ -578,6 +669,21 @@ export async function runRealtimeAgent(opts: {
       if (control.type === "interrupt") {
         hardCut()
         callbacks.setState(idleState())
+      } else if (
+        control.type === "set-barge-in" &&
+        control.bargeIn !== undefined
+      ) {
+        bargeInPolicy.setEnabled(control.bargeIn)
+        local
+          .setAttributes({
+            [AGENT_BARGE_IN_ATTRIBUTE]: control.bargeIn ? "1" : "0",
+          })
+          .catch(() => undefined)
+        stats.config["barge-in"] =
+          control.bargeIn && vad
+            ? `silero vad, ${bargeIn.minSpeechMs}ms sustained`
+            : "off (manual interrupt only)"
+        publishStats()
       } else if (control.type === "set-turn-policy" && control.policy) {
         // The host changed how this agent takes turns; apply it immediately
         // (the worker owns state.turnPolicy and the published attribute).
@@ -639,6 +745,12 @@ export async function runRealtimeAgent(opts: {
 
   if (entry.greeting) session.say(entry.greeting)
   publishStats()
+}
+
+/** Unwrap a reply the brain fenced anyway, despite being asked not to. */
+function stripFence(text: string): string {
+  const match = /^```[a-z]*\n([\s\S]*?)\n?```$/.exec(text.trim())
+  return match?.[1] ?? text.trim()
 }
 
 function publishBrainActivity(

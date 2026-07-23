@@ -1,9 +1,10 @@
 "use client"
 
-import { useLocalParticipant, useParticipants } from "@livekit/components-react"
+import { useParticipants } from "@livekit/components-react"
 import { parseParticipantMeta } from "@meet/shared"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { roomAuthHeaders } from "@/lib/roomAuth"
 
 /**
  * Make waiting-room knocks unmissable: a doorbell-ish chime plus a persistent
@@ -12,7 +13,6 @@ import { toast } from "react-toastify"
  */
 export function useKnockAlerts(slug: string) {
   const participants = useParticipants()
-  const { localParticipant } = useLocalParticipant()
   const known = useRef<Set<string>>(new Set())
   const ctxRef = useRef<AudioContext | null>(null)
 
@@ -32,7 +32,6 @@ export function useKnockAlerts(slug: string) {
           slug={slug}
           identity={p.identity}
           name={p.name || p.identity}
-          requesterIdentity={localParticipant.identity}
         />,
         {
           toastId: `knock-${p.identity}`,
@@ -48,7 +47,7 @@ export function useKnockAlerts(slug: string) {
         toast.dismiss(`knock-${identity}`)
       }
     }
-  }, [waiting, slug, localParticipant])
+  }, [waiting, slug])
 
   useEffect(
     () => () => {
@@ -63,12 +62,10 @@ function KnockToast({
   slug,
   identity,
   name,
-  requesterIdentity,
 }: {
   slug: string
   identity: string
   name: string
-  requesterIdentity: string
 }) {
   const [busy, setBusy] = useState(false)
 
@@ -77,8 +74,12 @@ function KnockToast({
     try {
       await fetch(`/api/rooms/${slug}/admit`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ identity, action, requesterIdentity }),
+        // The server derives who's admitting from the verified token.
+        headers: {
+          "content-type": "application/json",
+          ...roomAuthHeaders(slug),
+        },
+        body: JSON.stringify({ identity, action }),
       })
     } finally {
       toast.dismiss(`knock-${identity}`)

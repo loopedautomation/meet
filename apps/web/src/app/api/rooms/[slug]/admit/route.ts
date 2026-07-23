@@ -3,6 +3,7 @@ import { parseParticipantMeta } from "@meet/shared"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { roomService } from "@/lib/server/livekit"
+import { verifyParticipant } from "@/lib/server/participantAuth"
 import { isValidRoomSlug } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
@@ -10,16 +11,16 @@ type Params = { params: Promise<{ slug: string }> }
 const admitSchema = z.object({
   identity: z.string().min(1),
   action: z.enum(["admit", "deny"]),
-  /** The admitter's own identity — must be an admitted human in the room. */
-  requesterIdentity: z.string().min(1),
 })
 
 /**
  * Admit or deny a waiting participant. Anyone already admitted to the meeting
- * may approve (per current product decision — no host-only gating yet). The
- * requester is verified as a connected non-waiting human in the room; that's
- * spoofable by someone who can enumerate identities, but identities are
- * random and room-scoped.
+ * may approve (per current product decision — no host-only gating yet).
+ *
+ * The requester is the caller's own cryptographically verified LiveKit token
+ * (Authorization header), never a claimed identity in the body — a waiting
+ * user who can guess a connected identity must not be able to admit
+ * themselves or deny others.
  */
 export async function POST(request: Request, { params }: Params) {
   const { slug } = await params
@@ -30,7 +31,12 @@ export async function POST(request: Request, { params }: Params) {
   if (!body.success) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 })
   }
-  const { identity, action, requesterIdentity } = body.data
+  const { identity, action } = body.data
+
+  const requester = await verifyParticipant(request, slug)
+  if (!requester) {
+    return NextResponse.json({ error: "not authorized" }, { status: 401 })
+  }
 
   const participants = await roomService()
     .listParticipants(slug)
@@ -38,11 +44,11 @@ export async function POST(request: Request, { params }: Params) {
   if (!participants) {
     return NextResponse.json({ error: "room not found" }, { status: 404 })
   }
-  const requester = participants.find((p) => p.identity === requesterIdentity)
-  if (
-    !requester ||
-    parseParticipantMeta(requester.metadata)?.kind !== "human"
-  ) {
+  // The token's own metadata may still say "waiting" right after admission,
+  // so the live participant record is authoritative: the caller must be
+  // connected to this room as an admitted human right now.
+  const live = participants.find((p) => p.identity === requester.identity)
+  if (!live || parseParticipantMeta(live.metadata)?.kind !== "human") {
     return NextResponse.json({ error: "not authorized" }, { status: 403 })
   }
   const target = participants.find((p) => p.identity === identity)
@@ -51,9 +57,12 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   if (action === "deny") {
-    await roomService()
-      .removeParticipant(slug, identity)
-      .catch(() => undefined)
+    try {
+      await roomService().removeParticipant(slug, identity)
+    } catch {
+      // A swallowed failure would report a denial that didn't happen.
+      return NextResponse.json({ error: "deny failed" }, { status: 502 })
+    }
     return NextResponse.json({ ok: true })
   }
 

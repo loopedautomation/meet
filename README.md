@@ -11,18 +11,19 @@
 
 Self-hostable video meetings with first-class AI agent participants. Share a link, talk face to face — and invite an agent into the room. It listens to the conversation, speaks its answers, can be interrupted mid-sentence, and streams its tool calls (web lookups, code, APIs) into the meeting as it works. Open source, powered by [LiveKit](https://livekit.io) and the [Looped agent framework](https://github.com/loopedautomation/agent-framework).
 
-**Contents:** [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Your own agents](#registering-your-own-agents) · [Self-hosting](./selfhost.md) · [Development](#development) · [Theming](#theming--whitelabel)
+**Contents:** [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Your own agents](#registering-your-own-agents) · [cal.com](./calcom.md) · [Self-hosting](./selfhost.md) · [Development](#development) · [Theming](#theming--whitelabel)
 
 ## Features
 
 - **Google-Meet-style rooms** — create a room, share `/r/{slug}`, join with a display name. No accounts, no IdP.
 - **Agents as participants** — invite any [looped-af](https://github.com/loopedautomation/agent-framework) agent from the agents panel, unchanged; it joins with its own tile, live state (listening / thinking / speaking), and voice.
-- **Realtime speech-to-speech agents** — optionally run an agent on a realtime voice model (~500ms responses) that delegates tool work to the looped agent brain in the background.
+- **Realtime speech-to-speech agents** — optionally front an agent with a realtime voice model (~500ms conversational presence) that acts as the brain's voice: everything of substance — answers, actions, doc writes — comes from the looped agent brain, which also hears the ongoing conversation, so the agent's memory, tools, and permissions stay in one place.
 - **Turn policies** — per-agent etiquette a host can change mid-call: speak freely (`open`), only when addressed (`on-mention`), or raise a hand and wait to be called on (`raise-hand`). Zap an agent to wake it up for a while.
 - **Tool activity feed** — watch the agent's tool calls stream in real time while it works.
 - **Barge-in & mute** — just start talking and the agent stops, the way it would for a person; tap to cut it off explicitly, or mute it and it knows, replying into the chat instead of speaking until unmuted.
 - **Screenshare vision** — share your screen and the agent sees it. Pipeline agents get a current frame with every question; realtime agents look on demand with `look_at_screen`, so "what's this error?" is answered from the screen rather than guessed. Sharers are told which agents can see, and `AGENT_SCREEN_VISION=off` turns it off.
 - **Shared doc** — a markdown document the whole room edits together, and the agent writes into: talk through a plan and ask it to write the thing up. Survives refreshes and late joiners.
+- **Shared whiteboard** — an [Excalidraw](https://github.com/excalidraw/excalidraw) infinite canvas the whole room draws on, with live cursors — and realtime agents draw on it too, sketching boxes, arrows and notes while they talk: ask for an architecture diagram and watch it appear as it's explained. Survives refreshes and late joiners. MIT-licensed, no keys, no watermark.
 - **Live transcript & chat** — built-in transcription panel (server-side, or in-browser via WASM) and chat with `@AgentName` mentions.
 - **Voices** — OpenAI or ElevenLabs TTS per agent; light/dark looped theming (DaisyUI — easy to whitelabel).
 
@@ -37,7 +38,7 @@ flowchart TB
     bridge -- "TTY WebSocket" --> agent["looped-af agent<br/>(your agent.yaml, unchanged)"]
 ```
 
-**Bring any looped agent-framework agent.** The bridge hosts the voice pipeline ([LiveKit Agents](https://docs.livekit.io/agents/)); the *thinking* happens in a stock [looped-af](https://github.com/loopedautomation/agent-framework) agent over its TTY trigger. No meeting-specific code in the agent: any agent you already run — with its tools, permissions, memory, and audit trail intact — joins a meeting as-is by pasting its TTY URL and token into the agents panel (or add it to the registry for a permanent roster). Realtime agents swap the STT/TTS pipeline for a speech-to-speech model that delegates tool work to the same brain.
+**Bring any looped agent-framework agent.** The bridge hosts the voice pipeline ([LiveKit Agents](https://docs.livekit.io/agents/)); the *thinking* happens in a stock [looped-af](https://github.com/loopedautomation/agent-framework) agent over its TTY trigger. No meeting-specific code in the agent: any agent you already run — with its tools, permissions, memory, and audit trail intact — joins a meeting as-is by pasting its TTY URL and token into the agents panel (or add it to the registry for a permanent roster). Realtime agents swap the STT/TTS pipeline for a speech-to-speech model that is only the brain's voice — every substantive answer and action is relayed through the same brain, which is also fed the room's transcript and chat between its turns.
 
 ## Quick start
 

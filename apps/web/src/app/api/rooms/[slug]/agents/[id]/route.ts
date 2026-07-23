@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 import { bridgeFetch } from "@/lib/server/bridge"
 import { canManageAgents, HOST_KEY_HEADER } from "@/lib/server/host"
+import { isKicked } from "@/lib/server/kicked"
+import { verifyParticipant } from "@/lib/server/participantAuth"
 import { isValidRoomSlug } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string; id: string }> }
@@ -14,6 +16,16 @@ async function forward(
   const { slug, id } = await params
   if (!isValidRoomSlug(slug) || !/^[a-z0-9-]+$/.test(id)) {
     return NextResponse.json({ error: "invalid request" }, { status: 400 })
+  }
+  // The caller must be an admitted member of this meeting; agents receive
+  // the room's audio and context, so slug knowledge alone can't invite one.
+  const participant = await verifyParticipant(request, slug)
+  if (
+    !participant ||
+    participant.kind !== "human" ||
+    isKicked(slug, participant.identity)
+  ) {
+    return NextResponse.json({ error: "not authorized" }, { status: 401 })
   }
   // The host may have reserved agents for themselves. Enforced here and not
   // only in the UI, or the setting is decoration.

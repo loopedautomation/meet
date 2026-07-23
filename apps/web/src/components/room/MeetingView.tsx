@@ -15,6 +15,7 @@ import { ParticipantTile } from "@/components/room/ParticipantTile"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
 import { ScreenShareTile } from "@/components/room/ScreenShareTile"
+import { WhiteboardStage } from "@/components/room/WhiteboardStage"
 import { useAgentControlToasts } from "@/hooks/useAgentControlToasts"
 import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
@@ -26,6 +27,7 @@ import {
 import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
 import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
+import { $canvasOpen } from "@/stores/canvas"
 import { $openPanel } from "@/stores/panels"
 
 export function MeetingView({
@@ -71,6 +73,7 @@ export function MeetingView({
   const stageRef = useRef<HTMLDivElement>(null)
   const connectionState = useConnectionState()
   const openPanel = useStore($openPanel)
+  const whiteboardOpen = useStore($canvasOpen)
 
   return (
     <div className="flex h-dvh flex-col bg-base-200">
@@ -92,23 +95,20 @@ export function MeetingView({
         ref={stageRef}
         className="relative flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row"
       >
-        {focused ? (
+        {whiteboardOpen ? (
+          <WhiteboardTakeover
+            slug={slug}
+            tracks={remoteTracks}
+            focused={focused}
+          />
+        ) : focused ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
-            {/* Participants sit in a horizontal strip above the share,
-                centered and sized to match the draggable self-view. */}
-            <div className="flex shrink-0 flex-row flex-wrap justify-center gap-3 overflow-x-auto">
-              {remoteTracks.map((trackRef) => (
-                <div
-                  key={trackRef.participant.identity}
-                  className="w-32 shrink-0 sm:w-56"
-                >
-                  <ParticipantTile trackRef={trackRef} compact />
-                </div>
-              ))}
-            </div>
             <div className="min-h-0 min-w-0 flex-1">
               <ScreenShareTile trackRef={focused} />
             </div>
+            {/* Participants sit in a horizontal strip below the share,
+                centered and sized to match the draggable self-view. */}
+            <ParticipantStrip tracks={remoteTracks} />
           </div>
         ) : alone ? (
           // Just you: your own camera fills the stage.
@@ -139,7 +139,9 @@ export function MeetingView({
         )}
 
         {/* Your own video floats bottom-right once others are in the call; drag it
-            anywhere. When a side panel is open it sits to the panel's left. */}
+            anywhere. When a side panel is open it sits to the panel's left.
+            While a screen share is focused, the bottom edge is taken by the
+            participant strip, so it floats top-right instead. */}
         {!alone && localTrack && (
           <motion.div
             drag
@@ -152,9 +154,9 @@ export function MeetingView({
             // touch-none stops mobile browsers treating the drag as a page
             // scroll/pan, which was fighting the gesture. Rounding + shadow
             // live together here so the shadow follows the rounded corners.
-            className={`absolute bottom-6 z-10 w-32 cursor-grab touch-none rounded-box shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
-              openPanel ? "right-[22.25rem]" : "right-6"
-            }`}
+            className={`absolute z-10 w-32 cursor-grab touch-none rounded-box shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
+              focused || whiteboardOpen ? "top-6" : "bottom-6"
+            } ${openPanel ? "right-[22.25rem]" : "right-6"}`}
           >
             <ParticipantTile trackRef={localTrack} compact />
           </motion.div>
@@ -162,6 +164,64 @@ export function MeetingView({
 
         <PanelHost slug={slug} />
       </div>
+    </div>
+  )
+}
+
+/**
+ * The whiteboard owning the stage the way a share does. A share starting
+ * doesn't force the board closed (the agent may be mid-diagram) — its tile
+ * in the strip is the way back.
+ */
+function WhiteboardTakeover({
+  slug,
+  tracks,
+  focused,
+}: {
+  slug: string
+  tracks: ReturnType<typeof useTracks>
+  focused?: React.ComponentProps<typeof ScreenShareTile>["trackRef"]
+}) {
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3">
+      <div className="min-h-0 min-w-0 flex-1">
+        <WhiteboardStage slug={slug} />
+      </div>
+      <ParticipantStrip tracks={tracks}>
+        {focused && (
+          <button
+            type="button"
+            className="w-32 shrink-0 cursor-pointer sm:w-56"
+            onClick={() => $canvasOpen.set(false)}
+            title="Back to the screen share"
+          >
+            <ScreenShareTile trackRef={focused} />
+          </button>
+        )}
+      </ParticipantStrip>
+    </div>
+  )
+}
+
+/** The compact tile row under a stage takeover (share or whiteboard). */
+function ParticipantStrip({
+  tracks,
+  children,
+}: {
+  tracks: ReturnType<typeof useTracks>
+  children?: React.ReactNode
+}) {
+  return (
+    <div className="flex shrink-0 flex-row flex-wrap justify-center gap-3 overflow-x-auto">
+      {children}
+      {tracks.map((trackRef) => (
+        <div
+          key={trackRef.participant.identity}
+          className="w-32 shrink-0 sm:w-56"
+        >
+          <ParticipantTile trackRef={trackRef} compact />
+        </div>
+      ))}
     </div>
   )
 }

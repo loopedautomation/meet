@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { roomService } from "@/lib/server/livekit"
+import { roomShareUrl } from "@/lib/server/roomUrl"
 import { deriveHostKey, generateRoomSlug } from "@/lib/server/slug"
 
 /**
@@ -35,13 +36,11 @@ export async function POST(request: Request) {
     name: slug,
     emptyTimeout: 300,
     departureTimeout: 60,
-    metadata: JSON.stringify({ hostKey, started: false }),
+    // The hostKey itself must never be in metadata: LiveKit broadcasts room
+    // metadata to every participant, including people still in the waiting
+    // room. Host routes recompute the derived key server-side instead.
+    metadata: JSON.stringify({ started: false }),
   })
-  // Share links use the short-link base when configured (e.g.
-  // https://lpd.sh/meet, redirected at the edge), else this deployment's URL.
-  const base = process.env.SHARE_LINK_BASE?.replace(/\/$/, "")
-  const url = base
-    ? `${base}/${slug}`
-    : new URL(`/r/${slug}`, request.url).toString()
+  const url = roomShareUrl(slug, request.url)
   return NextResponse.json({ slug, url, hostKey })
 }

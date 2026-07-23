@@ -20,5 +20,11 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.3.10"
+  },
+  "pnpm": {
+    "overrides": {
+      "sharp": "^0.35.0",
+      "adm-zip": "^0.6.0"
+    }
   }
 }
