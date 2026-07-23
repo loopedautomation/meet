@@ -534,20 +534,11 @@ function forgetAgent(url: string): RecentAgent[] {
 }
 
 /** The voice list for a chosen mode (URL agents have no registry defaults). */
-/** Colored trait badges for a Gemini voice; undefined for other providers. */
+/** Quiet trait badges for a Gemini voice; undefined for other providers. */
 function voiceBadges(voice: string) {
   const info = GEMINI_VOICE_INFO[voice as keyof typeof GEMINI_VOICE_INFO]
   if (!info) return undefined
-  return [
-    {
-      text: info.gender,
-      className:
-        info.gender === "F"
-          ? "badge-soft badge-secondary"
-          : "badge-soft badge-info",
-    },
-    { text: info.tone, className: "badge-soft badge-accent" },
-  ] as const
+  return [{ text: info.gender }, { text: info.tone }] as const
 }
 
 function urlVoiceOptions(mode: AgentMode): readonly string[] | null {
