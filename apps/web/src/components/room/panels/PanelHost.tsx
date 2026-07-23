@@ -14,7 +14,7 @@ const titles = {
   agents: "Agents",
   transcript: "Transcript",
   chat: "Chat",
-  doc: "Doc",
+  doc: "Meeting Notes",
   participants: "Participants",
   settings: "Settings",
 } as const
