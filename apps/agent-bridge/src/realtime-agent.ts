@@ -16,6 +16,8 @@ import {
   type CanvasOp,
   chatMessageSchema,
   DataTopic,
+  mentionsName,
+  spokenMentionRegExp,
 } from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
 import {
@@ -437,9 +439,9 @@ export async function runRealtimeAgent(opts: {
         }
       : undefined,
     gate: {
-      // Substring, not word-boundary: STT often renders the name with
-      // possessives or punctuation attached ("Scout's", "scout?").
-      mention: new RegExp(entry.name.replace(/[^a-z0-9]/gi, ""), "i"),
+      // Loose matching: STT renders the name with possessives,
+      // punctuation or spacing of its own ("Scout's", "scout?", "r2 d2").
+      mention: spokenMentionRegExp(entry.name),
       // Under raise-hand, a mention only raises the hand; the floor is
       // granted exclusively by call-on.
       mentionSpeaks: () => state.turnPolicy !== "raise-hand",
@@ -651,9 +653,20 @@ export async function runRealtimeAgent(opts: {
         // Attribution from the actual LiveKit sender — a crafted payload
         // must not put words in someone else's mouth in the model's context.
         if (!sender || sender.identity === `agent-${entry.id}`) return
-        session.notifyChat(
-          `[meeting chat] ${sender.name || sender.identity}: ${message.text}`,
-        )
+        const line = `[meeting chat] ${sender.name || sender.identity}: ${message.text}`
+        // An @mention is a question to THIS agent — passive context isn't
+        // enough, it has to actually answer in the chat (#112). Other
+        // agents' mentions of us don't qualify; agent-to-agent chat loops
+        // would spiral.
+        if (
+          !sender.identity.startsWith("agent-") &&
+          mentionsName(message.text, entry.name)
+        ) {
+          debug("info", `chat mention: replying in chat`)
+          session.promptChatReply(line)
+        } else {
+          session.notifyChat(line)
+        }
       } catch {}
       return
     }

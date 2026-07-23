@@ -824,3 +824,41 @@ export const agentInfoSchema = z.object({
   ttsVoice: z.string().optional(),
 })
 export type AgentInfo = z.infer<typeof agentInfoSchema>
+
+// ---- @mention matching ------------------------------------------------------
+// One definition of "was this agent addressed", shared by the web's mention
+// picker and both agent-bridge modes. Names come from registries and LiveKit
+// participant info, so they can contain spaces and regex metacharacters —
+// interpolating them into a RegExp unescaped mis-matches or throws (#112).
+
+export function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}
+
+/**
+ * Does `text` contain a chat @mention of `name`? Whitespace inside the name
+ * is matched loosely (the picker inserts "@Full Name" verbatim, but humans
+ * retype it with whatever spacing), and the name must end at a word
+ * boundary so "@Scout" doesn't hit "@Scouting".
+ */
+export function mentionsName(text: string, name: string): boolean {
+  const parts = name.trim().split(/\s+/).filter(Boolean).map(escapeRegExp)
+  if (parts.length === 0) return false
+  return new RegExp(`@${parts.join("\\s+")}(?![\\w-])`, "i").test(text)
+}
+
+/**
+ * A regex matching `name` as heard in a spoken transcript. STT renders
+ * names with arbitrary punctuation, possessives and spacing ("Scout's",
+ * "scout-team", "R2 D2"), so match the name's alphanumeric runs in order
+ * with anything non-alphanumeric between them.
+ */
+export function spokenMentionRegExp(name: string): RegExp {
+  const parts = name
+    .split(/[^a-zA-Z0-9]+/)
+    .filter(Boolean)
+    .map(escapeRegExp)
+  // An all-punctuation name can't be heard; match nothing rather than everything.
+  if (parts.length === 0) return /(?!)/
+  return new RegExp(parts.join("[^a-zA-Z0-9]*"), "i")
+}

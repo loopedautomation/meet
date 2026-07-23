@@ -12,12 +12,14 @@ import {
   describeAgentControl,
   emptySharedDoc,
   MAX_DOC_REV,
+  mentionsName,
   mergeCanvasRecord,
   mergeSharedDoc,
   nextDocRev,
   parseRoomSettings,
   type SharedDoc,
   sharedDocSchema,
+  spokenMentionRegExp,
 } from "./index.js"
 
 describe("agentControlSchema", () => {
@@ -406,5 +408,58 @@ describe("agentActivityEventSchema typing", () => {
       at: 1,
     })
     expect(parsed.success).toBe(false)
+  })
+})
+
+describe("mentionsName", () => {
+  it("matches a plain @mention case-insensitively", () => {
+    expect(mentionsName("@scout what's the agenda?", "Scout")).toBe(true)
+    expect(mentionsName("hey @SCOUT", "Scout")).toBe(true)
+  })
+
+  it("does not match a longer word sharing the prefix", () => {
+    expect(mentionsName("@Scouting report", "Scout")).toBe(false)
+  })
+
+  it("matches multi-word names with flexible spacing", () => {
+    expect(mentionsName("@Scout Team ship it", "Scout Team")).toBe(true)
+    expect(mentionsName("@scout   team ship it", "Scout Team")).toBe(true)
+    expect(mentionsName("@scout ship it", "Scout Team")).toBe(false)
+  })
+
+  it("survives regex metacharacters in the name", () => {
+    expect(mentionsName("@C++ Helper, review this", "C++ Helper")).toBe(true)
+    expect(mentionsName("ping @Agent (dev)", "Agent (dev)")).toBe(true)
+    expect(mentionsName("nothing here", "Agent (dev)")).toBe(false)
+  })
+
+  it("never matches an empty or whitespace name", () => {
+    expect(mentionsName("@ hello", "")).toBe(false)
+    expect(mentionsName("@ hello", "   ")).toBe(false)
+  })
+})
+
+describe("spokenMentionRegExp", () => {
+  it("matches the name through possessives and punctuation", () => {
+    expect(spokenMentionRegExp("Scout").test("What's Scout's take?")).toBe(true)
+    expect(spokenMentionRegExp("Scout").test("scout?")).toBe(true)
+  })
+
+  it("matches multi-word names however STT spaces them", () => {
+    const re = spokenMentionRegExp("R2-D2")
+    expect(re.test("ask r2 d2 about it")).toBe(true)
+    expect(re.test("ask r2d2 about it")).toBe(true)
+    expect(re.test("ask r2, d2 about it")).toBe(true)
+  })
+
+  it("does not throw on regex metacharacters", () => {
+    expect(spokenMentionRegExp("C++ (dev)").test("the c++ dev agent")).toBe(
+      true,
+    )
+  })
+
+  it("matches nothing for an all-punctuation name", () => {
+    expect(spokenMentionRegExp("++").test("anything at all")).toBe(false)
+    expect(spokenMentionRegExp("++").test("")).toBe(false)
   })
 })

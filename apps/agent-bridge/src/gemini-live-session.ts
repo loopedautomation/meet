@@ -367,6 +367,19 @@ export class GeminiLiveSession implements VoiceSession {
     this.#sendUserText(line)
   }
 
+  /**
+   * An addressed chat message: Gemini has no text-only response mode, so
+   * the injected turn carries the instruction to answer through the chat
+   * tool rather than aloud.
+   */
+  promptChatReply(line: string) {
+    this.#sendUserText(
+      `${line}\n[You were addressed by name in the meeting's text chat. ` +
+        `Reply briefly into the chat using the ${CHAT_TOOL} tool; don't ` +
+        "read your reply aloud.]",
+    )
+  }
+
   /** No-op: Gemini Live cannot be gated (rejected in the constructor). */
   setGateOpen(_open: boolean) {}
 
