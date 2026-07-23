@@ -193,9 +193,13 @@ export class GeminiLiveSession implements VoiceSession {
     ws.onclose = (ev) => {
       if (this.#ws !== ws) return // superseded by a newer reconnect
       // Gemini closes the socket on setup errors (bad model, bad key)
-      // instead of sending an error frame — surface the reason.
-      if (ev.code !== 1000 && ev.reason) {
-        this.#opts.onError?.(`gemini live closed: ${ev.code} ${ev.reason}`)
+      // instead of sending an error frame — surface the reason. Abnormal
+      // closes with an empty reason still get logged, or a drop-and-
+      // reconnect cycle is invisible in the debug events.
+      if (ev.code !== 1000) {
+        this.#opts.onError?.(
+          `gemini live closed: ${ev.code}${ev.reason ? ` ${ev.reason}` : ""}`,
+        )
       }
       this.#resolveReady() // never strand a caller waiting on a dead socket
       if (this.#closed) return
