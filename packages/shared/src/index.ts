@@ -155,16 +155,24 @@ export function parseParticipantMeta(
   }
 }
 
-/** Voices an agent may speak with (OpenAI realtime model voices). */
-export const AGENT_VOICES = [
-  "marin",
-  "cedar",
-  "alloy",
-  "ash",
-  "coral",
-  "sage",
-  "verse",
-] as const
+/**
+ * Voices an agent may speak with (OpenAI realtime model voices), with
+ * OpenAI's published character descriptors. Unlike Gemini, OpenAI states
+ * no voice gender — so the badges say only how each sounds.
+ */
+export const OPENAI_REALTIME_VOICE_INFO = {
+  marin: { tone: "Fresh" },
+  cedar: { tone: "Warm" },
+  alloy: { tone: "Neutral" },
+  ash: { tone: "Clear" },
+  coral: { tone: "Friendly" },
+  sage: { tone: "Calm" },
+  verse: { tone: "Expressive" },
+} as const satisfies Record<string, { tone: string }>
+
+export const AGENT_VOICES = Object.keys(
+  OPENAI_REALTIME_VOICE_INFO,
+) as readonly (keyof typeof OPENAI_REALTIME_VOICE_INFO)[]
 export type AgentVoice = (typeof AGENT_VOICES)[number]
 
 /**
