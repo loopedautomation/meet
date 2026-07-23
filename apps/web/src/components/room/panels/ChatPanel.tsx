@@ -125,48 +125,74 @@ function ChatMessageRow({
         </div>
       ) : (
         <div
-          className={`chat-bubble min-w-0 max-w-[85%] whitespace-pre-wrap break-words text-sm ${
+          className={`chat-bubble relative min-w-0 max-w-[85%] whitespace-pre-wrap break-words text-sm ${
             own ? "chat-bubble-primary" : ""
           }`}
         >
           {linkify(message.text)}
-        </div>
-      )}
-      {own && !isEditing && (
-        <div className="chat-footer flex items-center gap-1 text-base-content/40 text-xs">
-          {message.editedAt && <span>edited</span>}
-          <button
-            type="button"
-            className="btn btn-ghost btn-xs btn-circle opacity-0 transition-opacity group-hover:opacity-100"
-            aria-label="Edit message"
-            title="Edit"
-            onClick={onStartEdit}
-          >
-            <Pencil className="size-3" />
-          </button>
-          {confirmingDelete ? (
-            <button
-              type="button"
-              className="btn btn-error btn-xs"
-              onClick={onDelete}
-              onBlur={onCancelDeleteConfirm}
-            >
-              Delete?
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-ghost btn-xs btn-circle text-error opacity-0 transition-opacity group-hover:opacity-100"
-              aria-label="Delete message"
-              title="Delete"
-              onClick={onConfirmDelete}
-            >
-              <Trash2 className="size-3" />
-            </button>
+          {own && (
+            <MessageActions
+              onStartEdit={onStartEdit}
+              confirmingDelete={confirmingDelete}
+              onConfirmDelete={onConfirmDelete}
+              onDelete={onDelete}
+              onCancelDeleteConfirm={onCancelDeleteConfirm}
+            />
           )}
         </div>
       )}
+      {own && !isEditing && message.editedAt && (
+        <div className="chat-footer text-base-content/40 text-xs">edited</div>
+      )}
     </li>
+  )
+}
+
+function MessageActions({
+  onStartEdit,
+  confirmingDelete,
+  onConfirmDelete,
+  onDelete,
+  onCancelDeleteConfirm,
+}: {
+  onStartEdit: () => void
+  confirmingDelete: boolean
+  onConfirmDelete: () => void
+  onDelete: () => void
+  onCancelDeleteConfirm: () => void
+}) {
+  return (
+    <div className="pointer-events-none absolute top-1/2 right-full flex -translate-y-1/2 items-center gap-1 pr-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 has-[:focus]:pointer-events-auto has-[:focus]:opacity-100">
+      <button
+        type="button"
+        className="btn btn-ghost btn-xs btn-circle"
+        aria-label="Edit message"
+        title="Edit"
+        onClick={onStartEdit}
+      >
+        <Pencil className="size-3" />
+      </button>
+      {confirmingDelete ? (
+        <button
+          type="button"
+          className="btn btn-error btn-xs"
+          onClick={onDelete}
+          onBlur={onCancelDeleteConfirm}
+        >
+          Delete?
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs btn-circle text-error"
+          aria-label="Delete message"
+          title="Delete"
+          onClick={onConfirmDelete}
+        >
+          <Trash2 className="size-3" />
+        </button>
+      )}
+    </div>
   )
 }
 

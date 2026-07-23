@@ -167,17 +167,48 @@ export const AGENT_VOICES = [
 ] as const
 export type AgentVoice = (typeof AGENT_VOICES)[number]
 
-/** Prebuilt voices of Google's Gemini Live realtime models. */
-export const GEMINI_VOICES = [
-  "Puck",
-  "Charon",
-  "Kore",
-  "Fenrir",
-  "Aoede",
-  "Leda",
-  "Orus",
-  "Zephyr",
-] as const
+/**
+ * Prebuilt voices of Google's Gemini Live realtime models — the full
+ * 30-voice roster, with the voice gender from the Gemini-TTS docs and the
+ * one-word character from the Live API docs, so pickers can say more than
+ * a star name.
+ */
+export const GEMINI_VOICE_INFO = {
+  Puck: { gender: "M", tone: "Upbeat" },
+  Charon: { gender: "M", tone: "Informative" },
+  Kore: { gender: "F", tone: "Firm" },
+  Fenrir: { gender: "M", tone: "Excitable" },
+  Aoede: { gender: "F", tone: "Breezy" },
+  Leda: { gender: "F", tone: "Youthful" },
+  Orus: { gender: "M", tone: "Firm" },
+  Zephyr: { gender: "F", tone: "Bright" },
+  Achernar: { gender: "F", tone: "Soft" },
+  Achird: { gender: "M", tone: "Friendly" },
+  Algenib: { gender: "M", tone: "Gravelly" },
+  Algieba: { gender: "M", tone: "Smooth" },
+  Alnilam: { gender: "M", tone: "Firm" },
+  Autonoe: { gender: "F", tone: "Bright" },
+  Callirrhoe: { gender: "F", tone: "Easy-going" },
+  Despina: { gender: "F", tone: "Smooth" },
+  Enceladus: { gender: "M", tone: "Breathy" },
+  Erinome: { gender: "F", tone: "Clear" },
+  Gacrux: { gender: "F", tone: "Mature" },
+  Iapetus: { gender: "M", tone: "Clear" },
+  Laomedeia: { gender: "F", tone: "Upbeat" },
+  Pulcherrima: { gender: "F", tone: "Forward" },
+  Rasalgethi: { gender: "M", tone: "Informative" },
+  Sadachbia: { gender: "M", tone: "Lively" },
+  Sadaltager: { gender: "M", tone: "Knowledgeable" },
+  Schedar: { gender: "M", tone: "Even" },
+  Sulafat: { gender: "F", tone: "Warm" },
+  Umbriel: { gender: "M", tone: "Easy-going" },
+  Vindemiatrix: { gender: "F", tone: "Gentle" },
+  Zubenelgenubi: { gender: "M", tone: "Casual" },
+} as const satisfies Record<string, { gender: "F" | "M"; tone: string }>
+
+export const GEMINI_VOICES = Object.keys(
+  GEMINI_VOICE_INFO,
+) as readonly (keyof typeof GEMINI_VOICE_INFO)[]
 
 /** Voices of OpenAI's TTS models (the pipeline mode's speech output). */
 export const OPENAI_TTS_VOICES = [

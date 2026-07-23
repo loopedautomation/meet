@@ -5,6 +5,8 @@ import { useState } from "react"
 export type SelectOption = {
   value: string
   label: string
+  /** Small trailing badges on the option row (e.g. voice traits "F", "Warm"). */
+  badges?: readonly { text: string; className?: string }[]
   disabled?: boolean
 }
 
@@ -118,6 +120,14 @@ export function Select({
               >
                 {/* Options show everything and wrap — never truncate here. */}
                 <span className="min-w-0 break-words">{o.label}</span>
+                {o.badges?.map((badge) => (
+                  <span
+                    key={badge.text}
+                    className={`badge badge-xs shrink-0 text-[9px] ${badge.className ?? "badge-soft"}`}
+                  >
+                    {badge.text}
+                  </span>
+                ))}
               </button>
             </li>
           ))}

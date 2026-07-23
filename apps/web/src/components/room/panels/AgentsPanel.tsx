@@ -5,6 +5,7 @@ import {
   AGENT_VOICES,
   type AgentActivityEvent,
   type AgentInfo,
+  GEMINI_VOICE_INFO,
   GEMINI_VOICES,
   OPENAI_TTS_VOICES,
   parseParticipantMeta,
@@ -280,6 +281,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
                               options={options.map((v) => ({
                                 value: v,
                                 label: properCase(v),
+                                badges: voiceBadges(v),
                               }))}
                             />
                           )}
@@ -532,6 +534,22 @@ function forgetAgent(url: string): RecentAgent[] {
 }
 
 /** The voice list for a chosen mode (URL agents have no registry defaults). */
+/** Colored trait badges for a Gemini voice; undefined for other providers. */
+function voiceBadges(voice: string) {
+  const info = GEMINI_VOICE_INFO[voice as keyof typeof GEMINI_VOICE_INFO]
+  if (!info) return undefined
+  return [
+    {
+      text: info.gender,
+      className:
+        info.gender === "F"
+          ? "badge-soft badge-secondary"
+          : "badge-soft badge-info",
+    },
+    { text: info.tone, className: "badge-soft badge-accent" },
+  ] as const
+}
+
 function urlVoiceOptions(mode: AgentMode): readonly string[] | null {
   if (mode === "gemini") return GEMINI_VOICES
   if (mode === "realtime") return AGENT_VOICES
@@ -619,6 +637,7 @@ function InviteByUrl({
           options={voices.map((v) => ({
             value: v,
             label: `Voice: ${properCase(v)}`,
+            badges: voiceBadges(v),
           }))}
         />
       )}
