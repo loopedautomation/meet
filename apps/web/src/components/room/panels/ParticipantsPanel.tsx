@@ -5,7 +5,7 @@ import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import type { Participant } from "livekit-client"
 import { Track } from "livekit-client"
-import { Bot, Check, MicOff, User, UserX, X } from "lucide-react"
+import { Bot, Check, Mic, MicOff, User, UserX, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { roomAuthHeaders } from "@/lib/roomAuth"
@@ -198,7 +198,7 @@ function MuteButton({
       title="Mute — only they can unmute themselves"
       onClick={onMute}
     >
-      <MicOff className="size-4" />
+      <Mic className="size-4" />
     </button>
   )
 }
