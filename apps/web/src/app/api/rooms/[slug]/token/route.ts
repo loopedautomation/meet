@@ -190,7 +190,10 @@ export async function POST(request: Request, { params }: Params) {
   }
 
   const identity = `user-${nanoid(10)}`
-  const meta: ParticipantMeta = { kind: waiting ? "waiting" : "human" }
+  const meta: ParticipantMeta = {
+    kind: waiting ? "waiting" : "human",
+    ...(isHost && !waiting ? { isHost: true } : {}),
+  }
   const token = new AccessToken(apiKey, apiSecret, {
     identity,
     name: body.data.displayName,

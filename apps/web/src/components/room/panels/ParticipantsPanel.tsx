@@ -5,7 +5,7 @@ import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import type { Participant } from "livekit-client"
 import { Track } from "livekit-client"
-import { Bot, Check, Mic, MicOff, User, UserX, X } from "lucide-react"
+import { Bot, Check, Crown, Mic, MicOff, User, UserX, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { roomAuthHeaders } from "@/lib/roomAuth"
@@ -125,6 +125,11 @@ export function ParticipantsPanel({ slug }: { slug: string }) {
               {p.name || p.identity}
               {p.isLocal && " (you)"}
             </span>
+            {parseParticipantMeta(p.metadata)?.isHost && (
+              <span title="Host" className="shrink-0 text-warning">
+                <Crown className="size-3.5" />
+              </span>
+            )}
             {isHost && !p.isLocal && (
               <>
                 <MuteButton
