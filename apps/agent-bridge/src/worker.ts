@@ -951,7 +951,9 @@ export default defineAgent({
               ? "(I've drawn on the whiteboard.)"
               : opsApplied || leave
                 ? null
-                : null
+                : // A mention must never vanish into silence: an empty brain
+                  // reply with no side effects still posts something.
+                  "(I don't have anything useful to reply with — try rephrasing?)"
         if (posted) publishChat(posted)
         if (leave) void leaveMeeting()
         return posted
