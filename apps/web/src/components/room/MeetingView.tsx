@@ -8,11 +8,12 @@ import {
 import { parseParticipantMeta } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionState, Track } from "livekit-client"
-import { Minimize2 } from "lucide-react"
+import { LayoutGrid, Minimize2, PictureInPicture2 } from "lucide-react"
 import { motion } from "motion/react"
 import { useRef } from "react"
 import { ControlBar } from "@/components/room/ControlBar"
 import { ParticipantTile } from "@/components/room/ParticipantTile"
+import { PipParticipants } from "@/components/room/PipParticipants"
 import { DocPanel } from "@/components/room/panels/DocPanel"
 import { PanelHost } from "@/components/room/panels/PanelHost"
 import { RoomDataListener } from "@/components/room/RoomDataListener"
@@ -31,6 +32,7 @@ import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
 import { $canvasOpen } from "@/stores/canvas"
 import { $docOnStage, $openPanel } from "@/stores/panels"
+import { $selfInGrid, setSelfInGrid } from "@/stores/preferences"
 
 export function MeetingView({
   slug,
@@ -79,6 +81,13 @@ export function MeetingView({
     return kind !== "service" && kind !== "waiting"
   })
   const alone = remoteTracks.length === 0
+  // Podcast layout: your own tile joins the grid (and the strip during a
+  // takeover) instead of floating above the stage.
+  const selfInGrid = useStore($selfInGrid)
+  const stageTracks =
+    selfInGrid && !alone && localTrack
+      ? [...remoteTracks, localTrack]
+      : remoteTracks
   const stageRef = useRef<HTMLDivElement>(null)
   const connectionState = useConnectionState()
   const openPanel = useStore($openPanel)
@@ -110,11 +119,11 @@ export function MeetingView({
         className="relative flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row"
       >
         {docOnStage ? (
-          <DocTakeover slug={slug} tracks={remoteTracks} focused={focused} />
+          <DocTakeover slug={slug} tracks={stageTracks} focused={focused} />
         ) : whiteboardOpen ? (
           <WhiteboardTakeover
             slug={slug}
-            tracks={remoteTracks}
+            tracks={stageTracks}
             focused={focused}
           />
         ) : focused ? (
@@ -124,7 +133,7 @@ export function MeetingView({
             </div>
             {/* Participants sit in a horizontal strip below the share,
                 centered and sized to match the draggable self-view. */}
-            <ParticipantStrip tracks={remoteTracks} />
+            <ParticipantStrip tracks={stageTracks} />
           </div>
         ) : alone ? (
           // Just you: your own camera fills the stage.
@@ -140,17 +149,27 @@ export function MeetingView({
             className="grid min-h-0 min-w-0 flex-1 auto-rows-fr grid-cols-1 gap-3 landscape:[grid-template-columns:var(--cols)] landscape:[grid-template-rows:var(--rows)] md:[grid-template-columns:var(--cols)] md:[grid-template-rows:var(--rows)]"
             style={
               {
-                "--cols": `repeat(${gridColumns(remoteTracks.length)}, minmax(0, 1fr))`,
-                "--rows": `repeat(${gridRows(remoteTracks.length)}, minmax(0, 1fr))`,
+                "--cols": `repeat(${gridColumns(stageTracks.length)}, minmax(0, 1fr))`,
+                "--rows": `repeat(${gridRows(stageTracks.length)}, minmax(0, 1fr))`,
               } as React.CSSProperties
             }
           >
-            {remoteTracks.map((trackRef) => (
-              <ParticipantTile
-                key={trackRef.participant.identity}
-                trackRef={trackRef}
-              />
-            ))}
+            {stageTracks.map((trackRef) =>
+              trackRef.participant.isLocal ? (
+                <div
+                  key={trackRef.participant.identity}
+                  className="group relative min-h-0 min-w-0"
+                >
+                  <ParticipantTile trackRef={trackRef} />
+                  <SelfGridToggle inGrid />
+                </div>
+              ) : (
+                <ParticipantTile
+                  key={trackRef.participant.identity}
+                  trackRef={trackRef}
+                />
+              ),
+            )}
           </div>
         )}
 
@@ -158,7 +177,7 @@ export function MeetingView({
             anywhere. When a side panel is open it sits to the panel's left.
             While a screen share is focused, the bottom edge is taken by the
             participant strip, so it floats top-right instead. */}
-        {!alone && localTrack && (
+        {!alone && localTrack && !selfInGrid && (
           <motion.div
             drag
             dragConstraints={stageRef}
@@ -170,13 +189,16 @@ export function MeetingView({
             // touch-none stops mobile browsers treating the drag as a page
             // scroll/pan, which was fighting the gesture. Rounding + shadow
             // live together here so the shadow follows the rounded corners.
-            className={`absolute z-10 w-32 cursor-grab touch-none rounded-box shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
+            className={`group absolute z-10 w-32 cursor-grab touch-none rounded-box shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
               focused || whiteboardOpen || docOnStage ? "top-6" : "bottom-6"
             } ${openPanel ? "right-[22.25rem]" : "right-6"}`}
           >
             <ParticipantTile trackRef={localTrack} compact />
+            <SelfGridToggle inGrid={false} />
           </motion.div>
         )}
+
+        <PipParticipants tracks={remoteTracks} />
 
         <PanelHost slug={slug} />
       </div>
@@ -288,12 +310,41 @@ function ParticipantStrip({
       {tracks.map((trackRef) => (
         <div
           key={trackRef.participant.identity}
-          className="w-32 shrink-0 sm:w-56"
+          className="group relative w-32 shrink-0 sm:w-56"
         >
           <ParticipantTile trackRef={trackRef} compact />
+          {trackRef.participant.isLocal && <SelfGridToggle inGrid />}
         </div>
       ))}
     </div>
+  )
+}
+
+/**
+ * Moves the self-view between the floating mini player and the main grid
+ * (podcast layout — everyone side by side). Hover-revealed on pointer
+ * devices, always visible on touch.
+ */
+function SelfGridToggle({ inGrid }: { inGrid: boolean }) {
+  const label = inGrid
+    ? "Pop your video out of the grid"
+    : "Move your video into the grid"
+  return (
+    <button
+      type="button"
+      className="btn btn-circle btn-xs absolute top-1.5 right-1.5 z-10 border-none bg-base-100/80 backdrop-blur transition-opacity sm:opacity-0 sm:focus-visible:opacity-100 sm:group-hover:opacity-100"
+      // Don't let the press start a drag of the floating player.
+      onPointerDownCapture={(e) => e.stopPropagation()}
+      onClick={() => setSelfInGrid(!inGrid)}
+      aria-label={label}
+      title={label}
+    >
+      {inGrid ? (
+        <PictureInPicture2 className="size-3.5" />
+      ) : (
+        <LayoutGrid className="size-3.5" />
+      )}
+    </button>
   )
 }
 
