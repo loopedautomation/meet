@@ -926,15 +926,11 @@ export async function runRealtimeAgent(opts: {
         zapTimer = setTimeout(() => {
           zapTimer = null
           zappedUntil = 0
-          if (gated()) {
-            session.setGateOpen(false)
-          } else {
-            // Open-policy agents have no gate to fall back to — mute them.
-            state.muted = true
-            hardCut()
-            callbacks.setState("muted")
-            return
-          }
+          // Back to the agent's own policy: gated agents re-gate, open ones
+          // just keep listening (matching the pipeline path). Muting is a
+          // human's call — an agent that mutes itself when the window ends
+          // looks like it randomly went silent mid-meeting.
+          if (gated()) session.setGateOpen(false)
           callbacks.setState(state.muted ? "muted" : "listening")
         }, ZAP_WINDOW_MS)
         session.say("Acknowledge in a few words that you're now listening in.")
