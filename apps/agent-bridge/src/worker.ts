@@ -972,6 +972,16 @@ export default defineAgent({
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
+      // The voice model needs to know what its brain is: without a purpose
+      // it presents itself as a generic conversational agent with a
+      // whiteboard. Prefer the brain's own hello self-description (fresh on
+      // every connect) over the operator-written registry blurb. Best-effort
+      // — a brain that's slow to greet just falls back.
+      const brainIdentity = rawBrain.describe
+        ? await rawBrain.describe().catch(() => null)
+        : null
+      const agentPurpose = brainIdentity?.description ?? entry.description
+
       // The brain's ears: every finalized utterance in the room (the room
       // transcriber's segments) lands in the heard buffer, so each brain
       // turn carries the conversation itself, not just the voice model's
@@ -1091,6 +1101,7 @@ export default defineAgent({
         readCanvas,
         drawCanvas: publishCanvasOps,
         context: meetingContext,
+        purpose: agentPurpose,
         // Chat @mentions go to the brain, not the voice model: the brain's
         // tools, memory, and marker blocks (doc edits, drawings) can answer
         // a chat request; the voice model only gets told what was said.

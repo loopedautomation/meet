@@ -58,9 +58,20 @@ const instructions = (
   entry: AgentEntry,
   canSeeScreens: boolean,
   context?: string,
+  purpose?: string,
 ) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting ` +
-  "with several people. You are the agent's voice, not its mind: your " +
+  "with several people. " +
+  // Without this the voice model knows only the meeting surface and
+  // presents itself as a generic conversational agent with a whiteboard.
+  (purpose
+    ? `Who you are and what you can do: ${purpose.trim()} Those ` +
+      "capabilities live behind your do_task tool — offer them and use " +
+      "them when they're relevant, and answer questions about what you " +
+      "can do from this description rather than describing yourself as a " +
+      "general meeting assistant. "
+    : "") +
+  "You are the agent's voice, not its mind: your " +
   "knowledge, memory, tools and permissions live behind the do_task tool, " +
   "and every answer of substance comes from there. Never answer from what " +
   "you happen to know — anything factual, anything about systems, data, " +
@@ -155,6 +166,11 @@ export async function runRealtimeAgent(opts: {
   ) => void
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
+  /**
+   * What the agent behind do_task is and can do — the brain's hello
+   * self-description, or the registry description as fallback.
+   */
+  purpose?: string
   /** Fed what the agent said aloud, for the brain's record of the meeting. */
   onSpoke?: (text: string) => void
 }): Promise<void> {
@@ -481,7 +497,12 @@ export async function runRealtimeAgent(opts: {
     model: realtime.model,
     voice: realtime.voice,
     apiKey,
-    instructions: instructions(entry, canSeeScreens, opts.context),
+    instructions: instructions(
+      entry,
+      canSeeScreens,
+      opts.context,
+      opts.purpose,
+    ),
     delegate,
     cancelWork: () => {
       if (workInFlight === 0 || !brain.abortTurn) return false

@@ -21,6 +21,9 @@ export type TtyServerFrame =
   | { type: "message"; text: string }
   | { type: "error"; error: string }
 
+/** The brain's own statement of who it is, from its hello frame. */
+export type BrainIdentity = { name?: string; description?: string }
+
 export type TtyClientOptions = {
   url: string
   token: string
@@ -46,6 +49,7 @@ export class LoopedTtyClient {
   /** Tail of the turn queue: each turn awaits the previous one's release. */
   #tail: Promise<void> = Promise.resolve()
   #aborted = false
+  #identity: BrainIdentity | null = null
 
   constructor(opts: TtyClientOptions) {
     this.#opts = {
@@ -80,8 +84,39 @@ export class LoopedTtyClient {
         reject(err)
       })
     })
+    // The hello frame announcing the agent's identity arrives right after
+    // open, usually before any turn attaches its own listeners — a standing
+    // listener catches it whenever it lands (it's re-announced per connect).
+    ws.on("message", (data) => {
+      if (this.#identity) return
+      try {
+        const frame = JSON.parse(String(data)) as TtyServerFrame
+        if (frame.type === "hello" && (frame.name || frame.description)) {
+          this.#identity = { name: frame.name, description: frame.description }
+        }
+      } catch {}
+    })
     this.#ws = ws
     return ws
+  }
+
+  /**
+   * The brain's self-description: connect if needed and wait briefly for the
+   * hello frame. Null when the agent predates hello identity or the connect
+   * fails — callers fall back to the registry description.
+   */
+  async describe(timeoutMs = 5_000): Promise<BrainIdentity | null> {
+    if (this.#identity) return this.#identity
+    try {
+      await this.#connect()
+    } catch {
+      return null
+    }
+    const deadline = Date.now() + timeoutMs
+    while (!this.#identity && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    return this.#identity
   }
 
   /**
