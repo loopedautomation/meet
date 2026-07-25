@@ -1,4 +1,4 @@
-import type { TtyServerFrame } from "./looped-tty.js"
+import type { BrainIdentity, TtyServerFrame } from "./looped-tty.js"
 
 export type Brain = {
   runTurn: (
@@ -7,6 +7,11 @@ export type Brain = {
   ) => AsyncGenerator<TtyServerFrame>
   /** Abort the in-flight turn, if the transport supports it. */
   abortTurn?: () => void
+  /**
+   * The brain's own statement of who it is and what it does, if the
+   * transport carries one (the TTY hello frame). Webhook brains don't.
+   */
+  describe?: () => Promise<BrainIdentity | null>
   close: () => void
 }
 
