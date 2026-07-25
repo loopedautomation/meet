@@ -77,6 +77,7 @@ import {
   getDynamicAgent,
   publicOnlyLookup,
 } from "./dynamic.js"
+import { endCallWhenEmpty } from "./end-when-empty.js"
 import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
@@ -270,6 +271,11 @@ export default defineAgent({
     await ctx.connect()
     const local = ctx.room.localParticipant
     if (!local) throw new Error("no local participant after connect")
+
+    // When the last human leaves, the call is over: end it and let the agent
+    // go. Without this the agent (and the transcriber service) keep the room
+    // populated, so LiveKit's emptyTimeout never fires and the meeting lingers.
+    endCallWhenEmpty(ctx)
 
     const sessionState = new SessionState()
     sessionState.turnPolicy = entry.turn_policy
