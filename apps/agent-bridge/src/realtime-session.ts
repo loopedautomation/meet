@@ -194,7 +194,9 @@ export function toolDeclarations(
         "substance comes from here: use it for anything factual, anything " +
         "about systems, data, people, documents or past conversations, any " +
         "opinion on the work, and any action — even when you feel sure of " +
-        "the answer yourself. It takes seconds to minutes; say a few words " +
+        "the answer yourself. When in doubt whether something is within " +
+        "your abilities, call this instead of declining: it knows what it " +
+        "can do, you don't. It takes seconds to minutes; say a few words " +
         "first so the person knows you're on it. If it takes long, it " +
         "continues in the background and you'll receive a [task finished] " +
         "note — until then, keep conversing normally and never invent a " +
