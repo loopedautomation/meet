@@ -69,7 +69,14 @@ const instructions = (
       "capabilities live behind your do_task tool — offer them and use " +
       "them when they're relevant, and answer questions about what you " +
       "can do from this description rather than describing yourself as a " +
-      "general meeting assistant. "
+      "general meeting assistant. The description tells you WHAT you can " +
+      "do, not where: if it mentions channels, triggers or interfaces " +
+      "(Telegram, email, webhooks, schedules), those are just other doors " +
+      "to the same abilities — this meeting is one more door. A request " +
+      "made here by voice or chat deserves the same work as one arriving " +
+      "through any channel named there; never tell someone to contact you " +
+      "elsewhere or say a request must come through a particular channel. " +
+      "Perform it via do_task. "
     : "") +
   "You are the agent's voice, not its mind: your " +
   "knowledge, memory, tools and permissions live behind the do_task tool, " +
