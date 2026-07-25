@@ -33,13 +33,13 @@ move, update, or delete shapes in later turns.
 
 | Op | Fields | Notes |
 | --- | --- | --- |
-| `rect`, `ellipse` | `id, x, y, w, h, label?, color?, fill?` | `fill`: `none` (default), `semi`, `solid` |
+| `rect`, `ellipse` | `id, x, y, w, h, label?, color?, fill?, stroke?, strokeWidth?` | `fill`: `none` (default), `semi` (hachure), `solid`, `hatch` (cross-hatch); `stroke`: `solid`/`dashed`/`dotted`; `strokeWidth`: `thin`/`medium`/`bold` |
 | `text` | `id, x, y, text, size?, color?` | `size`: `s`, `m`, `l` (heading), `xl` (title) |
 | `note` | `id, x, y, text, color?` | a sticky note; sizes itself to the text |
 | `arrow` | `id, from?, to?, fromPoint?, toPoint?, label?, color?` | `from`/`to` are shape ids — bound arrows re-route when shapes move; prefer them over free points |
 | `draw` | `id, points, color?` | freehand polyline, `points: [{x, y}, …]` |
-| `move` | `id, x, y` | reposition a shape (its label rides along) |
-| `update` | `id, label?, text?, color?, w?, h?` | restyle or relabel in place |
+| `move` | `id, x, y` or `id, dx, dy` | reposition absolutely, or nudge relative to where it sits — bound arrows re-route either way |
+| `update` | `id, label?, text?, color?, w?, h?, fill?, stroke?, strokeWidth?` | restyle, relabel, refill, retexture or resize in place — labels re-center, arrows re-route; `fill: "none"` clears a fill |
 | `delete` | `id` | arrows pointing at it stay but unbind |
 | `clear` | — | wipes the board; only when asked |
 | `diagram` | `id, mermaid, x?, y?` | a whole Mermaid `flowchart`/`graph` laid out automatically — **prefer this for any boxes-and-arrows structure**; node ids become `<id>.<node>` for later `move`/`update`/`arrow` ops. Mermaid `style <node> fill:<color>` / `classDef` / `:::class` colors are honored (snapped to the palette below). **Editing:** re-send the same diagram `id` with the edited Mermaid and it updates in place — the way to add, remove, recolor or relabel parts of an existing diagram |

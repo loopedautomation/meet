@@ -80,3 +80,15 @@ New op vocabulary (schema + builder + protocol note): fill textures
 restyle/refill/resize anything in place (labels re-center after resize,
 arrows re-route), move accepts relative dx/dy nudges. Fixture 13 renders
 all of it correctly. 174 bridge + 70 shared tests green.
+
+## Cycle 5 — skill doc + final diagram verification
+
+skills/whiteboard.md op table updated with the full styling vocabulary.
+Visual re-verification: 08 (redraw tree) and 04 (LR cycle) render clean —
+edge-anchored arrows, back-edge routed around the row, no strikethroughs.
+
+## Verdict
+
+All 19 fixtures render well; malformed inputs produce actionable feedback;
+sequential edits behave; styling is manual-grade. Corpus + viewer + injector
+remain as the standing regression/iteration loop for future drawing work.
