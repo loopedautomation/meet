@@ -31,3 +31,19 @@ history kept so regressions are visible.
 3. **`move` must re-route bound arrows; `delete` must drop dangling arrows** (07).
 4. Lenient parsing: auto-wrap single op object (90); point at the JSON error location (91).
 5. Sticky-note default width smaller / respect coords column layouts (05).
+
+## Cycle 1 — edge anchors, graph placement, arrow maintenance
+
+Changes: arrows anchor at shape edges (+6px gap) with waypoint-aware aim;
+coordinate-free batches containing arrows lay out via dagre (TB) as one
+block; `move`/resize re-route bound arrows; `delete` removes arrows
+touching the deleted shape.
+
+| Fixture | P | A | L | S | Notes |
+|---|---|---|---|---|---|
+| 01-flowchart-ops | 5 | 4 | 5 | 4 | Proper TB flowchart; labels sit clear between ranks. |
+| 10-dense-graph | 4 | 4 | 5 | 4 | Real graph layout; long chain could prefer 2 columns (minor). |
+
+Remaining (cycle 2 targets): verify 07 move/delete visually; 02 mixed batch
+(title/note placement relative to graph block); lenient parsing for 90/91;
+sticky-note default width (05).

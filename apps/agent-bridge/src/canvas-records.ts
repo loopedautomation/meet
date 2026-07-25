@@ -1,3 +1,4 @@
+import dagre from "@dagrejs/dagre"
 import type { CanvasColor, CanvasOp, CanvasRecord } from "@meet/shared"
 import { expandDiagram } from "./mermaid-diagram.js"
 
@@ -317,6 +318,73 @@ export function buildCanvasRecords(
     )
   }
 
+  // Graph-aware auto-placement: when a batch creates coordinate-free shapes
+  // AND connects them with arrows, the row-wrap placer would string them
+  // into one long strip with every arrow slicing through the neighbors.
+  // Lay the connected shapes out with dagre instead (the same engine the
+  // mermaid fallback uses), then drop the whole block into free space.
+  {
+    const connectable = new Map<string, { w: number; h: number }>()
+    for (const op of ops) {
+      if (
+        (op.op === "rect" || op.op === "ellipse") &&
+        op.x === undefined &&
+        op.y === undefined
+      ) {
+        connectable.set(op.id, { w: op.w, h: op.h })
+      }
+    }
+    const edges = ops.filter(
+      (op): op is Extract<CanvasOp, { op: "arrow" }> =>
+        op.op === "arrow" &&
+        !!op.from &&
+        !!op.to &&
+        connectable.has(op.from) &&
+        connectable.has(op.to),
+    )
+    if (edges.length > 0 && connectable.size >= 2) {
+      const graph = new dagre.graphlib.Graph()
+      graph.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80 })
+      graph.setDefaultEdgeLabel(() => ({}))
+      for (const [nodeId, size] of connectable) {
+        graph.setNode(nodeId, { width: size.w, height: size.h })
+      }
+      for (const edge of edges) graph.setEdge(edge.from!, edge.to!)
+      dagre.layout(graph)
+      const nodes = [...connectable.keys()].map((nodeId) => {
+        const n = graph.node(nodeId)
+        return { nodeId, x: n.x - n.width / 2, y: n.y - n.height / 2 }
+      })
+      const minX = Math.min(...nodes.map((n) => n.x))
+      const minY = Math.min(...nodes.map((n) => n.y))
+      const bboxW =
+        Math.max(
+          ...nodes.map((n) => n.x + connectable.get(n.nodeId)!.w),
+        ) - minX
+      const bboxH =
+        Math.max(
+          ...nodes.map((n) => n.y + connectable.get(n.nodeId)!.h),
+        ) - minY
+      const spot = placeCreate(working, "batch", {}, bboxW, bboxH)
+      const placed = new Map(
+        nodes.map((n) => [
+          n.nodeId,
+          { x: n.x - minX + spot.x, y: n.y - minY + spot.y },
+        ]),
+      )
+      for (let i = 0; i < ops.length; i++) {
+        const op = ops[i]
+        const coords = placed.get((op as { id?: string }).id ?? "")
+        if (coords && (op.op === "rect" || op.op === "ellipse")) {
+          ops[i] = { ...op, ...coords }
+        }
+      }
+      actions.push(
+        `laid out ${placed.size} connected shapes as a graph at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
+      )
+    }
+  }
+
   const put = (id: string, element: LooseElement) => {
     const prior = working.get(id)
     const version =
@@ -383,6 +451,120 @@ export function buildCanvasRecords(
 
   const atSpot = (spot: { x: number; y: number }) =>
     `(${Math.round(spot.x)}, ${Math.round(spot.y)})`
+
+  const centerOf = (el: LooseElement) => ({
+    x: (el.x as number) + ((el.width as number) ?? 0) / 2,
+    y: (el.y as number) + ((el.height as number) ?? 0) / 2,
+  })
+
+  /**
+   * Where a line from `el`'s center toward `toward` exits its boundary,
+   * pushed out by `gap`. Bindings alone aren't enough: Excalidraw only
+   * re-clips bound arrows during editor interactions, so a statically
+   * loaded scene renders exactly the points we store — center-to-center
+   * arrows strike through the shapes and their labels.
+   */
+  const edgeAnchor = (
+    el: LooseElement,
+    toward: { x: number; y: number },
+    gap = 6,
+  ) => {
+    const c = centerOf(el)
+    const dx = toward.x - c.x
+    const dy = toward.y - c.y
+    const len = Math.hypot(dx, dy)
+    if (len === 0) return c
+    const w = ((el.width as number) ?? 0) / 2
+    const h = ((el.height as number) ?? 0) / 2
+    let t: number
+    if (el.type === "ellipse") {
+      const denom = Math.hypot(dx / (w || 1), dy / (h || 1))
+      t = denom > 0 ? 1 / denom : 0
+    } else {
+      const tx = dx !== 0 ? w / Math.abs(dx) : Number.POSITIVE_INFINITY
+      const ty = dy !== 0 ? h / Math.abs(dy) : Number.POSITIVE_INFINITY
+      t = Math.min(tx, ty)
+    }
+    if (!Number.isFinite(t)) t = 0
+    const scale = t + gap / len
+    return { x: c.x + dx * scale, y: c.y + dy * scale }
+  }
+
+  /** Absolute start plus relative points for an arrow between anchors. */
+  const arrowGeometry = (
+    fromShape: LooseElement | null,
+    toShape: LooseElement | null,
+    fromPoint: { x: number; y: number } | undefined,
+    toPoint: { x: number; y: number } | undefined,
+    via: { x: number; y: number }[],
+  ) => {
+    const roughStart = fromShape ? centerOf(fromShape) : (fromPoint ?? { x: 0, y: 0 })
+    const roughEnd = toShape
+      ? centerOf(toShape)
+      : (toPoint ?? { x: roughStart.x + 100, y: roughStart.y })
+    // Aim each end at the first thing the arrow actually heads toward.
+    const start = fromShape
+      ? edgeAnchor(fromShape, via[0] ?? roughEnd)
+      : roughStart
+    const end = toShape
+      ? edgeAnchor(toShape, via[via.length - 1] ?? start)
+      : roughEnd
+    const points: [number, number][] = [
+      [0, 0],
+      ...via.map((p) => [p.x - start.x, p.y - start.y] as [number, number]),
+      [end.x - start.x, end.y - start.y],
+    ]
+    return { start, end, points }
+  }
+
+  const bboxOf = (points: [number, number][]) => ({
+    width:
+      Math.max(...points.map((p) => p[0])) -
+      Math.min(...points.map((p) => p[0])),
+    height:
+      Math.max(...points.map((p) => p[1])) -
+      Math.min(...points.map((p) => p[1])),
+  })
+
+  /**
+   * Recompute every arrow touching `shapeId` from the shapes' current
+   * geometry — a move or resize otherwise leaves bound arrows pointing at
+   * where the shape used to be.
+   */
+  const rerouteArrows = (shapeId: string) => {
+    for (const [arrowId, entry] of working) {
+      const arrow = liveElement(entry)
+      if (!arrow || arrow.type !== "arrow") continue
+      const sb = arrow.startBinding as { elementId?: string } | null
+      const eb = arrow.endBinding as { elementId?: string } | null
+      if (sb?.elementId !== shapeId && eb?.elementId !== shapeId) continue
+      const fromShape = sb?.elementId
+        ? liveElement(working.get(sb.elementId))
+        : null
+      const toShape = eb?.elementId
+        ? liveElement(working.get(eb.elementId))
+        : null
+      const prior = (arrow.points as [number, number][]).map(([px, py]) => ({
+        x: (arrow.x as number) + px,
+        y: (arrow.y as number) + py,
+      }))
+      const { start, end, points } = arrowGeometry(
+        fromShape,
+        toShape,
+        prior[0],
+        prior[prior.length - 1],
+        prior.slice(1, -1),
+      )
+      patch(arrowId, { x: start.x, y: start.y, points, ...bboxOf(points) })
+      const label = liveElement(working.get(labelId(arrowId)))
+      if (label) {
+        patch(labelId(arrowId), {
+          x: (start.x + end.x) / 2 - ((label.width as number) ?? 0) / 2,
+          y: (start.y + end.y) / 2 - ((label.height as number) ?? 0) / 2,
+        })
+      }
+    }
+  }
   /** Tell the model its shape landed elsewhere, so its map stays right. */
   const noteNudge = (opId: string, spot: { x: number; y: number }) => {
     warnings.push(
@@ -515,35 +697,19 @@ export function buildCanvasRecords(
         if (toId && !toShape) {
           warnings.push(`arrow "${op.id}": no shape with id ${op.to}.`)
         }
-        const center = (el: LooseElement) => ({
-          x: (el.x as number) + (el.width as number) / 2,
-          y: (el.y as number) + (el.height as number) / 2,
-        })
-        const start = fromShape
-          ? center(fromShape)
-          : (op.fromPoint ?? { x: 0, y: 0 })
-        const end = toShape
-          ? center(toShape)
-          : (op.toPoint ?? { x: start.x + 100, y: start.y })
-        const waypoints = (op.via ?? []).map(
-          (p) => [p.x - start.x, p.y - start.y] as [number, number],
+        const { start, points } = arrowGeometry(
+          fromShape,
+          toShape,
+          op.fromPoint,
+          op.toPoint,
+          op.via ?? [],
         )
-        const points: [number, number][] = [
-          [0, 0],
-          ...waypoints,
-          [end.x - start.x, end.y - start.y],
-        ]
         const element: LooseElement = {
           ...baseElement(id, at),
           type: "arrow",
           x: start.x,
           y: start.y,
-          width:
-            Math.max(...points.map((p) => p[0])) -
-            Math.min(...points.map((p) => p[0])),
-          height:
-            Math.max(...points.map((p) => p[1])) -
-            Math.min(...points.map((p) => p[1])),
+          ...bboxOf(points),
           strokeColor: STROKE_COLORS[op.color ?? "black"],
           points,
           lastCommittedPoint: null,
@@ -601,6 +767,7 @@ export function buildCanvasRecords(
             y: (label.y as number) + dy,
           })
         }
+        rerouteArrows(id)
         actions.push(`moved ${op.id} to ${atSpot(op)}`)
         break
       }
@@ -641,6 +808,7 @@ export function buildCanvasRecords(
           }
         }
         patch(id, updates)
+        if (op.w !== undefined || op.h !== undefined) rerouteArrows(id)
         actions.push(`updated ${op.id}`)
         break
       }
@@ -653,18 +821,16 @@ export function buildCanvasRecords(
         }
         softDelete(id)
         softDelete(labelId(id))
-        // Arrows pointing at a deleted shape keep their last geometry but
-        // drop the binding, so they stop tracking a ghost.
+        // Arrows to or from a deleted shape go with it: a line hanging in
+        // space toward a ghost reads as clutter, not information.
         for (const [otherId, entry] of working) {
           const other = liveElement(entry)
           if (!other || other.type !== "arrow") continue
           const start = other.startBinding as { elementId?: string } | null
           const end = other.endBinding as { elementId?: string } | null
           if (start?.elementId === id || end?.elementId === id) {
-            patch(otherId, {
-              startBinding: start?.elementId === id ? null : other.startBinding,
-              endBinding: end?.elementId === id ? null : other.endBinding,
-            })
+            softDelete(otherId)
+            softDelete(labelId(otherId))
           }
         }
         actions.push(`deleted ${op.id}`)
