@@ -148,6 +148,10 @@ export const participantMetaSchema = z.object({
   // in the registry — the only way the panel can show what they are.
   description: z.string().optional(),
   service: z.string().optional(),
+  // Broadcast so every participant can tell who holds host/moderator
+  // privileges — the token route's own isHost check, mirrored into public
+  // room metadata since only the holder otherwise knows.
+  isHost: z.boolean().optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
 
