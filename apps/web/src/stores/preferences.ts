@@ -97,6 +97,10 @@ export const [$joinCameraOff, setJoinCameraOff] = persistedBool(
   false,
 )
 
+/** Your own tile sits inside the main grid (podcast layout) instead of
+ * floating above it. */
+export const [$selfInGrid, setSelfInGrid] = persistedBool("selfInGrid", false)
+
 /** Join/leave chimes and the chat pop. */
 export const [$meetingSounds, setMeetingSounds] = persistedBool(
   "meetingSounds",

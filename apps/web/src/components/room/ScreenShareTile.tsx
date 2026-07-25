@@ -144,7 +144,7 @@ export function ScreenShareTile({ trackRef }: { trackRef: TrackReference }) {
         <VideoTrack trackRef={trackRef} className="size-full object-contain" />
       </div>
 
-      <span className="absolute bottom-2 left-2 badge badge-neutral badge-sm bg-base-100/80 text-base-content backdrop-blur">
+      <span className="absolute bottom-2 left-2 badge badge-sm bg-base-100/80 text-base-content backdrop-blur">
         {trackRef.participant.isLocal
           ? "You are presenting"
           : `${trackRef.participant.name || trackRef.participant.identity} is presenting`}

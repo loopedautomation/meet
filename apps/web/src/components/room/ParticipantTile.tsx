@@ -18,7 +18,7 @@ import {
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { ConnectionQuality, Track } from "livekit-client"
-import { Hand, MicOff } from "lucide-react"
+import { Crown, Hand, MicOff } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { AgentBadge, useAgentState } from "@/components/room/AgentBadge"
 import { AgentTileControls } from "@/components/room/AgentControls"
@@ -179,7 +179,10 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
       )}
 
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
-        <span className="badge badge-neutral badge-sm gap-1 bg-base-100/80 text-base-content backdrop-blur">
+        <span className="badge badge-sm gap-1 bg-base-100/80 text-base-content backdrop-blur">
+          {meta?.isHost && (
+            <Crown className="size-3 text-warning" aria-label="Host" />
+          )}
           {micMuted && <MicOff className="size-3 text-error" />}
           {participant.isLocal ? `${name} (you)` : name}
           {isAway && <span className="text-base-content/60">· away</span>}
