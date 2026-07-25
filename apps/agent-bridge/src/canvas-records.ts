@@ -116,6 +116,26 @@ function liveElement(entry: CanvasRecord | undefined): LooseElement | null {
 }
 
 /** Rough text metrics, good enough for labels the editor will re-measure. */
+/**
+ * Fold text into sticky-note-shaped lines. Static scenes render label text
+ * exactly as stored — Excalidraw only re-wraps container text during
+ * editing — so an unwrapped one-liner makes a metre-wide "sticky note".
+ */
+function wrapText(text: string, maxChars = 22): string {
+  const lines: string[] = []
+  let line = ""
+  for (const word of text.split(/\s+/)) {
+    if (line && line.length + 1 + word.length > maxChars) {
+      lines.push(line)
+      line = word
+    } else {
+      line = line ? `${line} ${word}` : word
+    }
+  }
+  if (line) lines.push(line)
+  return lines.join("\n")
+}
+
 function measure(text: string, fontSize: number) {
   const lines = text.split("\n")
   const longest = Math.max(...lines.map((l) => l.length), 1)
@@ -637,7 +657,8 @@ export function buildCanvasRecords(
       }
       case "note": {
         const id = resolveId(op.id)
-        const size = measure(op.text, 20)
+        const wrapped = wrapText(op.text)
+        const size = measure(wrapped, 20)
         const w = Math.max(size.width + 40, 180)
         const h = Math.max(size.height + 40, 100)
         const spot = placeCreate(working, id, op, w, h)
@@ -654,7 +675,7 @@ export function buildCanvasRecords(
           roundness: { type: 3 },
         }
         element.boundElements = [
-          putLabel(id, element, op.text, STROKE_COLORS.black),
+          putLabel(id, element, wrapped, STROKE_COLORS.black),
         ]
         put(id, element)
         if (spot.nudged) noteNudge(op.id, spot)

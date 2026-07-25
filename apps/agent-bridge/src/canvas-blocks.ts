@@ -60,17 +60,47 @@ export class CanvasBlockExtractor extends MarkerBlockExtractor {
 export function parseCanvasBlock(
   block: string,
 ): { ops: CanvasOp[] } | { error: string } {
-  let raw: unknown
-  try {
-    raw = JSON.parse(block)
-  } catch {
-    return { error: "The canvas block wasn't valid JSON." }
+  const attempt = (
+    text: string,
+  ): { value: unknown } | { failure: Error } => {
+    try {
+      return { value: JSON.parse(text) }
+    } catch (err) {
+      return { failure: err as Error }
+    }
+  }
+  let result = attempt(block)
+  if ("failure" in result) {
+    // Trailing commas are the most common model slip, and stripping one
+    // before a closing bracket can never change valid JSON's meaning.
+    result = attempt(block.replace(/,\s*([\]}])/g, "$1"))
+  }
+  if ("failure" in result) {
+    // Point at the breakage — "wasn't valid JSON" alone gives a retrying
+    // model nothing to change.
+    const at = /position (\d+)/.exec(result.failure.message)?.[1]
+    const pos = at ? Number(at) : null
+    const near =
+      pos !== null
+        ? ` near “…${block.slice(Math.max(0, pos - 20), pos + 20)}…”`
+        : ""
+    return {
+      error: `The canvas block wasn't valid JSON${near}. Send a JSON array of op objects.`,
+    }
+  }
+  let raw = result.value
+  // A single op object is unmistakable intent — accept it as a batch of one.
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && "op" in raw) {
+    raw = [raw]
   }
   const parsed = canvasOpBatchSchema.safeParse(raw)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
+    const hint = issue?.message.includes("<=50")
+      ? " Split large drawings into several blocks of at most 50 ops."
+      : ""
     return {
-      error: `The canvas block was invalid (${issue?.path.join(".")}: ${issue?.message}).`,
+      error: `The canvas block was invalid (${issue?.path.join(".")}: ${issue?.message}).${hint}`,
     }
   }
   return { ops: parsed.data }
