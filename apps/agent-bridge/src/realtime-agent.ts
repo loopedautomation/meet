@@ -933,7 +933,14 @@ export async function runRealtimeAgent(opts: {
           if (gated()) session.setGateOpen(false)
           callbacks.setState(state.muted ? "muted" : "listening")
         }, ZAP_WINDOW_MS)
-        session.say("Acknowledge in a few words that you're now listening in.")
+        // Acknowledge in chat, matching the pipeline path — not aloud. The
+        // spoken ack stuttered: say()'s #responding guard clears when
+        // generation ends (well before playback), so repeated zaps queued
+        // overlapping acks, and the just-opened gate's interrupt_response
+        // chopped whichever was playing on any room noise.
+        callbacks.publishChat(
+          "(You zapped me — I'm listening and will chime in for the next 30 seconds.)",
+        )
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
         // mute take effect audibly by cutting playback mid-word.
