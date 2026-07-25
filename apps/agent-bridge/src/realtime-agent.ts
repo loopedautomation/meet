@@ -162,7 +162,7 @@ export async function runRealtimeAgent(opts: {
    * decisions, since that provider's gate can't rely on its own STT.
    */
   onUtterance?: (
-    fn: (identity: string, name: string, text: string) => void,
+    fn: (identity: string, name: string, text: string, final: boolean) => void,
   ) => void
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
@@ -677,22 +677,51 @@ export async function runRealtimeAgent(opts: {
     }
     return false
   }
+  // Early mention firing: an interim transcript that already contains the
+  // agent's name arms the turn, and the local VAD's end-of-speech sends the
+  // buffered audio right away — skipping the transcriber's endpoint silence
+  // and its finalizer pass, the two big waits in gated mention latency. The
+  // matching final is then only deduped, not answered again.
+  let pendingMention = false
+  let earlyFiredAt = 0
   if (turnStream) {
     void (async () => {
       for await (const event of turnStream) {
         if (event.type !== VADEventType.END_OF_SPEECH) continue
-        if (!manualTurns() || !geminiSession?.gateOpen) continue
-        sendBufferedTurn()
+        if (!manualTurns()) continue
+        if (geminiSession?.gateOpen) {
+          sendBufferedTurn()
+          continue
+        }
+        if (pendingMention && (sessionOpts.gate?.mentionSpeaks?.() ?? true)) {
+          pendingMention = false
+          earlyFiredAt = Date.now()
+          sessionOpts.gate?.onDecision?.("(interim mention)", "speak")
+          sendBufferedTurn()
+        }
       }
     })()
   }
-  opts.onUtterance?.((identity, name, text) => {
+  opts.onUtterance?.((identity, name, text, final) => {
     if (!geminiSession || !manualTurns() || geminiSession.gateOpen) return
     // Other agents never grant this one the floor — agent-to-agent audio
     // loops would spiral, same rule as chat mentions.
     if (identity.startsWith("agent-")) return
     const gate = sessionOpts.gate
     if (!gate) return
+    if (!final) {
+      if (gate.mention.test(text)) pendingMention = true
+      return
+    }
+    // The turn is over — an armed mention that never fired (VAD end-of-speech
+    // beat the interim) is handled by the final below, not the next turn.
+    pendingMention = false
+    if (gate.mention.test(text) && Date.now() - earlyFiredAt < 5_000) {
+      // Already answered at end-of-speech; the final is just the polished
+      // text of the same turn.
+      earlyFiredAt = 0
+      return
+    }
     if (!gate.mention.test(text)) {
       gate.onDecision?.(text, "deliberate")
       geminiSession.notifyHeard(`[meeting audio] ${name}: ${text}`)
