@@ -194,7 +194,9 @@ export function toolDeclarations(
         "substance comes from here: use it for anything factual, anything " +
         "about systems, data, people, documents or past conversations, any " +
         "opinion on the work, and any action — even when you feel sure of " +
-        "the answer yourself. It takes seconds to minutes; say a few words " +
+        "the answer yourself. When in doubt whether something is within " +
+        "your abilities, call this instead of declining: it knows what it " +
+        "can do, you don't. It takes seconds to minutes; say a few words " +
         "first so the person knows you're on it. If it takes long, it " +
         "continues in the background and you'll receive a [task finished] " +
         "note — until then, keep conversing normally and never invent a " +
@@ -457,6 +459,11 @@ export class RealtimeSession implements VoiceSession {
     await this.#ready
   }
 
+  /** Accumulated transcription deltas per conversation item (gated only). */
+  #partialTranscripts = new Map<string, string>()
+  /** Items already answered from a delta; their completed event is a no-op. */
+  #earlyAnswered = new Set<string>()
+
   #handle(event: { type: string; [key: string]: unknown }) {
     switch (event.type) {
       case "response.output_audio.delta":
@@ -475,10 +482,41 @@ export class RealtimeSession implements VoiceSession {
         this.#responding = false
         this.#opts.onInterrupt()
         break
+      case "conversation.item.input_audio_transcription.delta": {
+        // Gated mode, the fast path: transcription streams in after the turn
+        // is committed, so the moment the partial text contains the agent's
+        // name the response can start — no need to wait for the completed
+        // event, which trails by the rest of the transcription pass.
+        const gate = this.#opts.gate
+        if (!gate || this.#gateOpen) break
+        const item = String(event.item_id ?? "")
+        const partial =
+          (this.#partialTranscripts.get(item) ?? "") + String(event.delta ?? "")
+        this.#partialTranscripts.set(item, partial)
+        if (this.#earlyAnswered.has(item) || this.#responding) break
+        if (!gate.mention.test(partial)) break
+        // Raise-hand policy keeps the slow path: the hand-raise decision
+        // wants the full transcript, and nothing audible is waiting on it.
+        if (!(gate.mentionSpeaks?.() ?? true)) break
+        this.#earlyAnswered.add(item)
+        gate.onDecision?.(partial, "speak")
+        this.#send({ type: "response.create" })
+        break
+      }
+      case "conversation.item.input_audio_transcription.failed": {
+        const item = String(event.item_id ?? "")
+        this.#partialTranscripts.delete(item)
+        this.#earlyAnswered.delete(item)
+        break
+      }
       case "conversation.item.input_audio_transcription.completed": {
         // Gated mode: a turn just finished. Addressed by name → speak.
         // Otherwise run a silent deliberation; a RAISE_HAND answer surfaces
         // as the hand-raised badge for a human to act on.
+        const item = String(event.item_id ?? "")
+        const early = this.#earlyAnswered.delete(item)
+        this.#partialTranscripts.delete(item)
+        if (early) break
         const gate = this.#opts.gate
         if (!gate || this.#gateOpen) break
         const transcript = String(event.transcript ?? "")

@@ -1045,15 +1045,27 @@ export function escapeRegExp(text: string): string {
 }
 
 /**
- * Does `text` contain a chat @mention of `name`? Whitespace inside the name
- * is matched loosely (the picker inserts "@Full Name" verbatim, but humans
- * retype it with whatever spacing), and the name must end at a word
- * boundary so "@Scout" doesn't hit "@Scouting".
+ * Does `text` contain a chat mention of `name`? Matching is deliberately
+ * looser than the picker's "@Full Name": a missed mention means the agent
+ * silently never replies, which reads as broken. Accepted forms:
+ * - "@" + any leading run of the name's words ("@Scout" for "Scout Team"),
+ *   with whatever spacing, tolerating a plural s ("@Scouts") — but still
+ *   ending at a word boundary so "@Scout" doesn't hit "@Scouting".
+ * - The full name opening the message with an optional greeting
+ *   ("scout, can you…", "hey Scout Team —"): a direct address in chat,
+ *   the way it would be aloud.
  */
 export function mentionsName(text: string, name: string): boolean {
   const parts = name.trim().split(/\s+/).filter(Boolean).map(escapeRegExp)
   if (parts.length === 0) return false
-  return new RegExp(`@${parts.join("\\s+")}(?![\\w-])`, "i").test(text)
+  const prefixes = parts
+    .map((_, i) => parts.slice(0, i + 1).join("\\s+"))
+    .join("|")
+  if (new RegExp(`@(?:${prefixes})s?(?![\\w-])`, "i").test(text)) return true
+  return new RegExp(
+    `^\\s*(?:(?:hey|hi|hello|ok|okay|yo)[\\s,]+)?${parts.join("\\s+")}s?(?:[\\s,:;.!?-]|$)`,
+    "i",
+  ).test(text)
 }
 
 /**

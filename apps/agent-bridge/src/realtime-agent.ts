@@ -69,7 +69,14 @@ const instructions = (
       "capabilities live behind your do_task tool — offer them and use " +
       "them when they're relevant, and answer questions about what you " +
       "can do from this description rather than describing yourself as a " +
-      "general meeting assistant. "
+      "general meeting assistant. The description tells you WHAT you can " +
+      "do, not where: if it mentions channels, triggers or interfaces " +
+      "(Telegram, email, webhooks, schedules), those are just other doors " +
+      "to the same abilities — this meeting is one more door. A request " +
+      "made here by voice or chat deserves the same work as one arriving " +
+      "through any channel named there; never tell someone to contact you " +
+      "elsewhere or say a request must come through a particular channel. " +
+      "Perform it via do_task. "
     : "") +
   "You are the agent's voice, not its mind: your " +
   "knowledge, memory, tools and permissions live behind the do_task tool, " +
@@ -79,7 +86,14 @@ const instructions = (
   "any action goes through do_task, even when you feel sure of the answer. " +
   "You handle only the conversational surface yourself: greetings, brief " +
   "acknowledgments, a clarifying question when a request is ambiguous, and " +
-  "faithfully relaying results without adding facts of your own. If a task " +
+  "faithfully relaying results without adding facts of your own. " +
+  "Never claim you can't do something or lack access to something without " +
+  "having tried: your real abilities are whatever do_task can reach, and " +
+  "you cannot see their full extent from here. When asked whether you can " +
+  "do something, or to do something that sounds outside this meeting — " +
+  "files, systems, messages, code, anything — attempt it through do_task " +
+  "and let the result speak; only relay an inability do_task itself " +
+  "reported. If a task " +
   "fails or your tools are unreachable, say so plainly rather than " +
   "improvising an answer. A task is you doing the work — speak about it in " +
   "the first person ('I'll look that up', 'I've filed it'), never as " +
@@ -162,7 +176,7 @@ export async function runRealtimeAgent(opts: {
    * decisions, since that provider's gate can't rely on its own STT.
    */
   onUtterance?: (
-    fn: (identity: string, name: string, text: string) => void,
+    fn: (identity: string, name: string, text: string, final: boolean) => void,
   ) => void
   /** Meeting context (roster, prior transcript) folded into instructions. */
   context?: string
@@ -677,22 +691,51 @@ export async function runRealtimeAgent(opts: {
     }
     return false
   }
+  // Early mention firing: an interim transcript that already contains the
+  // agent's name arms the turn, and the local VAD's end-of-speech sends the
+  // buffered audio right away — skipping the transcriber's endpoint silence
+  // and its finalizer pass, the two big waits in gated mention latency. The
+  // matching final is then only deduped, not answered again.
+  let pendingMention = false
+  let earlyFiredAt = 0
   if (turnStream) {
     void (async () => {
       for await (const event of turnStream) {
         if (event.type !== VADEventType.END_OF_SPEECH) continue
-        if (!manualTurns() || !geminiSession?.gateOpen) continue
-        sendBufferedTurn()
+        if (!manualTurns()) continue
+        if (geminiSession?.gateOpen) {
+          sendBufferedTurn()
+          continue
+        }
+        if (pendingMention && (sessionOpts.gate?.mentionSpeaks?.() ?? true)) {
+          pendingMention = false
+          earlyFiredAt = Date.now()
+          sessionOpts.gate?.onDecision?.("(interim mention)", "speak")
+          sendBufferedTurn()
+        }
       }
     })()
   }
-  opts.onUtterance?.((identity, name, text) => {
+  opts.onUtterance?.((identity, name, text, final) => {
     if (!geminiSession || !manualTurns() || geminiSession.gateOpen) return
     // Other agents never grant this one the floor — agent-to-agent audio
     // loops would spiral, same rule as chat mentions.
     if (identity.startsWith("agent-")) return
     const gate = sessionOpts.gate
     if (!gate) return
+    if (!final) {
+      if (gate.mention.test(text)) pendingMention = true
+      return
+    }
+    // The turn is over — an armed mention that never fired (VAD end-of-speech
+    // beat the interim) is handled by the final below, not the next turn.
+    pendingMention = false
+    if (gate.mention.test(text) && Date.now() - earlyFiredAt < 5_000) {
+      // Already answered at end-of-speech; the final is just the polished
+      // text of the same turn.
+      earlyFiredAt = 0
+      return
+    }
     if (!gate.mention.test(text)) {
       gate.onDecision?.(text, "deliberate")
       geminiSession.notifyHeard(`[meeting audio] ${name}: ${text}`)
@@ -926,18 +969,21 @@ export async function runRealtimeAgent(opts: {
         zapTimer = setTimeout(() => {
           zapTimer = null
           zappedUntil = 0
-          if (gated()) {
-            session.setGateOpen(false)
-          } else {
-            // Open-policy agents have no gate to fall back to — mute them.
-            state.muted = true
-            hardCut()
-            callbacks.setState("muted")
-            return
-          }
+          // Back to the agent's own policy: gated agents re-gate, open ones
+          // just keep listening (matching the pipeline path). Muting is a
+          // human's call — an agent that mutes itself when the window ends
+          // looks like it randomly went silent mid-meeting.
+          if (gated()) session.setGateOpen(false)
           callbacks.setState(state.muted ? "muted" : "listening")
         }, ZAP_WINDOW_MS)
-        session.say("Acknowledge in a few words that you're now listening in.")
+        // Acknowledge in chat, matching the pipeline path — not aloud. The
+        // spoken ack stuttered: say()'s #responding guard clears when
+        // generation ends (well before playback), so repeated zaps queued
+        // overlapping acks, and the just-opened gate's interrupt_response
+        // chopped whichever was playing on any room noise.
+        callbacks.publishChat(
+          "(You zapped me — I'm listening and will chime in for the next 30 seconds.)",
+        )
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
         // mute take effect audibly by cutting playback mid-word.

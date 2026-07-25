@@ -951,7 +951,9 @@ export default defineAgent({
               ? "(I've drawn on the whiteboard.)"
               : opsApplied || leave
                 ? null
-                : null
+                : // A mention must never vanish into silence: an empty brain
+                  // reply with no side effects still posts something.
+                  "(I don't have anything useful to reply with — try rephrasing?)"
         if (posted) publishChat(posted)
         if (leave) void leaveMeeting()
         return posted
@@ -991,6 +993,7 @@ export default defineAgent({
         identity: string,
         name: string,
         text: string,
+        final: boolean,
       ) => void)[] = []
       ctx.room.registerTextStreamHandler(
         TRANSCRIPTION_TOPIC,
@@ -999,16 +1002,19 @@ export default defineAgent({
             try {
               if (info.identity === `agent-${entry.id}`) return
               const attrs = reader.info.attributes
-              if (attrs?.["lk.transcription_final"] !== "true") return
+              // Interim segments flow through too (flagged): a gated Gemini
+              // agent uses them to spot a mention before the transcriber's
+              // endpoint silence + finalizer pass land the polished final.
+              const final = attrs?.["lk.transcription_final"] === "true"
               const text = (await reader.readAll()).trim()
               if (!text) return
               const speaker = [...ctx.room.remoteParticipants.values()].find(
                 (p) => p.identity === info.identity,
               )
               const name = speaker?.name || info.identity
-              pushBounded(heardSince, `${name}: ${text}`)
+              if (final) pushBounded(heardSince, `${name}: ${text}`)
               for (const listener of utteranceListeners) {
-                listener(info.identity, name, text)
+                listener(info.identity, name, text, final)
               }
             } catch {
               // stream aborted mid-read; nothing to record

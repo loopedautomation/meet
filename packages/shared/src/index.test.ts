@@ -411,7 +411,25 @@ describe("mentionsName", () => {
   it("matches multi-word names with flexible spacing", () => {
     expect(mentionsName("@Scout Team ship it", "Scout Team")).toBe(true)
     expect(mentionsName("@scout   team ship it", "Scout Team")).toBe(true)
-    expect(mentionsName("@scout ship it", "Scout Team")).toBe(false)
+  })
+
+  it("matches a leading run of a multi-word name, but not later words", () => {
+    expect(mentionsName("@scout ship it", "Scout Team")).toBe(true)
+    expect(mentionsName("@team ship it", "Scout Team")).toBe(false)
+  })
+
+  it("tolerates a plural s", () => {
+    expect(mentionsName("@scouts assemble", "Scout")).toBe(true)
+    expect(mentionsName("@Scouting report", "Scout")).toBe(false)
+  })
+
+  it("matches the name opening the message without an @", () => {
+    expect(mentionsName("scout, what's the agenda?", "Scout")).toBe(true)
+    expect(mentionsName("hey Scout can you check", "Scout")).toBe(true)
+    expect(mentionsName("Scout Team: ship it", "Scout Team")).toBe(true)
+    expect(mentionsName("scout", "Scout")).toBe(true)
+    // Mid-sentence bare names are not an address.
+    expect(mentionsName("I think scout should do it", "Scout")).toBe(false)
   })
 
   it("survives regex metacharacters in the name", () => {
