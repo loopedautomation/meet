@@ -816,7 +816,17 @@ export function buildCanvasRecords(
           } else {
             const label = liveElement(working.get(labelId(id)))
             if (label) {
-              patch(labelId(id), { text, originalText: text })
+              // Re-measure and re-center: static scenes render the stored
+              // box exactly, so longer text in the old box comes out clipped.
+              const size = measure(text, (label.fontSize as number) ?? 20)
+              patch(labelId(id), {
+                text,
+                originalText: text,
+                width: size.width,
+                height: size.height,
+                x: centerOf(element).x - size.width / 2,
+                y: centerOf(element).y - size.height / 2,
+              })
             } else {
               const bindings = Array.isArray(element.boundElements)
                 ? (element.boundElements as { type: string; id: string }[])
