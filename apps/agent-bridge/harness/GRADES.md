@@ -62,3 +62,12 @@ Joined room 0378190182 in Chrome (media-less host), injected
 01-flowchart-ops through POST /rooms/:room/canvas/diff via harness/inject.ts,
 opened the whiteboard: renders identically to the offline viewer. Full
 parity between harness scenes and the real meeting board.
+
+## Cycle 3 — sequential drawing (the reported regressions)
+
+Fixes: re-creating an existing id without coords replaces IN PLACE (was:
+nudged away from itself → read as a duplicate); re-creates carry bound
+arrows and re-route them; re-create without a label removes the ghost
+label; second coordinate-free batch placed clear of the first (unit-tested
+no-overlap + fixture 11); restyle-by-redraw changes colors/fill/labels
+(fixture 12). 169 tests green.

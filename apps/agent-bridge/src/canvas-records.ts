@@ -598,7 +598,14 @@ export function buildCanvasRecords(
       case "ellipse": {
         const id = resolveId(op.id)
         const color = STROKE_COLORS[op.color ?? "black"]
-        const spot = placeCreate(working, id, op, op.w, op.h)
+        // Re-creating an existing id is an edit, not a new shape: keep its
+        // spot (unless coords say otherwise) or the placer nudges it away
+        // from itself and the "changed" shape appears to duplicate.
+        const existing = liveElement(working.get(id))
+        const spot =
+          existing && op.x === undefined && op.y === undefined
+            ? { x: existing.x as number, y: existing.y as number }
+            : placeCreate(working, id, op, op.w, op.h)
         const element: LooseElement = {
           ...baseElement(id, at),
           type: op.op === "rect" ? "rectangle" : "ellipse",
@@ -614,13 +621,24 @@ export function buildCanvasRecords(
           fillStyle: op.fill === "semi" ? "hachure" : "solid",
           roundness: op.op === "rect" ? { type: 3 } : null,
         }
+        // Arrows bound to the old incarnation must survive the redraw, or
+        // the editor stops re-routing them when this shape moves later.
+        const carried = Array.isArray(existing?.boundElements)
+          ? (existing.boundElements as { type: string; id: string }[]).filter(
+              (b) => b.type === "arrow",
+            )
+          : []
+        const bound: { type: string; id: string }[] = [...carried]
         if (op.label) {
-          element.boundElements = [
-            putLabel(id, element, op.label, STROKE_COLORS.black),
-          ]
+          bound.push(putLabel(id, element, op.label, STROKE_COLORS.black))
+        } else if (existing && liveElement(working.get(labelId(id)))) {
+          // Redrawn without a label: the old one must not linger as a ghost.
+          softDelete(labelId(id))
         }
+        element.boundElements = bound.length ? bound : null
         put(id, element)
-        if (spot.nudged) noteNudge(op.id, spot)
+        if (existing) rerouteArrows(id)
+        if ("nudged" in spot && spot.nudged) noteNudge(op.id, spot)
         actions.push(
           `${op.op}${op.label ? ` "${op.label}"` : ""} (id ${op.id}) at ${atSpot(spot)}`,
         )
@@ -630,7 +648,11 @@ export function buildCanvasRecords(
         const id = resolveId(op.id)
         const fontSize = FONT_SIZES[op.size ?? "m"]
         const size = measure(op.text, fontSize)
-        const spot = placeCreate(working, id, op, size.width, size.height)
+        const existingText = liveElement(working.get(id))
+        const spot =
+          existingText && op.x === undefined && op.y === undefined
+            ? { x: existingText.x as number, y: existingText.y as number }
+            : placeCreate(working, id, op, size.width, size.height)
         put(id, {
           ...baseElement(id, at),
           type: "text",
@@ -649,7 +671,7 @@ export function buildCanvasRecords(
           autoResize: true,
           lineHeight: 1.25,
         })
-        if (spot.nudged) noteNudge(op.id, spot)
+        if ("nudged" in spot && spot.nudged) noteNudge(op.id, spot)
         actions.push(
           `text "${truncate(op.text, 30)}" (id ${op.id}) at ${atSpot(spot)}`,
         )
@@ -661,7 +683,13 @@ export function buildCanvasRecords(
         const size = measure(wrapped, 20)
         const w = Math.max(size.width + 40, 180)
         const h = Math.max(size.height + 40, 100)
-        const spot = placeCreate(working, id, op, w, h)
+        // Same replace-in-place rule as rect/ellipse: a re-created note is
+        // an edit, not a second sticky on top of the first.
+        const existingNote = liveElement(working.get(id))
+        const spot =
+          existingNote && op.x === undefined && op.y === undefined
+            ? { x: existingNote.x as number, y: existingNote.y as number }
+            : placeCreate(working, id, op, w, h)
         const element: LooseElement = {
           ...baseElement(id, at),
           type: "rectangle",
@@ -678,7 +706,8 @@ export function buildCanvasRecords(
           putLabel(id, element, wrapped, STROKE_COLORS.black),
         ]
         put(id, element)
-        if (spot.nudged) noteNudge(op.id, spot)
+        if (existingNote) rerouteArrows(id)
+        if ("nudged" in spot && spot.nudged) noteNudge(op.id, spot)
         actions.push(
           `note "${truncate(op.text, 30)}" (id ${op.id}) at ${atSpot(spot)}`,
         )

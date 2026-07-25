@@ -1,0 +1,15 @@
+{
+  "note": "Two separate coordinate-free connected batches drawn in sequence — the 'subsequent drawings overlap' regression. Watch: second graph lands clear of the first.",
+  "steps": [
+    [
+      { "op": "rect", "id": "u1", "w": 160, "h": 80, "label": "Login", "color": "blue" },
+      { "op": "rect", "id": "u2", "w": 160, "h": 80, "label": "Dashboard", "color": "blue" },
+      { "op": "arrow", "id": "uf", "from": "u1", "to": "u2" }
+    ],
+    [
+      { "op": "rect", "id": "d1", "w": 160, "h": 80, "label": "Extract", "color": "green" },
+      { "op": "rect", "id": "d2", "w": 160, "h": 80, "label": "Load", "color": "green" },
+      { "op": "arrow", "id": "df", "from": "d1", "to": "d2" }
+    ]
+  ]
+}

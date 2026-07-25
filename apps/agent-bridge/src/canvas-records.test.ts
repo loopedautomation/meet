@@ -514,3 +514,87 @@ describe("describeCanvas", () => {
     expect(description).toContain("…(truncated)")
   })
 })
+
+describe("sequential drawing", () => {
+  it("re-creating an id without coords replaces in place, not beside itself", () => {
+    const first = build([
+      { op: "rect", id: "api", x: 200, y: 100, w: 160, h: 80, label: "API", color: "blue" },
+    ])
+    const second = build(
+      [{ op: "rect", id: "api", w: 160, h: 80, label: "API v2", color: "red" }],
+      first.changes,
+    )
+    expect(second.warnings).toEqual([])
+    const rect = elementOf(second.changes, "agent-api")
+    expect(rect.x).toBe(200)
+    expect(rect.y).toBe(100)
+    expect(rect.strokeColor).toBe("#e03131")
+    const label = elementOf(second.changes, "agent-api-label")
+    expect(label.text).toBe("API v2")
+  })
+
+  it("a re-created shape keeps its bound arrows and re-routes them", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
+      { op: "rect", id: "b", x: 300, y: 0, w: 100, h: 80 },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [{ op: "rect", id: "b", x: 300, y: 300, w: 100, h: 80, color: "green" }],
+      first.changes,
+    )
+    const b = elementOf(second.changes, "agent-b")
+    const bindings = b.boundElements as { id: string }[]
+    expect(bindings.some((x) => x.id === "agent-ab")).toBe(true)
+    const arrow = elementOf(second.changes, "agent-ab")
+    const points = arrow.points as [number, number][]
+    const endY = (arrow.y as number) + points[points.length - 1][1]
+    expect(endY).toBeGreaterThan(80)
+  })
+
+  it("re-creating without a label removes the old label", () => {
+    const first = build([
+      { op: "rect", id: "api", x: 0, y: 0, w: 160, h: 80, label: "API" },
+    ])
+    const second = build(
+      [{ op: "rect", id: "api", w: 160, h: 80 }],
+      first.changes,
+    )
+    const label = elementOf(second.changes, "agent-api-label")
+    expect(label.isDeleted).toBe(true)
+  })
+
+  it("a second coordinate-free batch avoids the first batch's shapes", () => {
+    const first = build([
+      { op: "rect", id: "a", w: 160, h: 80, label: "A" },
+      { op: "rect", id: "b", w: 160, h: 80, label: "B" },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [
+        { op: "rect", id: "c", w: 160, h: 80, label: "C" },
+        { op: "rect", id: "d", w: 160, h: 80, label: "D" },
+        { op: "arrow", id: "cd", from: "c", to: "d" },
+      ],
+      first.changes,
+    )
+    const boxes = (records: typeof first.changes) =>
+      records
+        .filter((r) => r.record && (r.record as { type?: string }).type === "rectangle")
+        .map((r) => {
+          const el = r.record as { x: number; y: number; width: number; height: number }
+          return { x: el.x, y: el.y, w: el.width, h: el.height }
+        })
+    const olds = boxes(first.changes)
+    for (const fresh of boxes(second.changes)) {
+      for (const old of olds) {
+        const overlaps =
+          fresh.x < old.x + old.w &&
+          old.x < fresh.x + fresh.w &&
+          fresh.y < old.y + old.h &&
+          old.y < fresh.y + fresh.h
+        expect(overlaps).toBe(false)
+      }
+    }
+  })
+})
