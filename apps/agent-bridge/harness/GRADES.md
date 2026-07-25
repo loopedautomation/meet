@@ -71,3 +71,12 @@ arrows and re-route them; re-create without a label removes the ghost
 label; second coordinate-free batch placed clear of the first (unit-tested
 no-overlap + fixture 11); restyle-by-redraw changes colors/fill/labels
 (fixture 12). 169 tests green.
+
+## Cycle 4 — manual-level styling controls
+
+New op vocabulary (schema + builder + protocol note): fill textures
+(semi=hachure, hatch=cross-hatch, none clears), stroke styles
+(solid/dashed/dotted), stroke widths (thin/medium/bold), update can
+restyle/refill/resize anything in place (labels re-center after resize,
+arrows re-route), move accepts relative dx/dy nudges. Fixture 13 renders
+all of it correctly. 174 bridge + 70 shared tests green.

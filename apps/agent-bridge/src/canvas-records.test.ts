@@ -598,3 +598,70 @@ describe("sequential drawing", () => {
     }
   })
 })
+
+describe("styling controls", () => {
+  it("applies fill textures, stroke style and width on create", () => {
+    const { changes } = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80, color: "blue", fill: "hatch", stroke: "dashed", strokeWidth: "bold" },
+    ])
+    const rect = elementOf(changes, "agent-a")
+    expect(rect.fillStyle).toBe("cross-hatch")
+    expect(rect.strokeStyle).toBe("dashed")
+    expect(rect.strokeWidth).toBe(4)
+  })
+
+  it("update restyles fill/stroke and can unfill", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
+    ])
+    const second = build(
+      [{ op: "update", id: "a", fill: "semi", color: "green", stroke: "dotted", strokeWidth: "thin" }],
+      first.changes,
+    )
+    const rect = elementOf(second.changes, "agent-a")
+    expect(rect.fillStyle).toBe("hachure")
+    expect(rect.backgroundColor).not.toBe("transparent")
+    expect(rect.strokeStyle).toBe("dotted")
+    expect(rect.strokeWidth).toBe(1)
+    const third = build([{ op: "update", id: "a", fill: "none" }], second.changes)
+    expect(elementOf(third.changes, "agent-a").backgroundColor).toBe("transparent")
+  })
+
+  it("update recenters the label after a resize", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80, label: "A" },
+    ])
+    const second = build(
+      [{ op: "update", id: "a", w: 300, h: 200 }],
+      first.changes,
+    )
+    const label = elementOf(second.changes, "agent-a-label")
+    const cx = (label.x as number) + (label.width as number) / 2
+    expect(Math.abs(cx - 150)).toBeLessThan(1)
+  })
+
+  it("update changes an arrow's color", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
+      { op: "rect", id: "b", x: 300, y: 0, w: 100, h: 80 },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [{ op: "update", id: "ab", color: "red" }],
+      first.changes,
+    )
+    expect(elementOf(second.changes, "agent-ab").strokeColor).toBe("#e03131")
+  })
+
+  it("move accepts relative dx/dy and warns on a no-op move", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 100, y: 100, w: 100, h: 80 },
+    ])
+    const second = build([{ op: "move", id: "a", dx: -40, dy: 25 }], first.changes)
+    const rect = elementOf(second.changes, "agent-a")
+    expect(rect.x).toBe(60)
+    expect(rect.y).toBe(125)
+    const third = build([{ op: "move", id: "a" }], second.changes)
+    expect(third.warnings.some((w) => w.includes("dx/dy"))).toBe(true)
+  })
+})

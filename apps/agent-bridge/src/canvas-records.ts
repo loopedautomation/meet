@@ -80,6 +80,35 @@ function rand(): number {
 }
 
 /** Every field Excalidraw persists on all element types. */
+/** Op style enums → Excalidraw element fields. */
+const FILL_STYLES: Record<string, string> = {
+  semi: "hachure",
+  solid: "solid",
+  hatch: "cross-hatch",
+}
+const STROKE_STYLES: Record<string, string> = {
+  solid: "solid",
+  dashed: "dashed",
+  dotted: "dotted",
+}
+const STROKE_WIDTHS: Record<string, number> = {
+  thin: 1,
+  medium: 2,
+  bold: 4,
+}
+
+/** The shared style fields a create or update op may carry. */
+function styleFields(op: {
+  fill?: "none" | "semi" | "solid" | "hatch"
+  stroke?: "solid" | "dashed" | "dotted"
+  strokeWidth?: "thin" | "medium" | "bold"
+}): LooseElement {
+  const fields: LooseElement = {}
+  if (op.stroke) fields.strokeStyle = STROKE_STYLES[op.stroke]
+  if (op.strokeWidth) fields.strokeWidth = STROKE_WIDTHS[op.strokeWidth]
+  return fields
+}
+
 function baseElement(id: string, at: number): LooseElement {
   return {
     id,
@@ -618,8 +647,10 @@ export function buildCanvasRecords(
             op.fill && op.fill !== "none"
               ? BACKGROUND_COLORS[op.color ?? "blue"]
               : "transparent",
-          fillStyle: op.fill === "semi" ? "hachure" : "solid",
+          fillStyle:
+            op.fill && op.fill !== "none" ? FILL_STYLES[op.fill] : "solid",
           roundness: op.op === "rect" ? { type: 3 } : null,
+          ...styleFields(op),
         }
         // Arrows bound to the old incarnation must survive the redraw, or
         // the editor stops re-routing them when this shape moves later.
@@ -806,9 +837,25 @@ export function buildCanvasRecords(
           warnings.push(`move: no shape with id ${op.id}.`)
           break
         }
-        const dx = op.x - (element.x as number)
-        const dy = op.y - (element.y as number)
-        patch(id, { x: op.x, y: op.y })
+        // Absolute x/y wins; otherwise dx/dy nudges relative to where the
+        // shape sits — "move it a bit left" without knowing coordinates.
+        const targetX =
+          op.x !== undefined && op.y !== undefined
+            ? op.x
+            : (element.x as number) + (op.dx ?? 0)
+        const targetY =
+          op.x !== undefined && op.y !== undefined
+            ? op.y
+            : (element.y as number) + (op.dy ?? 0)
+        if (targetX === element.x && targetY === element.y) {
+          warnings.push(
+            `move "${op.id}": give x+y (absolute) or dx/dy (relative).`,
+          )
+          break
+        }
+        const dx = targetX - (element.x as number)
+        const dy = targetY - (element.y as number)
+        patch(id, { x: targetX, y: targetY })
         // The bound label keeps its own coordinates, so it rides along.
         const label = liveElement(working.get(labelId(id)))
         if (label) {
@@ -818,7 +865,7 @@ export function buildCanvasRecords(
           })
         }
         rerouteArrows(id)
-        actions.push(`moved ${op.id} to ${atSpot(op)}`)
+        actions.push(`moved ${op.id} to ${atSpot({ x: targetX, y: targetY })}`)
         break
       }
       case "update": {
@@ -828,11 +875,23 @@ export function buildCanvasRecords(
           warnings.push(`update: no shape with id ${op.id}.`)
           break
         }
-        const updates: LooseElement = {}
+        const updates: LooseElement = styleFields(op)
         if (op.color) {
           updates.strokeColor = STROKE_COLORS[op.color]
           if (element.backgroundColor !== "transparent") {
             updates.backgroundColor = BACKGROUND_COLORS[op.color]
+          }
+        }
+        if (op.fill) {
+          if (op.fill === "none") {
+            updates.backgroundColor = "transparent"
+          } else {
+            updates.fillStyle = FILL_STYLES[op.fill]
+            if (element.backgroundColor === "transparent") {
+              // Filling an unfilled shape needs a color to fill with.
+              updates.backgroundColor =
+                BACKGROUND_COLORS[op.color ?? "blue"]
+            }
           }
         }
         if (op.w !== undefined) updates.width = op.w
@@ -868,7 +927,19 @@ export function buildCanvasRecords(
           }
         }
         patch(id, updates)
-        if (op.w !== undefined || op.h !== undefined) rerouteArrows(id)
+        if (op.w !== undefined || op.h !== undefined) {
+          rerouteArrows(id)
+          // A resize moves the shape's center; its label must follow or it
+          // sits off-center in the new box.
+          const resized = liveElement(working.get(id))
+          const label = liveElement(working.get(labelId(id)))
+          if (resized && label) {
+            patch(labelId(id), {
+              x: centerOf(resized).x - ((label.width as number) ?? 0) / 2,
+              y: centerOf(resized).y - ((label.height as number) ?? 0) / 2,
+            })
+          }
+        }
         actions.push(`updated ${op.id}`)
         break
       }

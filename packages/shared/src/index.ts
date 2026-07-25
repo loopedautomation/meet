@@ -872,7 +872,10 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     h: z.number().positive(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
-    fill: z.enum(["none", "semi", "solid"]).optional(),
+    /** Background texture: semi = hachure lines, hatch = cross-hatch. */
+    fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
+    stroke: z.enum(["solid", "dashed", "dotted"]).optional(),
+    strokeWidth: z.enum(["thin", "medium", "bold"]).optional(),
   }),
   z.object({
     op: z.literal("ellipse"),
@@ -883,7 +886,9 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     h: z.number().positive(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
-    fill: z.enum(["none", "semi", "solid"]).optional(),
+    fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
+    stroke: z.enum(["solid", "dashed", "dotted"]).optional(),
+    strokeWidth: z.enum(["thin", "medium", "bold"]).optional(),
   }),
   z.object({
     op: z.literal("text"),
@@ -925,11 +930,16 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     points: z.array(canvasPointSchema).min(2),
     color: canvasColorSchema.optional(),
   }),
+  // Absolute x/y, or relative dx/dy for "nudge it a bit" adjustments.
+  // (A move with neither is warned about at build time, not schema time —
+  // refine() members don't compose with discriminatedUnion.)
   z.object({
     op: z.literal("move"),
     id: z.string().min(1),
-    x: z.number(),
-    y: z.number(),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    dx: z.number().optional(),
+    dy: z.number().optional(),
   }),
   z.object({
     op: z.literal("update"),
@@ -939,6 +949,9 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     color: canvasColorSchema.optional(),
     w: z.number().positive().optional(),
     h: z.number().positive().optional(),
+    fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
+    stroke: z.enum(["solid", "dashed", "dotted"]).optional(),
+    strokeWidth: z.enum(["thin", "medium", "bold"]).optional(),
   }),
   z.object({
     op: z.literal("delete"),

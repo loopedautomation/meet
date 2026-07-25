@@ -24,11 +24,15 @@ export const CANVAS_PROTOCOL_NOTE =
   `containing only ${CANVAS_BLOCK_OPEN} and a line containing only ` +
   `${CANVAS_BLOCK_CLOSE} anywhere in your reply. Operations (applied in ` +
   'order): {"op":"rect"|"ellipse","id","x","y","w","h","label?","color?",' +
-  '"fill?":"none"|"semi"|"solid"}, {"op":"text","id","x","y","text",' +
+  '"fill?":"none"|"semi"|"solid"|"hatch","stroke?":"solid"|"dashed"|' +
+  '"dotted","strokeWidth?":"thin"|"medium"|"bold"}, ' +
+  '{"op":"text","id","x","y","text",' +
   '"size?":"s"|"m"|"l"|"xl"}, {"op":"note","id","x","y","text","color?"}, ' +
   '{"op":"arrow","id","from?","to?","label?"} (from/to are shape ids), ' +
-  '{"op":"move","id","x","y"}, {"op":"update","id","label?","text?",' +
-  '"color?","w?","h?"}, {"op":"delete","id"}, {"op":"clear"}, ' +
+  '{"op":"move","id","x","y"} or {"op":"move","id","dx","dy"} (relative ' +
+  'nudge), {"op":"update","id","label?","text?",' +
+  '"color?","w?","h?","fill?","stroke?","strokeWidth?"} (restyle or ' +
+  'resize anything in place), {"op":"delete","id"}, {"op":"clear"}, ' +
   '{"op":"diagram","id","mermaid"} (Mermaid source — PREFER this for any ' +
   "boxes-and-arrows structure: flowcharts render with full Mermaid fidelity " +
   "(subgraphs, diamonds, all node shapes), sequence and class diagrams " +
