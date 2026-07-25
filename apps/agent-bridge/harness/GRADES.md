@@ -47,3 +47,18 @@ touching the deleted shape.
 Remaining (cycle 2 targets): verify 07 move/delete visually; 02 mixed batch
 (title/note placement relative to graph block); lenient parsing for 90/91;
 sticky-note default width (05).
+
+## Cycle 2 — leniency, note wrapping, label re-measure
+
+- 90 (single object) and 91 (trailing comma) now draw; JSON errors point at
+  the breakage; oversize errors suggest splitting.
+- 05: notes wrap to sticky shape, columns no longer collide (P4 A- L5 S4).
+- 07: move re-routes the arrow to Gamma's new spot; delete removes Alpha and
+  its arrow; relabeled shapes re-measure so text isn't clipped (P4 A4 L4).
+
+## Tier 2 — live-call validation
+
+Joined room 0378190182 in Chrome (media-less host), injected
+01-flowchart-ops through POST /rooms/:room/canvas/diff via harness/inject.ts,
+opened the whiteboard: renders identically to the offline viewer. Full
+parity between harness scenes and the real meeting board.
