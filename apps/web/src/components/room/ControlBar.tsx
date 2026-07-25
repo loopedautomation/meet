@@ -30,6 +30,7 @@ import {
   MicOff,
   MonitorUp,
   PenLine,
+  PictureInPicture2,
   ScrollText,
   Settings,
   Users,
@@ -51,6 +52,7 @@ import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
 import { $docOnStage, $openPanel, togglePanel } from "@/stores/panels"
+import { $pipWindow, closePip, openPip } from "@/stores/pip"
 import {
   $autoDataSaver,
   $meetingSounds,
@@ -103,6 +105,18 @@ export function ControlBar({
 
   // Keep the chosen mic/camera pinned against OS auto-switching on hot-plug.
   useStickyDevices()
+
+  // Document PiP is offered only while sharing (its whole point is seeing
+  // the others on a single screen) and only where the API exists. Detected
+  // in an effect: the server renders no button, so hydration matches.
+  const pipWindow = useStore($pipWindow)
+  const [pipSupported, setPipSupported] = useState(false)
+  useEffect(() => {
+    setPipSupported("documentPictureInPicture" in window)
+  }, [])
+  useEffect(() => {
+    if (!isScreenShareEnabled) closePip()
+  }, [isScreenShareEnabled])
 
   // Publish the camera orientation so every client renders this feed the
   // same way — the track itself is untouched, viewers apply CSS.
@@ -304,6 +318,35 @@ export function ControlBar({
             <MonitorUp className="size-5" />
           </button>
         </div>
+        {isScreenShareEnabled && pipSupported && (
+          <div
+            className="tooltip tooltip-bottom"
+            data-tip={
+              pipWindow
+                ? "Close the participant pop-out"
+                : "Pop out participants"
+            }
+          >
+            <button
+              type="button"
+              className={`btn btn-circle ${pipWindow ? "btn-primary" : "btn-neutral"}`}
+              onClick={() => {
+                if (pipWindow) {
+                  closePip()
+                } else {
+                  openPip().catch((err: unknown) => {
+                    const detail =
+                      err instanceof Error ? err.message : "unknown error"
+                    toast.error(`Could not open the pop-out: ${detail}`)
+                  })
+                }
+              }}
+              aria-label="Pop out participants"
+            >
+              <PictureInPicture2 className="size-5" />
+            </button>
+          </div>
+        )}
         <div
           className="tooltip tooltip-bottom"
           data-tip={handRaised ? "Lower hand" : "Raise hand"}
