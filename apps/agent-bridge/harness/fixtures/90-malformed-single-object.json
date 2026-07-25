@@ -1,0 +1,4 @@
+{
+  "note": "Dumb-model input: a single op object instead of an array. Today this is rejected — does the error prose tell the model exactly what to change?",
+  "block": "{ \"op\": \"rect\", \"id\": \"solo\", \"w\": 160, \"h\": 80, \"label\": \"Lonely\" }"
+}

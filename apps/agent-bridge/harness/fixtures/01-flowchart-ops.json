@@ -1,0 +1,12 @@
+{
+  "note": "Coordinate-free boxed flow: the auto-placer owns the entire layout. Watch: cluster coherence, arrow directions, spacing.",
+  "ops": [
+    { "op": "rect", "id": "client", "w": 180, "h": 80, "label": "Client", "color": "blue" },
+    { "op": "rect", "id": "api", "w": 180, "h": 80, "label": "API Gateway", "color": "blue" },
+    { "op": "rect", "id": "auth", "w": 180, "h": 80, "label": "Auth Service", "color": "green" },
+    { "op": "rect", "id": "db", "w": 180, "h": 80, "label": "Postgres", "color": "grey" },
+    { "op": "arrow", "id": "a1", "from": "client", "to": "api", "label": "HTTPS" },
+    { "op": "arrow", "id": "a2", "from": "api", "to": "auth", "label": "verify" },
+    { "op": "arrow", "id": "a3", "from": "api", "to": "db", "label": "query" }
+  ]
+}

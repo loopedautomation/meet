@@ -1,0 +1,6 @@
+{
+  "note": "Mermaid via the offline dagre fallback. Watch: node sizing vs label length, edge label placement, rank spacing.",
+  "ops": [
+    { "op": "diagram", "id": "flow", "mermaid": "flowchart TD\n  U[User speaks] --> STT[Transcriber]\n  STT --> GATE{Mentioned?}\n  GATE -->|yes| BRAIN[Brain turn]\n  GATE -->|no| CTX[Context only]\n  BRAIN --> TTS[Voice reply]\n  TTS --> ROOM[Room audio]" }
+  ]
+}

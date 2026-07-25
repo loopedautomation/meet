@@ -1,0 +1,6 @@
+{
+  "note": "LR graph with a back-edge cycle. Watch: back-edge waypoint routing, crossings.",
+  "ops": [
+    { "op": "diagram", "id": "loop", "mermaid": "graph LR\n  A[Draw] --> B[Screenshot]\n  B --> C[Grade]\n  C --> D[Fix layout]\n  D --> A" }
+  ]
+}

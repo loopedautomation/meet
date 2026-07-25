@@ -1,0 +1,19 @@
+{
+  "note": "Three sequential batches on one board: create, then move+recolor+relabel, then delete one shape. Watch: arrows stay bound after moves, deletions unbind cleanly.",
+  "steps": [
+    [
+      { "op": "rect", "id": "a", "w": 160, "h": 80, "label": "Alpha", "color": "blue" },
+      { "op": "rect", "id": "b", "w": 160, "h": 80, "label": "Beta", "color": "blue" },
+      { "op": "rect", "id": "c", "w": 160, "h": 80, "label": "Gamma", "color": "blue" },
+      { "op": "arrow", "id": "ab", "from": "a", "to": "b" },
+      { "op": "arrow", "id": "bc", "from": "b", "to": "c" }
+    ],
+    [
+      { "op": "move", "id": "c", "x": 700, "y": 420 },
+      { "op": "update", "id": "b", "label": "Beta v2", "color": "orange" }
+    ],
+    [
+      { "op": "delete", "id": "a" }
+    ]
+  ]
+}

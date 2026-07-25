@@ -1,0 +1,7 @@
+{
+  "note": "Arrow referencing a shape id that doesn't exist. Watch: warning quality, is anything still drawn.",
+  "ops": [
+    { "op": "rect", "id": "real", "w": 160, "h": 80, "label": "Real" },
+    { "op": "arrow", "id": "bad", "from": "real", "to": "ghost", "label": "to nowhere" }
+  ]
+}
