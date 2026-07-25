@@ -543,6 +543,13 @@ const server = new AgentServer(
     // process holds the VAD model in memory.
     numIdleProcesses: 1,
     requestFunc: acceptRequest,
+    // Runner init loads VAD/inference models; under CPU pressure the SDK's
+    // 10s default expires and the supervisor respawns forever, and each
+    // failed spawn adds load — a death spiral observed in production.
+    initializeProcessTimeout: 30_000,
+    // A leaking job gets recycled instead of starving the host. Losing one
+    // agent from one room beats every runner on the box failing to boot.
+    jobMemoryLimitMB: 2_000,
     wsURL: LIVEKIT_URL,
     apiKey: process.env.LIVEKIT_API_KEY,
     apiSecret: process.env.LIVEKIT_API_SECRET,
@@ -570,6 +577,12 @@ if (process.env.TRANSCRIBER_ENABLED !== "false") {
       // start costs a few seconds of transcript at the top of a meeting and
       // saves ~1 GB of idle memory.
       numIdleProcesses: 0,
+      // Cold starts load the ASR + denoiser + finalizer models each time;
+      // give them headroom beyond the SDK's 10s default (see above).
+      initializeProcessTimeout: 30_000,
+      // The transcriber redispatches automatically, so recycling a leaking
+      // job costs seconds of transcript, not the meeting.
+      jobMemoryLimitMB: 2_000,
       wsURL: LIVEKIT_URL,
       apiKey: process.env.LIVEKIT_API_KEY,
       apiSecret: process.env.LIVEKIT_API_SECRET,
