@@ -74,8 +74,17 @@ const harness = async (policy: TurnPolicy) => {
   if (!ws) throw new Error("no socket")
   const receive = (event: Frame) =>
     ws.onmessage?.({ data: JSON.stringify(event) })
-  const responsesCreated = () => ws.sent.filter((f) => f.type === "response.create")
-  return { session, state, ws, receive, responsesCreated, onHandRaise, decisions }
+  const responsesCreated = () =>
+    ws.sent.filter((f) => f.type === "response.create")
+  return {
+    session,
+    state,
+    ws,
+    receive,
+    responsesCreated,
+    onHandRaise,
+    decisions,
+  }
 }
 
 const completedTurn = (transcript: string, item = "item-1"): Frame => ({
@@ -94,7 +103,9 @@ describe("RealtimeSession wire-level gating", () => {
   it("gated session opens with create_response disabled — the model physically cannot start audio", async () => {
     const { ws } = await harness("on-mention")
     const setup = ws.sent.find((f) => f.type === "session.update") as Frame & {
-      session: { audio: { input: { turn_detection: { create_response: boolean } } } }
+      session: {
+        audio: { input: { turn_detection: { create_response: boolean } } }
+      }
     }
     expect(setup.session.audio.input.turn_detection.create_response).toBe(false)
   })
@@ -105,7 +116,8 @@ describe("RealtimeSession wire-level gating", () => {
     const created = responsesCreated()
     expect(created).toHaveLength(1)
     expect(
-      (created[0].response as { output_modalities: string[] }).output_modalities,
+      (created[0].response as { output_modalities: string[] })
+        .output_modalities,
     ).toEqual(["text"])
   })
 
@@ -162,7 +174,9 @@ describe("RealtimeSession wire-level gating", () => {
     session.setGateOpen(true)
     const updates = ws.sent.filter((f) => f.type === "session.update")
     const last = updates.at(-1) as Frame & {
-      session: { audio: { input: { turn_detection: { create_response: boolean } } } }
+      session: {
+        audio: { input: { turn_detection: { create_response: boolean } } }
+      }
     }
     expect(last.session.audio.input.turn_detection.create_response).toBe(true)
   })

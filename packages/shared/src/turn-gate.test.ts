@@ -78,9 +78,9 @@ describe("decideTurn: voice", () => {
       })
     })
     it("call-on grants the floor", () => {
-      expect(
-        turn({ policy: "raise-hand", callOnPending: true }),
-      ).toMatchObject({ action: "speak", via: "call-on", consumeCallOn: true })
+      expect(turn({ policy: "raise-hand", callOnPending: true })).toMatchObject(
+        { action: "speak", via: "call-on", consumeCallOn: true },
+      )
     })
     it("zap outranks the mention rule (explicit human summons), one-shot", () => {
       expect(
@@ -143,9 +143,9 @@ describe("decideTurn: chat", () => {
       }
     })
     it("muted or deafened fall back to chat", () => {
-      expect(chat({ policy: "open", speakRequested: true, muted: true })).toEqual(
-        { action: "reply-in-chat" },
-      )
+      expect(
+        chat({ policy: "open", speakRequested: true, muted: true }),
+      ).toEqual({ action: "reply-in-chat" })
       expect(
         chat({ policy: "open", speakRequested: true, deafened: true }),
       ).toEqual({ action: "reply-in-chat" })
@@ -163,16 +163,20 @@ describe("zap window semantics", () => {
   it("one-shot: consuming the zap re-gates the very next turn", () => {
     // Simulates the caller contract: speak-via-zap → zappedUntil = 0.
     const first = turn({ policy: "raise-hand", zapped: true })
-    expect(first).toMatchObject({ action: "speak", via: "zap", consumeZap: true })
+    expect(first).toMatchObject({
+      action: "speak",
+      via: "zap",
+      consumeZap: true,
+    })
     const next = turn({ policy: "raise-hand", zapped: false })
     expect(next).toEqual({ action: "deliberate", mayChat: true })
   })
 
   it("policy flip mid-zap: caller clears zappedUntil, so no leak", () => {
     // set-turn-policy clears the window; the decision sees zapped: false.
-    expect(turn({ policy: "raise-hand", zapped: false, mentioned: true })).toEqual(
-      { action: "raise-hand" },
-    )
+    expect(
+      turn({ policy: "raise-hand", zapped: false, mentioned: true }),
+    ).toEqual({ action: "raise-hand" })
   })
 })
 

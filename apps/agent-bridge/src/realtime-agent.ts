@@ -510,7 +510,11 @@ export async function runRealtimeAgent(opts: {
   let zapTimer: ReturnType<typeof setTimeout> | null = null
   /** What "at rest" looks like right now: zapped during a zap window. */
   const idleState = () =>
-    state.muted ? "muted" : zapActive(state.zappedUntil) ? "zapped" : "listening"
+    state.muted
+      ? "muted"
+      : zapActive(state.zappedUntil)
+        ? "zapped"
+        : "listening"
   /** The policy decision for a voice turn, over live session state. */
   const decideVoice = (mentioned: boolean) =>
     decideTurn({

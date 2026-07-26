@@ -92,7 +92,12 @@ describe("Gemini manual-turn gate", () => {
       h.gate.onEndOfSpeech()
       expect(h.deps.sendBufferedTurn).toHaveBeenCalledOnce()
       h.tick(1_000)
-      h.gate.onUtterance("user-1", "Sam", "Hey Scout, can you check staging?", true)
+      h.gate.onUtterance(
+        "user-1",
+        "Sam",
+        "Hey Scout, can you check staging?",
+        true,
+      )
       expect(h.audioPaths()).toBe(1) // deduped, not answered twice
     })
 

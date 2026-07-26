@@ -89,14 +89,29 @@ export function decideTurn(input: TurnGateInput): TurnGateDecision {
     }
   }
   if (input.callOnPending) {
-    return { action: "speak", via: "call-on", consumeCallOn: true, consumeZap: false }
+    return {
+      action: "speak",
+      via: "call-on",
+      consumeCallOn: true,
+      consumeZap: false,
+    }
   }
   if (input.zapped) {
-    return { action: "speak", via: "zap", consumeCallOn: false, consumeZap: true }
+    return {
+      action: "speak",
+      via: "zap",
+      consumeCallOn: false,
+      consumeZap: true,
+    }
   }
   if (input.mentioned) {
     if (input.policy === "raise-hand") return { action: "raise-hand" }
-    return { action: "speak", via: "mention", consumeCallOn: false, consumeZap: false }
+    return {
+      action: "speak",
+      via: "mention",
+      consumeCallOn: false,
+      consumeZap: false,
+    }
   }
   return { action: "deliberate", mayChat: true }
 }

@@ -24,7 +24,10 @@ export type GeminiGateDeps = {
   /** Out-of-band silent deliberation; resolves with the model's verdict. */
   deliberate: (line: string) => Promise<"pass" | "raise-hand">
   onHandRaise: () => void
-  onDecision?: (transcript: string, decision: TurnGateDecision["action"]) => void
+  onDecision?: (
+    transcript: string,
+    decision: TurnGateDecision["action"],
+  ) => void
   /** A deliberation finished without raising the hand (badge restore). */
   onDeliberateDone?: () => void
   now?: () => number
@@ -75,7 +78,10 @@ export function createGeminiGate(deps: GeminiGateDeps) {
       // The turn is over — an armed mention that never fired (VAD
       // end-of-speech beat the interim) is handled by this final.
       pendingMention = false
-      if (deps.mention.test(text) && now() - earlyFiredAt < EARLY_FIRE_DEDUPE_MS) {
+      if (
+        deps.mention.test(text) &&
+        now() - earlyFiredAt < EARLY_FIRE_DEDUPE_MS
+      ) {
         // Already answered at end-of-speech; the final is just the polished
         // text of the same turn.
         earlyFiredAt = 0

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { GeminiLiveSession } from "./gemini-live-session.js"
 import type { RealtimeSessionOptions } from "./realtime-session.js"
 
+// biome-ignore lint/suspicious/noExplicitAny: free-form wire frames under test
 type Frame = Record<string, any>
 
 class FakeWebSocket {
