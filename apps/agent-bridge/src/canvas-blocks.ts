@@ -64,9 +64,7 @@ export class CanvasBlockExtractor extends MarkerBlockExtractor {
 export function parseCanvasBlock(
   block: string,
 ): { ops: CanvasOp[] } | { error: string } {
-  const attempt = (
-    text: string,
-  ): { value: unknown } | { failure: Error } => {
+  const attempt = (text: string): { value: unknown } | { failure: Error } => {
     try {
       return { value: JSON.parse(text) }
     } catch (err) {

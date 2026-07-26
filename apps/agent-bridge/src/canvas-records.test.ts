@@ -155,7 +155,10 @@ describe("buildCanvasRecords", () => {
       { op: "rect", id: "b", x: 300, y: 0, w: 100, h: 80 },
       { op: "arrow", id: "ab", from: "a", to: "b" },
     ])
-    const second = build([{ op: "move", id: "b", x: 300, y: 400 }], first.changes)
+    const second = build(
+      [{ op: "move", id: "b", x: 300, y: 400 }],
+      first.changes,
+    )
     const arrow = elementOf(second.changes, "agent-ab")
     const points = arrow.points as [number, number][]
     const endY = (arrow.y as number) + points[points.length - 1][1]
@@ -518,7 +521,16 @@ describe("describeCanvas", () => {
 describe("sequential drawing", () => {
   it("re-creating an id without coords replaces in place, not beside itself", () => {
     const first = build([
-      { op: "rect", id: "api", x: 200, y: 100, w: 160, h: 80, label: "API", color: "blue" },
+      {
+        op: "rect",
+        id: "api",
+        x: 200,
+        y: 100,
+        w: 160,
+        h: 80,
+        label: "API",
+        color: "blue",
+      },
     ])
     const second = build(
       [{ op: "rect", id: "api", w: 160, h: 80, label: "API v2", color: "red" }],
@@ -580,9 +592,17 @@ describe("sequential drawing", () => {
     )
     const boxes = (records: typeof first.changes) =>
       records
-        .filter((r) => r.record && (r.record as { type?: string }).type === "rectangle")
+        .filter(
+          (r) =>
+            r.record && (r.record as { type?: string }).type === "rectangle",
+        )
         .map((r) => {
-          const el = r.record as { x: number; y: number; width: number; height: number }
+          const el = r.record as {
+            x: number
+            y: number
+            width: number
+            height: number
+          }
           return { x: el.x, y: el.y, w: el.width, h: el.height }
         })
     const olds = boxes(first.changes)
@@ -602,7 +622,18 @@ describe("sequential drawing", () => {
 describe("styling controls", () => {
   it("applies fill textures, stroke style and width on create", () => {
     const { changes } = build([
-      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80, color: "blue", fill: "hatch", stroke: "dashed", strokeWidth: "bold" },
+      {
+        op: "rect",
+        id: "a",
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 80,
+        color: "blue",
+        fill: "hatch",
+        stroke: "dashed",
+        strokeWidth: "bold",
+      },
     ])
     const rect = elementOf(changes, "agent-a")
     expect(rect.fillStyle).toBe("cross-hatch")
@@ -611,11 +642,18 @@ describe("styling controls", () => {
   })
 
   it("update restyles fill/stroke and can unfill", () => {
-    const first = build([
-      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
-    ])
+    const first = build([{ op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 }])
     const second = build(
-      [{ op: "update", id: "a", fill: "semi", color: "green", stroke: "dotted", strokeWidth: "thin" }],
+      [
+        {
+          op: "update",
+          id: "a",
+          fill: "semi",
+          color: "green",
+          stroke: "dotted",
+          strokeWidth: "thin",
+        },
+      ],
       first.changes,
     )
     const rect = elementOf(second.changes, "agent-a")
@@ -623,8 +661,13 @@ describe("styling controls", () => {
     expect(rect.backgroundColor).not.toBe("transparent")
     expect(rect.strokeStyle).toBe("dotted")
     expect(rect.strokeWidth).toBe(1)
-    const third = build([{ op: "update", id: "a", fill: "none" }], second.changes)
-    expect(elementOf(third.changes, "agent-a").backgroundColor).toBe("transparent")
+    const third = build(
+      [{ op: "update", id: "a", fill: "none" }],
+      second.changes,
+    )
+    expect(elementOf(third.changes, "agent-a").backgroundColor).toBe(
+      "transparent",
+    )
   })
 
   it("update recenters the label after a resize", () => {
@@ -657,7 +700,10 @@ describe("styling controls", () => {
     const first = build([
       { op: "rect", id: "a", x: 100, y: 100, w: 100, h: 80 },
     ])
-    const second = build([{ op: "move", id: "a", dx: -40, dy: 25 }], first.changes)
+    const second = build(
+      [{ op: "move", id: "a", dx: -40, dy: 25 }],
+      first.changes,
+    )
     const rect = elementOf(second.changes, "agent-a")
     expect(rect.x).toBe(60)
     expect(rect.y).toBe(125)

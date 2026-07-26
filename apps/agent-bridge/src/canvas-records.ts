@@ -407,13 +407,9 @@ export function buildCanvasRecords(
       const minX = Math.min(...nodes.map((n) => n.x))
       const minY = Math.min(...nodes.map((n) => n.y))
       const bboxW =
-        Math.max(
-          ...nodes.map((n) => n.x + connectable.get(n.nodeId)!.w),
-        ) - minX
+        Math.max(...nodes.map((n) => n.x + connectable.get(n.nodeId)!.w)) - minX
       const bboxH =
-        Math.max(
-          ...nodes.map((n) => n.y + connectable.get(n.nodeId)!.h),
-        ) - minY
+        Math.max(...nodes.map((n) => n.y + connectable.get(n.nodeId)!.h)) - minY
       const spot = placeCreate(working, "batch", {}, bboxW, bboxH)
       const placed = new Map(
         nodes.map((n) => [
@@ -547,7 +543,9 @@ export function buildCanvasRecords(
     toPoint: { x: number; y: number } | undefined,
     via: { x: number; y: number }[],
   ) => {
-    const roughStart = fromShape ? centerOf(fromShape) : (fromPoint ?? { x: 0, y: 0 })
+    const roughStart = fromShape
+      ? centerOf(fromShape)
+      : (fromPoint ?? { x: 0, y: 0 })
     const roughEnd = toShape
       ? centerOf(toShape)
       : (toPoint ?? { x: roughStart.x + 100, y: roughStart.y })
@@ -889,8 +887,7 @@ export function buildCanvasRecords(
             updates.fillStyle = FILL_STYLES[op.fill]
             if (element.backgroundColor === "transparent") {
               // Filling an unfilled shape needs a color to fill with.
-              updates.backgroundColor =
-                BACKGROUND_COLORS[op.color ?? "blue"]
+              updates.backgroundColor = BACKGROUND_COLORS[op.color ?? "blue"]
             }
           }
         }
