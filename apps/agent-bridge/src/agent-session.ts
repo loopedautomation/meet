@@ -3,8 +3,10 @@ import { type ChatContext, type llm, voice } from "@livekit/agents"
 import {
   type AgentActivityEvent,
   type AgentState,
+  decideTurn,
   spokenMentionRegExp,
   type TurnPolicy,
+  zapActive,
 } from "@meet/shared"
 import { CanvasBlockExtractor } from "./canvas-blocks.js"
 import { DocBlockExtractor, extractLeaveMarker } from "./doc-blocks.js"
@@ -109,31 +111,39 @@ export class LoopedVoiceAgent extends voice.Agent {
     const callbacks = this.#callbacks
     const brain = this.#brain
 
-    // Gated turn policies: stay quiet unless addressed by name or a
-    // participant called on the agent. "raise-hand" additionally raises a
-    // hand so a host can call on it; "on-mention" stays silent.
+    // Turn gating lives in one shared decision function (see turn-gate.ts):
+    // this path only gathers inputs, applies the decision, and consumes the
+    // one-shot grants it names.
+    const decision = decideTurn({
+      policy: state.turnPolicy,
+      channel: "voice",
+      mentioned: spokenMentionRegExp(entry.name).test(input),
+      zapped: zapActive(state.zappedUntil),
+      callOnPending: state.callOnPending,
+      muted: state.muted,
+      deafened: state.deafened,
+    })
     let calledOn = false
-    if (state.turnPolicy !== "open") {
-      const zapped = Date.now() < state.zappedUntil
-      const mentioned = spokenMentionRegExp(entry.name).test(input)
-      // "raise-hand" is strict: even a name mention only raises the hand —
-      // the floor is granted exclusively by call-on (zap still bypasses,
-      // it's an explicit host action).
-      const addressed =
-        state.turnPolicy === "raise-hand" ? zapped : mentioned || zapped
-      if (!addressed && !state.callOnPending) {
-        if (
-          state.turnPolicy === "raise-hand" &&
-          !state.muted &&
-          !state.deafened
-        ) {
-          callbacks.setState("hand-raised")
+    switch (decision.action) {
+      case "speak":
+        if (decision.consumeCallOn) {
+          calledOn = true
+          state.callOnPending = false
         }
+        // Zap is a one-shot grant: the floor is given for this turn only,
+        // then the agent returns to its gated policy.
+        if (decision.consumeZap) state.zappedUntil = 0
+        if (state.turnPolicy !== "open") {
+          callbacks.setState(state.muted ? "muted" : "thinking")
+        }
+        break
+      case "raise-hand":
+        if (!state.muted && !state.deafened) callbacks.setState("hand-raised")
         return null
-      }
-      calledOn = state.callOnPending
-      state.callOnPending = false
-      callbacks.setState(state.muted ? "muted" : "thinking")
+      default:
+        // "deliberate" has no silent side-channel on the pipeline path (the
+        // brain is the only model), so unaddressed turns simply pass.
+        return null
     }
 
     let text = input
