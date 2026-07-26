@@ -3,6 +3,8 @@ import { z } from "zod"
 
 export { Y }
 
+export * from "./turn-gate.js"
+
 /** Data-channel topics used across web and agent-bridge. */
 export const DataTopic = {
   AgentActivity: "agent-activity",
@@ -133,8 +135,12 @@ export const agentStateSchema = z.enum([
   // The agent has something to contribute but its turn policy keeps it
   // quiet until a participant calls on it.
   "hand-raised",
-  // Zapped: temporarily responding to everything, no mention needed.
+  // Zapped: a one-shot grant — the agent answers the next turn as if it
+  // had been mentioned, then returns to its policy.
   "zapped",
+  // A gated agent silently weighing an unaddressed turn: it may raise its
+  // hand or drop a chat aside. Visible so gated agents never look inert.
+  "deliberating",
 ])
 export type AgentState = z.infer<typeof agentStateSchema>
 

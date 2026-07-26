@@ -29,6 +29,7 @@ import {
   chatMessageSchema,
   chunkCanvasChanges,
   DataTopic,
+  decideTurn,
   type DocPresence,
   docCursorColor,
   docSyncMessageSchema,
@@ -38,6 +39,7 @@ import {
   type ParticipantMeta,
   parseParticipantMeta,
   readSharedDoc,
+  requestsSpeech,
   type SharedDoc,
   setSharedDocText,
   TRANSCRIPTION_TOPIC,
@@ -1070,6 +1072,15 @@ export default defineAgent({
             publishPolicy()
             return
           }
+          if (control.type === "zap") {
+            // realtime-agent.ts owns the zap behavior and state badge; this
+            // handler (which runs first) applies the flag side of the zap —
+            // an explicit summons unmutes and undeafens — and publishes it.
+            sessionState.muted = false
+            sessionState.deafened = false
+            publishFlags()
+            return
+          }
           if (control.type === "mute") sessionState.muted = true
           else if (control.type === "unmute") sessionState.muted = false
           else if (control.type === "deafen") sessionState.deafened = true
@@ -1280,6 +1291,14 @@ export default defineAgent({
             }
           } else if (control.type === "set-turn-policy" && control.policy) {
             sessionState.turnPolicy = control.policy
+            // A policy change ends any zap window: the human just redefined
+            // how this agent takes turns, so a stale grant must not leak
+            // through the new policy.
+            sessionState.zappedUntil = 0
+            if (zapTimer) {
+              clearTimeout(zapTimer)
+              zapTimer = null
+            }
             publishPolicy()
           } else if (
             control.type === "set-barge-in" &&
@@ -1298,10 +1317,16 @@ export default defineAgent({
               })
               .catch(() => undefined)
           } else if (control.type === "zap") {
-            // Wake the agent: unmuted and answering every turn for the zap
-            // window, then back to its usual policy. "zapped" is the visible
-            // cue, and a timer clears it so the badge matches the window.
+            // Zap = "I addressed you directly — why aren't you answering?"
+            // It grants the floor for the NEXT completed turn (one-shot,
+            // consumed by llmNode via decideTurn), with the window only a
+            // deadline. As an explicit summons it overrides mute and deafen.
             sessionState.muted = false
+            if (sessionState.deafened) {
+              sessionState.deafened = false
+              session.input.setAudioEnabled(true)
+              sessionState.notifyUndeafened = true
+            }
             sessionState.zappedUntil = Date.now() + ZAP_WINDOW_MS
             setState("zapped")
             if (zapTimer) clearTimeout(zapTimer)
@@ -1312,12 +1337,15 @@ export default defineAgent({
                 setState("listening")
               }
             }, ZAP_WINDOW_MS)
+            publishFlags()
             publishChat(
-              "(You zapped me — I'm listening and will chime in for the next 30 seconds.)",
+              "(You zapped me — I'm listening, go ahead and I'll answer your next turn.)",
             )
           } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
             sessionState.notifiedMuted = false
+            // An explicit mute overrides any pending zap grant.
+            sessionState.zappedUntil = 0
             session.interrupt()
             setState("muted")
           } else if (control.type === "unmute" && sessionState.muted) {
@@ -1325,6 +1353,8 @@ export default defineAgent({
             setState("listening")
           } else if (control.type === "deafen" && !sessionState.deafened) {
             sessionState.deafened = true
+            // An explicit deafen overrides any pending zap grant.
+            sessionState.zappedUntil = 0
             session.input.setAudioEnabled(false)
             setState("deafened")
             publishChat(
@@ -1350,12 +1380,48 @@ export default defineAgent({
           // Attribution from the actual LiveKit sender, not payload claims.
           if (!sender || sender.identity.startsWith("agent-")) return
           const senderName = sender.name || sender.identity
-          if (!mentionsName(message.text, entry.name)) {
+          const decision = decideTurn({
+            policy: sessionState.turnPolicy,
+            channel: "chat",
+            mentioned: mentionsName(message.text, entry.name),
+            speakRequested: requestsSpeech(message.text),
+            zapped: false,
+            callOnPending: false,
+            muted: sessionState.muted,
+            deafened: sessionState.deafened,
+          })
+          if (decision.action === "ignore") {
             // Not for us directly — queue as context for the next turn.
             chatSince.push(`${senderName}: ${message.text}`)
             return
           }
-          console.log(`[${entry.id}] chat mention from ${senderName}`)
+          console.log(
+            `[${entry.id}] chat mention from ${senderName} → ${decision.action}`,
+          )
+          if (decision.action === "raise-hand") {
+            // Asked to speak while under raise-hand: the floor still comes
+            // only from call-on. Put the hand up and say so in chat.
+            setState("hand-raised")
+            publishChat(
+              "(I'm in raise-hand mode — my hand is up; call on me to answer aloud.)",
+            )
+            return
+          }
+          if (decision.action === "speak") {
+            // Answer aloud: run the chat line through the normal voice turn
+            // so the reply is spoken, prefaced as a response to the chat.
+            try {
+              session.generateReply({
+                userInput:
+                  `[${senderName} addressed you in the meeting chat — answer ALOUD, ` +
+                  `briefly noting you're responding to their chat message] ` +
+                  `${senderName}: ${message.text}`,
+              })
+              return
+            } catch {
+              // Voice turn unavailable (e.g. session draining): chat fallback.
+            }
+          }
           void replyInChat({ ...message, fromName: senderName })
         } catch {
           // ignore malformed chat messages

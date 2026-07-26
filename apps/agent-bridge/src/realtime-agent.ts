@@ -17,8 +17,11 @@ import {
   type ChatMessage,
   chatMessageSchema,
   DataTopic,
+  decideTurn,
   mentionsName,
+  requestsSpeech,
   spokenMentionRegExp,
+  zapActive,
 } from "@meet/shared"
 import type { BridgeCallbacks, SessionState } from "./agent-session.js"
 import {
@@ -501,11 +504,28 @@ export async function runRealtimeAgent(opts: {
   // flip mid-call; `gate` below is installed once and consults it each turn.
   const gated = () => state.turnPolicy !== "open"
   let handRaised = false
+  // Zap state lives on the shared SessionState (single source of truth with
+  // the worker's control handler); only the expiry timer is local.
   let zapTimer: ReturnType<typeof setTimeout> | null = null
-  let zappedUntil = 0
   /** What "at rest" looks like right now: zapped during a zap window. */
   const idleState = () =>
-    state.muted ? "muted" : Date.now() < zappedUntil ? "zapped" : "listening"
+    state.muted ? "muted" : zapActive(state.zappedUntil) ? "zapped" : "listening"
+  /** The policy decision for a voice turn, over live session state. */
+  const decideVoice = (mentioned: boolean) =>
+    decideTurn({
+      policy: state.turnPolicy,
+      channel: "voice",
+      mentioned,
+      zapped: zapActive(state.zappedUntil),
+      callOnPending: false,
+      muted: state.muted,
+      deafened: state.deafened,
+    })
+
+  // The gate's open/closed truth, recomputed from policy + zap window in one
+  // place. Assigned once the session exists; declared here so the option
+  // callbacks below can close over it.
+  let applyGate: () => void = () => {}
 
   const sessionOpts: RealtimeSessionOptions = {
     model: realtime.model,
@@ -552,9 +572,9 @@ export async function runRealtimeAgent(opts: {
       // Loose matching: STT renders the name with possessives,
       // punctuation or spacing of its own ("Scout's", "scout?", "r2 d2").
       mention: spokenMentionRegExp(entry.name),
-      // Under raise-hand, a mention only raises the hand; the floor is
-      // granted exclusively by call-on.
-      mentionSpeaks: () => state.turnPolicy !== "raise-hand",
+      // The shared turn-policy decision (decideTurn), closed over live
+      // session state — the session executes actions, never decides them.
+      decide: decideVoice,
       onHandRaise: () => {
         // Strict on-mention keeps the hand down — silence is the point.
         if (state.turnPolicy !== "raise-hand") return
@@ -566,6 +586,12 @@ export async function runRealtimeAgent(opts: {
       // transcript say?
       onDecision: (transcript, decision) => {
         debug("info", `gate ${decision}: "${transcript.slice(0, 200)}"`)
+        // A silent deliberation is invisible without this: the badge shows
+        // the agent is weighing whether to raise its hand or drop a chat
+        // aside; onIdle restores the resting state when it completes.
+        if (decision === "deliberate" && !state.muted && !handRaised) {
+          callbacks.setState("deliberating")
+        }
       },
     },
     onAudio: (pcm) => {
@@ -579,6 +605,16 @@ export async function runRealtimeAgent(opts: {
     onSpeaking: () => {
       idleGen++
       handRaised = false
+      // One-shot zap: the granted turn is being spoken — consume the window
+      // now so the very next turn is gated again.
+      if (gated() && zapActive(state.zappedUntil)) {
+        state.zappedUntil = 0
+        if (zapTimer) {
+          clearTimeout(zapTimer)
+          zapTimer = null
+        }
+        applyGate()
+      }
       if (!state.muted) callbacks.setState("speaking")
     },
     onIdle: () => {
@@ -615,7 +651,9 @@ export async function runRealtimeAgent(opts: {
   if (!session.live) throw new Error("realtime session failed to open")
   // The gate is always installed; an "open" policy simply leaves it lifted,
   // so the host can switch policies mid-call without reopening the session.
-  session.setGateOpen(!gated())
+  applyGate = () =>
+    session.setGateOpen(!gated() || zapActive(state.zappedUntil))
+  applyGate()
 
   // ---- inbound audio: room -> session, mixing all human mics --------------
   // Each subscribed mic gets its own resampled-to-24k stream feeding a FIFO;
@@ -707,7 +745,7 @@ export async function runRealtimeAgent(opts: {
           sendBufferedTurn()
           continue
         }
-        if (pendingMention && (sessionOpts.gate?.mentionSpeaks?.() ?? true)) {
+        if (pendingMention && decideVoice(true).action === "speak") {
           pendingMention = false
           earlyFiredAt = Date.now()
           sessionOpts.gate?.onDecision?.("(interim mention)", "speak")
@@ -724,7 +762,11 @@ export async function runRealtimeAgent(opts: {
     const gate = sessionOpts.gate
     if (!gate) return
     if (!final) {
-      if (gate.mention.test(text)) pendingMention = true
+      // Arm the early path only when a mention would actually speak — under
+      // raise-hand it wouldn't, and the final below raises the hand instead.
+      if (gate.mention.test(text) && decideVoice(true).action === "speak") {
+        pendingMention = true
+      }
       return
     }
     // The turn is over — an armed mention that never fired (VAD end-of-speech
@@ -736,28 +778,31 @@ export async function runRealtimeAgent(opts: {
       earlyFiredAt = 0
       return
     }
-    if (!gate.mention.test(text)) {
-      gate.onDecision?.(text, "deliberate")
-      geminiSession.notifyHeard(`[meeting audio] ${name}: ${text}`)
-      // Same silent deliberation OpenAI runs on unaddressed turns: the
-      // agent can raise its hand (or drop a chat aside) without being
-      // named — otherwise a gated Gemini agent can never self-initiate.
-      void geminiSession.deliberate(`${name}: ${text}`).then((decision) => {
-        if (decision === "raise-hand") gate.onHandRaise()
-      })
-      return
-    }
-    const speaks = gate.mentionSpeaks?.() ?? true
-    if (!speaks) {
-      gate.onDecision?.(text, "raise-hand")
-      gate.onHandRaise()
-      return
-    }
-    gate.onDecision?.(text, "speak")
-    if (!sendBufferedTurn()) {
-      // The ring was empty (flushed, or transcript raced the audio): the
-      // transcript itself becomes the turn.
-      geminiSession.notifyChat(`${name} said to you: "${text}"`)
+    const decision = decideVoice(gate.mention.test(text))
+    gate.onDecision?.(text, decision.action)
+    switch (decision.action) {
+      case "speak":
+        if (!sendBufferedTurn()) {
+          // The ring was empty (flushed, or transcript raced the audio):
+          // the transcript itself becomes the turn.
+          geminiSession.notifyChat(`${name} said to you: "${text}"`)
+        }
+        return
+      case "raise-hand":
+        gate.onHandRaise()
+        return
+      case "deliberate":
+        geminiSession.notifyHeard(`[meeting audio] ${name}: ${text}`)
+        // Same silent deliberation OpenAI runs on unaddressed turns: the
+        // agent can raise its hand (or drop a chat aside) without being
+        // named — otherwise a gated Gemini agent can never self-initiate.
+        void geminiSession.deliberate(`${name}: ${text}`).then((verdict) => {
+          if (verdict === "raise-hand") gate.onHandRaise()
+          else if (!handRaised && !state.muted) callbacks.setState(idleState())
+        })
+        return
+      default:
+        return
     }
   })
 
@@ -877,11 +922,33 @@ export async function runRealtimeAgent(opts: {
         // An @mention is a question to THIS agent — passive context isn't
         // enough, it has to actually answer in the chat (#112). Other
         // agents' mentions of us don't qualify; agent-to-agent chat loops
-        // would spiral.
-        if (
-          !sender.identity.startsWith("agent-") &&
-          mentionsName(message.text, entry.name)
-        ) {
+        // would spiral. What KIND of answer (chat, aloud, hand up) is the
+        // shared gate's call.
+        const chatDecision = sender.identity.startsWith("agent-")
+          ? null
+          : decideTurn({
+              policy: state.turnPolicy,
+              channel: "chat",
+              mentioned: mentionsName(message.text, entry.name),
+              speakRequested: requestsSpeech(message.text),
+              zapped: false,
+              callOnPending: false,
+              muted: state.muted,
+              deafened: state.deafened,
+            })
+        if (chatDecision && chatDecision.action === "raise-hand") {
+          // Asked to speak while under raise-hand: the floor still comes
+          // only from call-on. Hand up, and say so in chat.
+          handRaised = true
+          if (!state.muted) callbacks.setState("hand-raised")
+          session.notifyChat(line)
+          callbacks.publishChat(
+            "(I'm in raise-hand mode — my hand is up; call on me to answer aloud.)",
+          )
+        } else if (chatDecision && chatDecision.action === "speak") {
+          debug("info", "chat mention: answering aloud")
+          session.promptSpokenReply(line)
+        } else if (chatDecision && chatDecision.action === "reply-in-chat") {
           if (opts.onChatMention) {
             // The brain answers chat, not the voice model — it has the
             // tools, memory and marker-block powers (doc edits, drawings)
@@ -942,8 +1009,15 @@ export async function runRealtimeAgent(opts: {
       } else if (control.type === "set-turn-policy" && control.policy) {
         // The host changed how this agent takes turns; apply it immediately
         // (the worker owns state.turnPolicy and the published attribute).
+        // A policy change ends any zap window — a stale grant must not
+        // leak through the new policy.
         handRaised = false
-        session.setGateOpen(control.policy === "open")
+        state.zappedUntil = 0
+        if (zapTimer) {
+          clearTimeout(zapTimer)
+          zapTimer = null
+        }
+        applyGate()
         callbacks.setState(idleState())
         stats.config["turn detection"] =
           control.policy === "open"
@@ -957,23 +1031,24 @@ export async function runRealtimeAgent(opts: {
         handRaised = false
         session.callOn()
       } else if (control.type === "zap") {
-        // Wake the agent: gate lifted (or unmuted) for the zap window, then
-        // to normal. A fresh zap extends the window. The "zapped" state is
-        // the visible indicator that the zap took.
+        // Zap = "I addressed you directly — why aren't you answering?" It
+        // grants the floor for the NEXT turn (one-shot: onSpeaking consumes
+        // the window), with ZAP_WINDOW_MS only a deadline. As an explicit
+        // summons it overrides mute and deafen. A fresh zap re-arms it.
         handRaised = false
         state.muted = false
-        zappedUntil = Date.now() + ZAP_WINDOW_MS
-        session.setGateOpen(true)
+        state.deafened = false
+        state.zappedUntil = Date.now() + ZAP_WINDOW_MS
+        applyGate()
         callbacks.setState("zapped")
         if (zapTimer) clearTimeout(zapTimer)
         zapTimer = setTimeout(() => {
           zapTimer = null
-          zappedUntil = 0
-          // Back to the agent's own policy: gated agents re-gate, open ones
-          // just keep listening (matching the pipeline path). Muting is a
+          state.zappedUntil = 0
+          // Expired unused: back to the agent's own policy. Muting is a
           // human's call — an agent that mutes itself when the window ends
           // looks like it randomly went silent mid-meeting.
-          if (gated()) session.setGateOpen(false)
+          applyGate()
           callbacks.setState(state.muted ? "muted" : "listening")
         }, ZAP_WINDOW_MS)
         // Acknowledge in chat, matching the pipeline path — not aloud. The
@@ -982,14 +1057,22 @@ export async function runRealtimeAgent(opts: {
         // overlapping acks, and the just-opened gate's interrupt_response
         // chopped whichever was playing on any room noise.
         callbacks.publishChat(
-          "(You zapped me — I'm listening and will chime in for the next 30 seconds.)",
+          "(You zapped me — I'm listening, go ahead and I'll answer your next turn.)",
         )
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
-        // mute take effect audibly by cutting playback mid-word.
+        // mute take effect audibly by cutting playback mid-word. An explicit
+        // mute also overrides any pending zap grant.
         state.muted = true
+        state.zappedUntil = 0
+        applyGate()
         hardCut()
         callbacks.setState("muted")
+      } else if (control.type === "deafen") {
+        // An explicit deafen overrides any pending zap grant too — the
+        // worker's handler owns the deafened flag and state attribute.
+        state.zappedUntil = 0
+        applyGate()
       }
     } catch {}
   })

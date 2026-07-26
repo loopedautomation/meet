@@ -599,6 +599,19 @@ export class GeminiLiveSession implements VoiceSession {
   }
 
   /**
+   * A chat message whose gate decision was "speak": answer it ALOUD,
+   * prefaced as a response to the chat message.
+   */
+  promptSpokenReply(line: string) {
+    this.#remember(line)
+    this.#sendUserText(
+      `${line}\n[You were addressed in the meeting's text chat. Answer ` +
+        "ALOUD, briefly noting you're responding to the chat message, " +
+        "then yield the floor.]",
+    )
+  }
+
+  /**
    * The gate itself lives in realtime-agent (mention detection runs on the
    * room transcript there); this records the state its audio routing reads.
    * Closing the gate on a session that started with automatic turn
