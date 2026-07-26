@@ -4,7 +4,7 @@ import {
   requestsSpeech,
   type TurnGateInput,
   zapActive,
-} from "./turn-gate.js"
+} from "./index.js"
 
 const base: TurnGateInput = {
   policy: "open",
