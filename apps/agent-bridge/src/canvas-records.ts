@@ -1,3 +1,4 @@
+import dagre from "@dagrejs/dagre"
 import type { CanvasColor, CanvasOp, CanvasRecord } from "@meet/shared"
 import { expandDiagram } from "./mermaid-diagram.js"
 
@@ -79,6 +80,35 @@ function rand(): number {
 }
 
 /** Every field Excalidraw persists on all element types. */
+/** Op style enums → Excalidraw element fields. */
+const FILL_STYLES: Record<string, string> = {
+  semi: "hachure",
+  solid: "solid",
+  hatch: "cross-hatch",
+}
+const STROKE_STYLES: Record<string, string> = {
+  solid: "solid",
+  dashed: "dashed",
+  dotted: "dotted",
+}
+const STROKE_WIDTHS: Record<string, number> = {
+  thin: 1,
+  medium: 2,
+  bold: 4,
+}
+
+/** The shared style fields a create or update op may carry. */
+function styleFields(op: {
+  fill?: "none" | "semi" | "solid" | "hatch"
+  stroke?: "solid" | "dashed" | "dotted"
+  strokeWidth?: "thin" | "medium" | "bold"
+}): LooseElement {
+  const fields: LooseElement = {}
+  if (op.stroke) fields.strokeStyle = STROKE_STYLES[op.stroke]
+  if (op.strokeWidth) fields.strokeWidth = STROKE_WIDTHS[op.strokeWidth]
+  return fields
+}
+
 function baseElement(id: string, at: number): LooseElement {
   return {
     id,
@@ -115,6 +145,26 @@ function liveElement(entry: CanvasRecord | undefined): LooseElement | null {
 }
 
 /** Rough text metrics, good enough for labels the editor will re-measure. */
+/**
+ * Fold text into sticky-note-shaped lines. Static scenes render label text
+ * exactly as stored — Excalidraw only re-wraps container text during
+ * editing — so an unwrapped one-liner makes a metre-wide "sticky note".
+ */
+function wrapText(text: string, maxChars = 22): string {
+  const lines: string[] = []
+  let line = ""
+  for (const word of text.split(/\s+/)) {
+    if (line && line.length + 1 + word.length > maxChars) {
+      lines.push(line)
+      line = word
+    } else {
+      line = line ? `${line} ${word}` : word
+    }
+  }
+  if (line) lines.push(line)
+  return lines.join("\n")
+}
+
 function measure(text: string, fontSize: number) {
   const lines = text.split("\n")
   const longest = Math.max(...lines.map((l) => l.length), 1)
@@ -317,6 +367,69 @@ export function buildCanvasRecords(
     )
   }
 
+  // Graph-aware auto-placement: when a batch creates coordinate-free shapes
+  // AND connects them with arrows, the row-wrap placer would string them
+  // into one long strip with every arrow slicing through the neighbors.
+  // Lay the connected shapes out with dagre instead (the same engine the
+  // mermaid fallback uses), then drop the whole block into free space.
+  {
+    const connectable = new Map<string, { w: number; h: number }>()
+    for (const op of ops) {
+      if (
+        (op.op === "rect" || op.op === "ellipse") &&
+        op.x === undefined &&
+        op.y === undefined
+      ) {
+        connectable.set(op.id, { w: op.w, h: op.h })
+      }
+    }
+    const edges = ops.filter(
+      (op): op is Extract<CanvasOp, { op: "arrow" }> =>
+        op.op === "arrow" &&
+        !!op.from &&
+        !!op.to &&
+        connectable.has(op.from) &&
+        connectable.has(op.to),
+    )
+    if (edges.length > 0 && connectable.size >= 2) {
+      const graph = new dagre.graphlib.Graph()
+      graph.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80 })
+      graph.setDefaultEdgeLabel(() => ({}))
+      for (const [nodeId, size] of connectable) {
+        graph.setNode(nodeId, { width: size.w, height: size.h })
+      }
+      for (const edge of edges) graph.setEdge(edge.from!, edge.to!)
+      dagre.layout(graph)
+      const nodes = [...connectable.keys()].map((nodeId) => {
+        const n = graph.node(nodeId)
+        return { nodeId, x: n.x - n.width / 2, y: n.y - n.height / 2 }
+      })
+      const minX = Math.min(...nodes.map((n) => n.x))
+      const minY = Math.min(...nodes.map((n) => n.y))
+      const bboxW =
+        Math.max(...nodes.map((n) => n.x + connectable.get(n.nodeId)!.w)) - minX
+      const bboxH =
+        Math.max(...nodes.map((n) => n.y + connectable.get(n.nodeId)!.h)) - minY
+      const spot = placeCreate(working, "batch", {}, bboxW, bboxH)
+      const placed = new Map(
+        nodes.map((n) => [
+          n.nodeId,
+          { x: n.x - minX + spot.x, y: n.y - minY + spot.y },
+        ]),
+      )
+      for (let i = 0; i < ops.length; i++) {
+        const op = ops[i]
+        const coords = placed.get((op as { id?: string }).id ?? "")
+        if (coords && (op.op === "rect" || op.op === "ellipse")) {
+          ops[i] = { ...op, ...coords }
+        }
+      }
+      actions.push(
+        `laid out ${placed.size} connected shapes as a graph at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
+      )
+    }
+  }
+
   const put = (id: string, element: LooseElement) => {
     const prior = working.get(id)
     const version =
@@ -383,6 +496,122 @@ export function buildCanvasRecords(
 
   const atSpot = (spot: { x: number; y: number }) =>
     `(${Math.round(spot.x)}, ${Math.round(spot.y)})`
+
+  const centerOf = (el: LooseElement) => ({
+    x: (el.x as number) + ((el.width as number) ?? 0) / 2,
+    y: (el.y as number) + ((el.height as number) ?? 0) / 2,
+  })
+
+  /**
+   * Where a line from `el`'s center toward `toward` exits its boundary,
+   * pushed out by `gap`. Bindings alone aren't enough: Excalidraw only
+   * re-clips bound arrows during editor interactions, so a statically
+   * loaded scene renders exactly the points we store — center-to-center
+   * arrows strike through the shapes and their labels.
+   */
+  const edgeAnchor = (
+    el: LooseElement,
+    toward: { x: number; y: number },
+    gap = 6,
+  ) => {
+    const c = centerOf(el)
+    const dx = toward.x - c.x
+    const dy = toward.y - c.y
+    const len = Math.hypot(dx, dy)
+    if (len === 0) return c
+    const w = ((el.width as number) ?? 0) / 2
+    const h = ((el.height as number) ?? 0) / 2
+    let t: number
+    if (el.type === "ellipse") {
+      const denom = Math.hypot(dx / (w || 1), dy / (h || 1))
+      t = denom > 0 ? 1 / denom : 0
+    } else {
+      const tx = dx !== 0 ? w / Math.abs(dx) : Number.POSITIVE_INFINITY
+      const ty = dy !== 0 ? h / Math.abs(dy) : Number.POSITIVE_INFINITY
+      t = Math.min(tx, ty)
+    }
+    if (!Number.isFinite(t)) t = 0
+    const scale = t + gap / len
+    return { x: c.x + dx * scale, y: c.y + dy * scale }
+  }
+
+  /** Absolute start plus relative points for an arrow between anchors. */
+  const arrowGeometry = (
+    fromShape: LooseElement | null,
+    toShape: LooseElement | null,
+    fromPoint: { x: number; y: number } | undefined,
+    toPoint: { x: number; y: number } | undefined,
+    via: { x: number; y: number }[],
+  ) => {
+    const roughStart = fromShape
+      ? centerOf(fromShape)
+      : (fromPoint ?? { x: 0, y: 0 })
+    const roughEnd = toShape
+      ? centerOf(toShape)
+      : (toPoint ?? { x: roughStart.x + 100, y: roughStart.y })
+    // Aim each end at the first thing the arrow actually heads toward.
+    const start = fromShape
+      ? edgeAnchor(fromShape, via[0] ?? roughEnd)
+      : roughStart
+    const end = toShape
+      ? edgeAnchor(toShape, via[via.length - 1] ?? start)
+      : roughEnd
+    const points: [number, number][] = [
+      [0, 0],
+      ...via.map((p) => [p.x - start.x, p.y - start.y] as [number, number]),
+      [end.x - start.x, end.y - start.y],
+    ]
+    return { start, end, points }
+  }
+
+  const bboxOf = (points: [number, number][]) => ({
+    width:
+      Math.max(...points.map((p) => p[0])) -
+      Math.min(...points.map((p) => p[0])),
+    height:
+      Math.max(...points.map((p) => p[1])) -
+      Math.min(...points.map((p) => p[1])),
+  })
+
+  /**
+   * Recompute every arrow touching `shapeId` from the shapes' current
+   * geometry — a move or resize otherwise leaves bound arrows pointing at
+   * where the shape used to be.
+   */
+  const rerouteArrows = (shapeId: string) => {
+    for (const [arrowId, entry] of working) {
+      const arrow = liveElement(entry)
+      if (!arrow || arrow.type !== "arrow") continue
+      const sb = arrow.startBinding as { elementId?: string } | null
+      const eb = arrow.endBinding as { elementId?: string } | null
+      if (sb?.elementId !== shapeId && eb?.elementId !== shapeId) continue
+      const fromShape = sb?.elementId
+        ? liveElement(working.get(sb.elementId))
+        : null
+      const toShape = eb?.elementId
+        ? liveElement(working.get(eb.elementId))
+        : null
+      const prior = (arrow.points as [number, number][]).map(([px, py]) => ({
+        x: (arrow.x as number) + px,
+        y: (arrow.y as number) + py,
+      }))
+      const { start, end, points } = arrowGeometry(
+        fromShape,
+        toShape,
+        prior[0],
+        prior[prior.length - 1],
+        prior.slice(1, -1),
+      )
+      patch(arrowId, { x: start.x, y: start.y, points, ...bboxOf(points) })
+      const label = liveElement(working.get(labelId(arrowId)))
+      if (label) {
+        patch(labelId(arrowId), {
+          x: (start.x + end.x) / 2 - ((label.width as number) ?? 0) / 2,
+          y: (start.y + end.y) / 2 - ((label.height as number) ?? 0) / 2,
+        })
+      }
+    }
+  }
   /** Tell the model its shape landed elsewhere, so its map stays right. */
   const noteNudge = (opId: string, spot: { x: number; y: number }) => {
     warnings.push(
@@ -396,7 +625,14 @@ export function buildCanvasRecords(
       case "ellipse": {
         const id = resolveId(op.id)
         const color = STROKE_COLORS[op.color ?? "black"]
-        const spot = placeCreate(working, id, op, op.w, op.h)
+        // Re-creating an existing id is an edit, not a new shape: keep its
+        // spot (unless coords say otherwise) or the placer nudges it away
+        // from itself and the "changed" shape appears to duplicate.
+        const existing = liveElement(working.get(id))
+        const spot =
+          existing && op.x === undefined && op.y === undefined
+            ? { x: existing.x as number, y: existing.y as number }
+            : placeCreate(working, id, op, op.w, op.h)
         const element: LooseElement = {
           ...baseElement(id, at),
           type: op.op === "rect" ? "rectangle" : "ellipse",
@@ -409,16 +645,29 @@ export function buildCanvasRecords(
             op.fill && op.fill !== "none"
               ? BACKGROUND_COLORS[op.color ?? "blue"]
               : "transparent",
-          fillStyle: op.fill === "semi" ? "hachure" : "solid",
+          fillStyle:
+            op.fill && op.fill !== "none" ? FILL_STYLES[op.fill] : "solid",
           roundness: op.op === "rect" ? { type: 3 } : null,
+          ...styleFields(op),
         }
+        // Arrows bound to the old incarnation must survive the redraw, or
+        // the editor stops re-routing them when this shape moves later.
+        const carried = Array.isArray(existing?.boundElements)
+          ? (existing.boundElements as { type: string; id: string }[]).filter(
+              (b) => b.type === "arrow",
+            )
+          : []
+        const bound: { type: string; id: string }[] = [...carried]
         if (op.label) {
-          element.boundElements = [
-            putLabel(id, element, op.label, STROKE_COLORS.black),
-          ]
+          bound.push(putLabel(id, element, op.label, STROKE_COLORS.black))
+        } else if (existing && liveElement(working.get(labelId(id)))) {
+          // Redrawn without a label: the old one must not linger as a ghost.
+          softDelete(labelId(id))
         }
+        element.boundElements = bound.length ? bound : null
         put(id, element)
-        if (spot.nudged) noteNudge(op.id, spot)
+        if (existing) rerouteArrows(id)
+        if ("nudged" in spot && spot.nudged) noteNudge(op.id, spot)
         actions.push(
           `${op.op}${op.label ? ` "${op.label}"` : ""} (id ${op.id}) at ${atSpot(spot)}`,
         )
@@ -428,7 +677,11 @@ export function buildCanvasRecords(
         const id = resolveId(op.id)
         const fontSize = FONT_SIZES[op.size ?? "m"]
         const size = measure(op.text, fontSize)
-        const spot = placeCreate(working, id, op, size.width, size.height)
+        const existingText = liveElement(working.get(id))
+        const spot =
+          existingText && op.x === undefined && op.y === undefined
+            ? { x: existingText.x as number, y: existingText.y as number }
+            : placeCreate(working, id, op, size.width, size.height)
         put(id, {
           ...baseElement(id, at),
           type: "text",
@@ -447,7 +700,7 @@ export function buildCanvasRecords(
           autoResize: true,
           lineHeight: 1.25,
         })
-        if (spot.nudged) noteNudge(op.id, spot)
+        if ("nudged" in spot && spot.nudged) noteNudge(op.id, spot)
         actions.push(
           `text "${truncate(op.text, 30)}" (id ${op.id}) at ${atSpot(spot)}`,
         )
@@ -455,10 +708,17 @@ export function buildCanvasRecords(
       }
       case "note": {
         const id = resolveId(op.id)
-        const size = measure(op.text, 20)
+        const wrapped = wrapText(op.text)
+        const size = measure(wrapped, 20)
         const w = Math.max(size.width + 40, 180)
         const h = Math.max(size.height + 40, 100)
-        const spot = placeCreate(working, id, op, w, h)
+        // Same replace-in-place rule as rect/ellipse: a re-created note is
+        // an edit, not a second sticky on top of the first.
+        const existingNote = liveElement(working.get(id))
+        const spot =
+          existingNote && op.x === undefined && op.y === undefined
+            ? { x: existingNote.x as number, y: existingNote.y as number }
+            : placeCreate(working, id, op, w, h)
         const element: LooseElement = {
           ...baseElement(id, at),
           type: "rectangle",
@@ -472,10 +732,11 @@ export function buildCanvasRecords(
           roundness: { type: 3 },
         }
         element.boundElements = [
-          putLabel(id, element, op.text, STROKE_COLORS.black),
+          putLabel(id, element, wrapped, STROKE_COLORS.black),
         ]
         put(id, element)
-        if (spot.nudged) noteNudge(op.id, spot)
+        if (existingNote) rerouteArrows(id)
+        if ("nudged" in spot && spot.nudged) noteNudge(op.id, spot)
         actions.push(
           `note "${truncate(op.text, 30)}" (id ${op.id}) at ${atSpot(spot)}`,
         )
@@ -515,35 +776,19 @@ export function buildCanvasRecords(
         if (toId && !toShape) {
           warnings.push(`arrow "${op.id}": no shape with id ${op.to}.`)
         }
-        const center = (el: LooseElement) => ({
-          x: (el.x as number) + (el.width as number) / 2,
-          y: (el.y as number) + (el.height as number) / 2,
-        })
-        const start = fromShape
-          ? center(fromShape)
-          : (op.fromPoint ?? { x: 0, y: 0 })
-        const end = toShape
-          ? center(toShape)
-          : (op.toPoint ?? { x: start.x + 100, y: start.y })
-        const waypoints = (op.via ?? []).map(
-          (p) => [p.x - start.x, p.y - start.y] as [number, number],
+        const { start, points } = arrowGeometry(
+          fromShape,
+          toShape,
+          op.fromPoint,
+          op.toPoint,
+          op.via ?? [],
         )
-        const points: [number, number][] = [
-          [0, 0],
-          ...waypoints,
-          [end.x - start.x, end.y - start.y],
-        ]
         const element: LooseElement = {
           ...baseElement(id, at),
           type: "arrow",
           x: start.x,
           y: start.y,
-          width:
-            Math.max(...points.map((p) => p[0])) -
-            Math.min(...points.map((p) => p[0])),
-          height:
-            Math.max(...points.map((p) => p[1])) -
-            Math.min(...points.map((p) => p[1])),
+          ...bboxOf(points),
           strokeColor: STROKE_COLORS[op.color ?? "black"],
           points,
           lastCommittedPoint: null,
@@ -590,9 +835,25 @@ export function buildCanvasRecords(
           warnings.push(`move: no shape with id ${op.id}.`)
           break
         }
-        const dx = op.x - (element.x as number)
-        const dy = op.y - (element.y as number)
-        patch(id, { x: op.x, y: op.y })
+        // Absolute x/y wins; otherwise dx/dy nudges relative to where the
+        // shape sits — "move it a bit left" without knowing coordinates.
+        const targetX =
+          op.x !== undefined && op.y !== undefined
+            ? op.x
+            : (element.x as number) + (op.dx ?? 0)
+        const targetY =
+          op.x !== undefined && op.y !== undefined
+            ? op.y
+            : (element.y as number) + (op.dy ?? 0)
+        if (targetX === element.x && targetY === element.y) {
+          warnings.push(
+            `move "${op.id}": give x+y (absolute) or dx/dy (relative).`,
+          )
+          break
+        }
+        const dx = targetX - (element.x as number)
+        const dy = targetY - (element.y as number)
+        patch(id, { x: targetX, y: targetY })
         // The bound label keeps its own coordinates, so it rides along.
         const label = liveElement(working.get(labelId(id)))
         if (label) {
@@ -601,7 +862,8 @@ export function buildCanvasRecords(
             y: (label.y as number) + dy,
           })
         }
-        actions.push(`moved ${op.id} to ${atSpot(op)}`)
+        rerouteArrows(id)
+        actions.push(`moved ${op.id} to ${atSpot({ x: targetX, y: targetY })}`)
         break
       }
       case "update": {
@@ -611,11 +873,22 @@ export function buildCanvasRecords(
           warnings.push(`update: no shape with id ${op.id}.`)
           break
         }
-        const updates: LooseElement = {}
+        const updates: LooseElement = styleFields(op)
         if (op.color) {
           updates.strokeColor = STROKE_COLORS[op.color]
           if (element.backgroundColor !== "transparent") {
             updates.backgroundColor = BACKGROUND_COLORS[op.color]
+          }
+        }
+        if (op.fill) {
+          if (op.fill === "none") {
+            updates.backgroundColor = "transparent"
+          } else {
+            updates.fillStyle = FILL_STYLES[op.fill]
+            if (element.backgroundColor === "transparent") {
+              // Filling an unfilled shape needs a color to fill with.
+              updates.backgroundColor = BACKGROUND_COLORS[op.color ?? "blue"]
+            }
           }
         }
         if (op.w !== undefined) updates.width = op.w
@@ -628,7 +901,17 @@ export function buildCanvasRecords(
           } else {
             const label = liveElement(working.get(labelId(id)))
             if (label) {
-              patch(labelId(id), { text, originalText: text })
+              // Re-measure and re-center: static scenes render the stored
+              // box exactly, so longer text in the old box comes out clipped.
+              const size = measure(text, (label.fontSize as number) ?? 20)
+              patch(labelId(id), {
+                text,
+                originalText: text,
+                width: size.width,
+                height: size.height,
+                x: centerOf(element).x - size.width / 2,
+                y: centerOf(element).y - size.height / 2,
+              })
             } else {
               const bindings = Array.isArray(element.boundElements)
                 ? (element.boundElements as { type: string; id: string }[])
@@ -641,6 +924,19 @@ export function buildCanvasRecords(
           }
         }
         patch(id, updates)
+        if (op.w !== undefined || op.h !== undefined) {
+          rerouteArrows(id)
+          // A resize moves the shape's center; its label must follow or it
+          // sits off-center in the new box.
+          const resized = liveElement(working.get(id))
+          const label = liveElement(working.get(labelId(id)))
+          if (resized && label) {
+            patch(labelId(id), {
+              x: centerOf(resized).x - ((label.width as number) ?? 0) / 2,
+              y: centerOf(resized).y - ((label.height as number) ?? 0) / 2,
+            })
+          }
+        }
         actions.push(`updated ${op.id}`)
         break
       }
@@ -653,18 +949,16 @@ export function buildCanvasRecords(
         }
         softDelete(id)
         softDelete(labelId(id))
-        // Arrows pointing at a deleted shape keep their last geometry but
-        // drop the binding, so they stop tracking a ghost.
+        // Arrows to or from a deleted shape go with it: a line hanging in
+        // space toward a ghost reads as clutter, not information.
         for (const [otherId, entry] of working) {
           const other = liveElement(entry)
           if (!other || other.type !== "arrow") continue
           const start = other.startBinding as { elementId?: string } | null
           const end = other.endBinding as { elementId?: string } | null
           if (start?.elementId === id || end?.elementId === id) {
-            patch(otherId, {
-              startBinding: start?.elementId === id ? null : other.startBinding,
-              endBinding: end?.elementId === id ? null : other.endBinding,
-            })
+            softDelete(otherId)
+            softDelete(labelId(otherId))
           }
         }
         actions.push(`deleted ${op.id}`)

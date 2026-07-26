@@ -61,9 +61,17 @@ describe("buildCanvasRecords", () => {
     expect(warnings).toEqual([])
     const arrow = elementOf(changes, "agent-a1")
     expect(arrow.type).toBe("arrow")
-    // Anchored at the source's center, pointing at the target's center.
-    expect(arrow.x).toBe(80)
+    // Anchored at the source's edge (plus a small gap), not its center —
+    // statically rendered scenes draw exactly these points, and a
+    // center-to-center arrow strikes through both shapes.
+    expect(arrow.x as number).toBeGreaterThanOrEqual(160)
+    expect(arrow.x as number).toBeLessThan(200)
     expect(arrow.y).toBe(40)
+    // The far end stops at the target's left edge, short of x=400.
+    const points = arrow.points as [number, number][]
+    const endX = (arrow.x as number) + points[points.length - 1][0]
+    expect(endX).toBeLessThanOrEqual(400)
+    expect(endX).toBeGreaterThan(360)
     expect(arrow.startBinding).toMatchObject({ elementId: "agent-api" })
     expect(arrow.endBinding).toMatchObject({ elementId: "agent-db" })
     // Both bound shapes list the arrow, or the editor won't re-route it.
@@ -126,7 +134,7 @@ describe("buildCanvasRecords", () => {
     expect(label.text).toBe("Gateway")
   })
 
-  it("soft-deletes a shape and unbinds arrows pointing at it", () => {
+  it("soft-deletes a shape and the arrows touching it", () => {
     const first = build([
       { op: "rect", id: "api", x: 0, y: 0, w: 100, h: 80 },
       { op: "rect", id: "db", x: 300, y: 0, w: 100, h: 80 },
@@ -135,9 +143,45 @@ describe("buildCanvasRecords", () => {
     const second = build([{ op: "delete", id: "api" }], first.changes)
     const deleted = elementOf(second.changes, "agent-api")
     expect(deleted.isDeleted).toBe(true)
+    // The arrow goes with its shape: a line hanging toward a ghost is
+    // clutter, not information.
     const arrow = elementOf(second.changes, "agent-a1")
-    expect(arrow.startBinding).toBeNull()
-    expect(arrow.endBinding).toMatchObject({ elementId: "agent-db" })
+    expect(arrow.isDeleted).toBe(true)
+  })
+
+  it("re-routes bound arrows when a shape moves", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
+      { op: "rect", id: "b", x: 300, y: 0, w: 100, h: 80 },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [{ op: "move", id: "b", x: 300, y: 400 }],
+      first.changes,
+    )
+    const arrow = elementOf(second.changes, "agent-ab")
+    const points = arrow.points as [number, number][]
+    const endY = (arrow.y as number) + points[points.length - 1][1]
+    // The arrow's end followed the shape down (near b's new top edge).
+    expect(endY).toBeGreaterThan(300)
+    expect(endY).toBeLessThanOrEqual(400)
+  })
+
+  it("lays out a coordinate-free connected batch as a graph, not a row", () => {
+    const { changes, summary } = build([
+      { op: "rect", id: "a", w: 160, h: 80, label: "A" },
+      { op: "rect", id: "b", w: 160, h: 80, label: "B" },
+      { op: "rect", id: "c", w: 160, h: 80, label: "C" },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+      { op: "arrow", id: "ac", from: "a", to: "c" },
+    ])
+    const a = elementOf(changes, "agent-a")
+    const b = elementOf(changes, "agent-b")
+    const c = elementOf(changes, "agent-c")
+    // a is the root rank; b and c sit below it, not beside it in one strip.
+    expect(b.y as number).toBeGreaterThan(a.y as number)
+    expect(c.y as number).toBeGreaterThan(a.y as number)
+    expect(summary).toContain("connected shapes as a graph")
   })
 
   it("clears every element and counts only top-level shapes", () => {
@@ -471,5 +515,199 @@ describe("describeCanvas", () => {
     const description = describeCanvas(changes, 500)
     expect(description.length).toBeLessThan(700)
     expect(description).toContain("…(truncated)")
+  })
+})
+
+describe("sequential drawing", () => {
+  it("re-creating an id without coords replaces in place, not beside itself", () => {
+    const first = build([
+      {
+        op: "rect",
+        id: "api",
+        x: 200,
+        y: 100,
+        w: 160,
+        h: 80,
+        label: "API",
+        color: "blue",
+      },
+    ])
+    const second = build(
+      [{ op: "rect", id: "api", w: 160, h: 80, label: "API v2", color: "red" }],
+      first.changes,
+    )
+    expect(second.warnings).toEqual([])
+    const rect = elementOf(second.changes, "agent-api")
+    expect(rect.x).toBe(200)
+    expect(rect.y).toBe(100)
+    expect(rect.strokeColor).toBe("#e03131")
+    const label = elementOf(second.changes, "agent-api-label")
+    expect(label.text).toBe("API v2")
+  })
+
+  it("a re-created shape keeps its bound arrows and re-routes them", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
+      { op: "rect", id: "b", x: 300, y: 0, w: 100, h: 80 },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [{ op: "rect", id: "b", x: 300, y: 300, w: 100, h: 80, color: "green" }],
+      first.changes,
+    )
+    const b = elementOf(second.changes, "agent-b")
+    const bindings = b.boundElements as { id: string }[]
+    expect(bindings.some((x) => x.id === "agent-ab")).toBe(true)
+    const arrow = elementOf(second.changes, "agent-ab")
+    const points = arrow.points as [number, number][]
+    const endY = (arrow.y as number) + points[points.length - 1][1]
+    expect(endY).toBeGreaterThan(80)
+  })
+
+  it("re-creating without a label removes the old label", () => {
+    const first = build([
+      { op: "rect", id: "api", x: 0, y: 0, w: 160, h: 80, label: "API" },
+    ])
+    const second = build(
+      [{ op: "rect", id: "api", w: 160, h: 80 }],
+      first.changes,
+    )
+    const label = elementOf(second.changes, "agent-api-label")
+    expect(label.isDeleted).toBe(true)
+  })
+
+  it("a second coordinate-free batch avoids the first batch's shapes", () => {
+    const first = build([
+      { op: "rect", id: "a", w: 160, h: 80, label: "A" },
+      { op: "rect", id: "b", w: 160, h: 80, label: "B" },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [
+        { op: "rect", id: "c", w: 160, h: 80, label: "C" },
+        { op: "rect", id: "d", w: 160, h: 80, label: "D" },
+        { op: "arrow", id: "cd", from: "c", to: "d" },
+      ],
+      first.changes,
+    )
+    const boxes = (records: typeof first.changes) =>
+      records
+        .filter(
+          (r) =>
+            r.record && (r.record as { type?: string }).type === "rectangle",
+        )
+        .map((r) => {
+          const el = r.record as {
+            x: number
+            y: number
+            width: number
+            height: number
+          }
+          return { x: el.x, y: el.y, w: el.width, h: el.height }
+        })
+    const olds = boxes(first.changes)
+    for (const fresh of boxes(second.changes)) {
+      for (const old of olds) {
+        const overlaps =
+          fresh.x < old.x + old.w &&
+          old.x < fresh.x + fresh.w &&
+          fresh.y < old.y + old.h &&
+          old.y < fresh.y + fresh.h
+        expect(overlaps).toBe(false)
+      }
+    }
+  })
+})
+
+describe("styling controls", () => {
+  it("applies fill textures, stroke style and width on create", () => {
+    const { changes } = build([
+      {
+        op: "rect",
+        id: "a",
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 80,
+        color: "blue",
+        fill: "hatch",
+        stroke: "dashed",
+        strokeWidth: "bold",
+      },
+    ])
+    const rect = elementOf(changes, "agent-a")
+    expect(rect.fillStyle).toBe("cross-hatch")
+    expect(rect.strokeStyle).toBe("dashed")
+    expect(rect.strokeWidth).toBe(4)
+  })
+
+  it("update restyles fill/stroke and can unfill", () => {
+    const first = build([{ op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 }])
+    const second = build(
+      [
+        {
+          op: "update",
+          id: "a",
+          fill: "semi",
+          color: "green",
+          stroke: "dotted",
+          strokeWidth: "thin",
+        },
+      ],
+      first.changes,
+    )
+    const rect = elementOf(second.changes, "agent-a")
+    expect(rect.fillStyle).toBe("hachure")
+    expect(rect.backgroundColor).not.toBe("transparent")
+    expect(rect.strokeStyle).toBe("dotted")
+    expect(rect.strokeWidth).toBe(1)
+    const third = build(
+      [{ op: "update", id: "a", fill: "none" }],
+      second.changes,
+    )
+    expect(elementOf(third.changes, "agent-a").backgroundColor).toBe(
+      "transparent",
+    )
+  })
+
+  it("update recenters the label after a resize", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80, label: "A" },
+    ])
+    const second = build(
+      [{ op: "update", id: "a", w: 300, h: 200 }],
+      first.changes,
+    )
+    const label = elementOf(second.changes, "agent-a-label")
+    const cx = (label.x as number) + (label.width as number) / 2
+    expect(Math.abs(cx - 150)).toBeLessThan(1)
+  })
+
+  it("update changes an arrow's color", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 100, h: 80 },
+      { op: "rect", id: "b", x: 300, y: 0, w: 100, h: 80 },
+      { op: "arrow", id: "ab", from: "a", to: "b" },
+    ])
+    const second = build(
+      [{ op: "update", id: "ab", color: "red" }],
+      first.changes,
+    )
+    expect(elementOf(second.changes, "agent-ab").strokeColor).toBe("#e03131")
+  })
+
+  it("move accepts relative dx/dy and warns on a no-op move", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 100, y: 100, w: 100, h: 80 },
+    ])
+    const second = build(
+      [{ op: "move", id: "a", dx: -40, dy: 25 }],
+      first.changes,
+    )
+    const rect = elementOf(second.changes, "agent-a")
+    expect(rect.x).toBe(60)
+    expect(rect.y).toBe(125)
+    const third = build([{ op: "move", id: "a" }], second.changes)
+    expect(third.warnings.some((w) => w.includes("dx/dy"))).toBe(true)
   })
 })

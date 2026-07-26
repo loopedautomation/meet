@@ -1,0 +1,4 @@
+{
+  "note": "Dumb-model input: color 'purple' (not in palette) and fill 'hatch'. Watch: is the error actionable, does it list valid values?",
+  "block": "[ { \"op\": \"rect\", \"id\": \"a\", \"w\": 160, \"h\": 80, \"label\": \"A\", \"color\": \"purple\", \"fill\": \"hatch\" } ]"
+}

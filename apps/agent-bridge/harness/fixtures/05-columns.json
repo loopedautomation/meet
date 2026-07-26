@@ -1,0 +1,11 @@
+{
+  "note": "Explicit coordinates: pros/cons columns with notes. Watch: renders exactly as authored, label centering, note text wrapping.",
+  "ops": [
+    { "op": "text", "id": "h1", "x": 200, "y": 60, "text": "Pros", "size": "l", "color": "green" },
+    { "op": "text", "id": "h2", "x": 640, "y": 60, "text": "Cons", "size": "l", "color": "red" },
+    { "op": "note", "id": "p1", "x": 140, "y": 140, "text": "Deterministic layout — no LLM tokens", "color": "light-green" },
+    { "op": "note", "id": "p2", "x": 140, "y": 320, "text": "Reuses production code paths", "color": "light-green" },
+    { "op": "note", "id": "c1", "x": 580, "y": 140, "text": "Dagre fallback less pretty than browser converter", "color": "light-red" },
+    { "op": "note", "id": "c2", "x": 580, "y": 320, "text": "Viewer needs CDN for Excalidraw", "color": "light-red" }
+  ]
+}

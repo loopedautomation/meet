@@ -1,0 +1,4 @@
+{
+  "note": "Dumb-model input: trailing comma (invalid JSON). Watch the error prose.",
+  "block": "[ { \"op\": \"rect\", \"id\": \"a\", \"w\": 160, \"h\": 80, \"label\": \"A\" }, ]"
+}

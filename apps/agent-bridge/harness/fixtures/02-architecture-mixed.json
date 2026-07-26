@@ -1,0 +1,13 @@
+{
+  "note": "Mixed vocabulary with no coordinates: rects, ellipse, sticky note, floating text. Watch: does the note land near what it annotates, does text overlap shapes.",
+  "ops": [
+    { "op": "text", "id": "title", "text": "Meet architecture", "size": "xl" },
+    { "op": "rect", "id": "web", "w": 200, "h": 90, "label": "Next.js web", "color": "violet" },
+    { "op": "rect", "id": "bridge", "w": 200, "h": 90, "label": "Agent bridge", "color": "orange" },
+    { "op": "ellipse", "id": "livekit", "w": 200, "h": 110, "label": "LiveKit SFU", "color": "light-blue", "fill": "semi" },
+    { "op": "note", "id": "n1", "text": "Bridge holds the canvas store (LWW per record)", "color": "yellow" },
+    { "op": "arrow", "id": "e1", "from": "web", "to": "livekit" },
+    { "op": "arrow", "id": "e2", "from": "bridge", "to": "livekit" },
+    { "op": "arrow", "id": "e3", "from": "web", "to": "bridge", "label": "REST" }
+  ]
+}
