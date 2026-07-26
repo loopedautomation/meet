@@ -36,6 +36,7 @@ import {
   parseCanvasBlock,
 } from "./canvas-blocks.js"
 import { controlAllowed } from "./control-auth.js"
+import { createGeminiGate } from "./gemini-gate.js"
 import {
   GEMINI_INPUT_SAMPLE_RATE,
   GeminiLiveSession,
@@ -729,81 +730,37 @@ export async function runRealtimeAgent(opts: {
     }
     return false
   }
-  // Early mention firing: an interim transcript that already contains the
-  // agent's name arms the turn, and the local VAD's end-of-speech sends the
-  // buffered audio right away — skipping the transcriber's endpoint silence
-  // and its finalizer pass, the two big waits in gated mention latency. The
-  // matching final is then only deduped, not answered again.
-  let pendingMention = false
-  let earlyFiredAt = 0
+  // The manual-turn decision wiring lives in gemini-gate.ts (unit-tested);
+  // this only binds it to the live session and room streams.
+  const geminiGate =
+    geminiSession && sessionOpts.gate
+      ? createGeminiGate({
+          gateOpen: () => geminiSession.gateOpen,
+          mention: sessionOpts.gate.mention,
+          decide: decideVoice,
+          sendBufferedTurn,
+          notifyChatTurn: (line) => geminiSession.notifyChat(line),
+          notifyHeard: (line) => geminiSession.notifyHeard(line),
+          deliberate: (line) => geminiSession.deliberate(line),
+          onHandRaise: sessionOpts.gate.onHandRaise,
+          onDecision: sessionOpts.gate.onDecision,
+          onDeliberateDone: () => {
+            if (!handRaised && !state.muted) callbacks.setState(idleState())
+          },
+        })
+      : null
   if (turnStream) {
     void (async () => {
       for await (const event of turnStream) {
         if (event.type !== VADEventType.END_OF_SPEECH) continue
         if (!manualTurns()) continue
-        if (geminiSession?.gateOpen) {
-          sendBufferedTurn()
-          continue
-        }
-        if (pendingMention && decideVoice(true).action === "speak") {
-          pendingMention = false
-          earlyFiredAt = Date.now()
-          sessionOpts.gate?.onDecision?.("(interim mention)", "speak")
-          sendBufferedTurn()
-        }
+        geminiGate?.onEndOfSpeech()
       }
     })()
   }
   opts.onUtterance?.((identity, name, text, final) => {
-    if (!geminiSession || !manualTurns() || geminiSession.gateOpen) return
-    // Other agents never grant this one the floor — agent-to-agent audio
-    // loops would spiral, same rule as chat mentions.
-    if (identity.startsWith("agent-")) return
-    const gate = sessionOpts.gate
-    if (!gate) return
-    if (!final) {
-      // Arm the early path only when a mention would actually speak — under
-      // raise-hand it wouldn't, and the final below raises the hand instead.
-      if (gate.mention.test(text) && decideVoice(true).action === "speak") {
-        pendingMention = true
-      }
-      return
-    }
-    // The turn is over — an armed mention that never fired (VAD end-of-speech
-    // beat the interim) is handled by the final below, not the next turn.
-    pendingMention = false
-    if (gate.mention.test(text) && Date.now() - earlyFiredAt < 5_000) {
-      // Already answered at end-of-speech; the final is just the polished
-      // text of the same turn.
-      earlyFiredAt = 0
-      return
-    }
-    const decision = decideVoice(gate.mention.test(text))
-    gate.onDecision?.(text, decision.action)
-    switch (decision.action) {
-      case "speak":
-        if (!sendBufferedTurn()) {
-          // The ring was empty (flushed, or transcript raced the audio):
-          // the transcript itself becomes the turn.
-          geminiSession.notifyChat(`${name} said to you: "${text}"`)
-        }
-        return
-      case "raise-hand":
-        gate.onHandRaise()
-        return
-      case "deliberate":
-        geminiSession.notifyHeard(`[meeting audio] ${name}: ${text}`)
-        // Same silent deliberation OpenAI runs on unaddressed turns: the
-        // agent can raise its hand (or drop a chat aside) without being
-        // named — otherwise a gated Gemini agent can never self-initiate.
-        void geminiSession.deliberate(`${name}: ${text}`).then((verdict) => {
-          if (verdict === "raise-hand") gate.onHandRaise()
-          else if (!handRaised && !state.muted) callbacks.setState(idleState())
-        })
-        return
-      default:
-        return
-    }
+    if (!geminiSession || !manualTurns()) return
+    geminiGate?.onUtterance(identity, name, text, final)
   })
 
   const pump = setInterval(() => {
