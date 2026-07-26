@@ -3,7 +3,7 @@ import { z } from "zod"
 
 export { Y }
 
-export * from "./turn-gate.js"
+export * from "./turn-gate"
 
 /** Data-channel topics used across web and agent-bridge. */
 export const DataTopic = {

@@ -1,4 +1,4 @@
-import type { TurnPolicy } from "./index.js"
+import type { TurnPolicy } from "./index"
 
 // ---- turn gating -----------------------------------------------------------
 // The single source of truth for "may this agent respond, and how". Every
