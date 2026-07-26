@@ -52,8 +52,9 @@ function voiceOptions(
 /** The mode an invite without overrides actually runs: the registry's. */
 function defaultMode(agent: AgentInfo): AgentMode {
   if (agent.realtimeProvider === "gemini") return "gemini"
-  if (agent.realtimeProvider) return "realtime"
-  return agent.ttsProvider === "elevenlabs" ? "elevenlabs" : "pipeline"
+  // STT pipeline modes are disabled for now, so anything that isn't Gemini
+  // runs on OpenAI realtime — including pipeline-default registry agents.
+  return "realtime"
 }
 
 /**
@@ -239,6 +240,8 @@ export function AgentsPanel({ slug }: { slug: string }) {
                     return (
                       <div className="space-y-1.5">
                         <div className="space-y-1.5">
+                          {/* STT modes (OpenAI STT, ElevenLabs STT) are
+                              disabled for now. */}
                           <Select
                             size="sm"
                             value={mode}
@@ -255,8 +258,6 @@ export function AgentsPanel({ slug }: { slug: string }) {
                             aria-label="Interaction mode"
                             options={[
                               { value: "gemini", label: "Gemini Live" },
-                              { value: "pipeline", label: "OpenAI STT" },
-                              { value: "elevenlabs", label: "ElevenLabs STT" },
                               { value: "realtime", label: "GPT Realtime mini" },
                               {
                                 value: "gpt-live",
@@ -615,6 +616,7 @@ function InviteByUrl({
         value={token}
         onChange={(e) => setToken(e.target.value)}
       />
+      {/* STT modes (OpenAI STT, ElevenLabs STT) are disabled for now. */}
       <Select
         size="sm"
         value={mode}
@@ -628,8 +630,6 @@ function InviteByUrl({
         options={[
           { value: "realtime", label: "GPT Realtime mini" },
           { value: "gemini", label: "Gemini Live" },
-          { value: "pipeline", label: "OpenAI STT" },
-          { value: "elevenlabs", label: "ElevenLabs STT" },
         ]}
       />
       {voices && (
