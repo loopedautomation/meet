@@ -13,9 +13,11 @@ agents:
       kind: tty
       url: ws://demo-agent:8300/tty
       token_env: SCOUT_TTY_TOKEN
-    # No realtime/stt/tts blocks: the communication method (and voice) is
-    # chosen at invite time, and the schema defaults cover each mode. A
-    # registry block would only pin a default; add one back to do that.
+    # Default to OpenAI realtime speech-to-speech (model falls back to the
+    # schema default: gpt-realtime-mini). Voice and mode can still be
+    # overridden at invite time.
+    realtime:
+      provider: openai
 
   - id: echo
     name: Echo
