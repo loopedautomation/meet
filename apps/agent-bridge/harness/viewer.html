@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Drawing harness viewer</title>
+<link rel="stylesheet" href="https://esm.sh/@excalidraw/excalidraw@0.18.1/dist/prod/index.css" />
+<style>
+  body { margin: 0; font-family: system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  header { padding: 8px 12px; border-bottom: 1px solid #ddd; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  header a { text-decoration: none; color: #333; padding: 2px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; }
+  header a.active { background: #6965db; color: white; border-color: #6965db; }
+  #meta { font-size: 12px; color: #666; white-space: pre-wrap; padding: 4px 12px; border-bottom: 1px solid #eee; max-height: 20vh; overflow-y: auto; }
+  #app { flex: 1; min-height: 0; }
+</style>
+</head>
+<body>
+<header id="nav"></header>
+<div id="meta"></div>
+<div id="app"></div>
+<script>
+  // Excalidraw's runtime assets (fonts etc.) come from the CDN too.
+  window.EXCALIDRAW_ASSET_PATH = "https://esm.sh/@excalidraw/excalidraw@0.18.1/dist/prod/";
+</script>
+<script type="module">
+  import React from "https://esm.sh/react@19";
+  import { createRoot } from "https://esm.sh/react-dom@19/client";
+  import * as ExcalidrawLib from "https://esm.sh/@excalidraw/excalidraw@0.18.1?deps=react@19,react-dom@19";
+
+  const params = new URLSearchParams(location.search);
+  const scene = params.get("scene");
+
+  const [index, results] = await Promise.all([
+    fetch("./out/index.json").then((r) => r.json()),
+    fetch("./out/results.json").then((r) => r.json()),
+  ]);
+
+  const nav = document.getElementById("nav");
+  for (const name of index) {
+    const a = document.createElement("a");
+    a.href = `?scene=${encodeURIComponent(name)}`;
+    a.textContent = name;
+    if (name === scene) a.className = "active";
+    nav.appendChild(a);
+  }
+
+  if (scene) {
+    const result = results.find((r) => r.fixture === scene);
+    document.getElementById("meta").textContent = result
+      ? JSON.stringify({ note: result.note, steps: result.steps }, null, 1)
+      : "";
+    const data = await fetch(`./out/${scene}.excalidraw`).then((r) => r.json());
+    const root = createRoot(document.getElementById("app"));
+    root.render(
+      React.createElement(ExcalidrawLib.Excalidraw, {
+        initialData: {
+          elements: data.elements,
+          appState: { viewBackgroundColor: "#ffffff", zenModeEnabled: true },
+          scrollToContent: true,
+        },
+        viewModeEnabled: true,
+      }),
+    );
+  } else {
+    document.getElementById("meta").textContent = "Pick a fixture above.";
+  }
+</script>
+</body>
+</html>

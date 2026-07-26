@@ -1,0 +1,14 @@
+{
+  "note": "Redraw same ids with new colors/labels — the 'changes duplicated shapes / colors would not change' regression. Watch: shapes restyle in place, arrows intact, no duplicates.",
+  "steps": [
+    [
+      { "op": "rect", "id": "svc", "w": 180, "h": 80, "label": "Service", "color": "grey" },
+      { "op": "rect", "id": "db", "w": 180, "h": 80, "label": "DB", "color": "grey" },
+      { "op": "arrow", "id": "sd", "from": "svc", "to": "db" }
+    ],
+    [
+      { "op": "rect", "id": "svc", "w": 180, "h": 80, "label": "Service (v2)", "color": "green", "fill": "semi" },
+      { "op": "rect", "id": "db", "w": 180, "h": 80, "label": "Postgres", "color": "blue" }
+    ]
+  ]
+}

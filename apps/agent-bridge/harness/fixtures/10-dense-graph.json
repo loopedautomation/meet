@@ -1,0 +1,24 @@
+{
+  "note": "Ten coordinate-free shapes with cross-connections — the stress case for the row-wrap placer. Watch: does related-ness survive placement, arrow spaghetti.",
+  "ops": [
+    { "op": "rect", "id": "n1", "w": 140, "h": 70, "label": "Ingest" },
+    { "op": "rect", "id": "n2", "w": 140, "h": 70, "label": "Parse" },
+    { "op": "rect", "id": "n3", "w": 140, "h": 70, "label": "Validate" },
+    { "op": "rect", "id": "n4", "w": 140, "h": 70, "label": "Enrich" },
+    { "op": "rect", "id": "n5", "w": 140, "h": 70, "label": "Store" },
+    { "op": "rect", "id": "n6", "w": 140, "h": 70, "label": "Index" },
+    { "op": "rect", "id": "n7", "w": 140, "h": 70, "label": "Query" },
+    { "op": "rect", "id": "n8", "w": 140, "h": 70, "label": "Cache" },
+    { "op": "rect", "id": "n9", "w": 140, "h": 70, "label": "API" },
+    { "op": "rect", "id": "n10", "w": 140, "h": 70, "label": "UI" },
+    { "op": "arrow", "id": "e1", "from": "n1", "to": "n2" },
+    { "op": "arrow", "id": "e2", "from": "n2", "to": "n3" },
+    { "op": "arrow", "id": "e3", "from": "n3", "to": "n4" },
+    { "op": "arrow", "id": "e4", "from": "n4", "to": "n5" },
+    { "op": "arrow", "id": "e5", "from": "n5", "to": "n6" },
+    { "op": "arrow", "id": "e6", "from": "n7", "to": "n6" },
+    { "op": "arrow", "id": "e7", "from": "n7", "to": "n8" },
+    { "op": "arrow", "id": "e8", "from": "n9", "to": "n7" },
+    { "op": "arrow", "id": "e9", "from": "n10", "to": "n9" }
+  ]
+}

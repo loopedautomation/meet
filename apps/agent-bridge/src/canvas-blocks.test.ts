@@ -83,3 +83,35 @@ describe("CANVAS_PROTOCOL_NOTE", () => {
     expect(CANVAS_PROTOCOL_NOTE).toContain(CANVAS_BLOCK_CLOSE)
   })
 })
+
+describe("parseCanvasBlock leniency", () => {
+  it("accepts a single op object by wrapping it into a batch", () => {
+    const parsed = parseCanvasBlock(
+      JSON.stringify({ op: "rect", id: "solo", w: 160, h: 80 }),
+    )
+    expect("ops" in parsed && parsed.ops).toHaveLength(1)
+  })
+
+  it("recovers from trailing commas", () => {
+    const parsed = parseCanvasBlock(
+      '[ { "op": "rect", "id": "a", "w": 160, "h": 80 }, ]',
+    )
+    expect("ops" in parsed && parsed.ops).toHaveLength(1)
+  })
+
+  it("points at the breakage in unparseable JSON", () => {
+    const parsed = parseCanvasBlock('[ { "op": "rect" "id": "a" } ]')
+    expect("error" in parsed && parsed.error).toContain("near")
+  })
+
+  it("suggests splitting oversized batches", () => {
+    const ops = Array.from({ length: 51 }, (_, i) => ({
+      op: "rect",
+      id: `r${i}`,
+      w: 100,
+      h: 60,
+    }))
+    const parsed = parseCanvasBlock(JSON.stringify(ops))
+    expect("error" in parsed && parsed.error).toContain("Split large drawings")
+  })
+})

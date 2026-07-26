@@ -1,0 +1,17 @@
+{
+  "note": "Manual-level control: fill textures, stroke styles/widths, resize with label recentering, relative nudges. Watch: hatch/hachure render, dashed/dotted strokes, label centered after resize.",
+  "steps": [
+    [
+      { "op": "rect", "id": "s1", "x": 100, "y": 100, "w": 180, "h": 90, "label": "Solid fill", "color": "blue", "fill": "solid" },
+      { "op": "rect", "id": "s2", "x": 340, "y": 100, "w": 180, "h": 90, "label": "Hachure", "color": "green", "fill": "semi" },
+      { "op": "rect", "id": "s3", "x": 580, "y": 100, "w": 180, "h": 90, "label": "Cross-hatch", "color": "orange", "fill": "hatch" },
+      { "op": "rect", "id": "s4", "x": 100, "y": 260, "w": 180, "h": 90, "label": "Dashed bold", "color": "red", "stroke": "dashed", "strokeWidth": "bold" },
+      { "op": "ellipse", "id": "s5", "x": 340, "y": 260, "w": 180, "h": 90, "label": "Dotted thin", "color": "violet", "stroke": "dotted", "strokeWidth": "thin" }
+    ],
+    [
+      { "op": "update", "id": "s1", "w": 260, "h": 120 },
+      { "op": "move", "id": "s5", "dx": 300, "dy": 40 },
+      { "op": "update", "id": "s4", "fill": "hatch" }
+    ]
+  ]
+}

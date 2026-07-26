@@ -6,6 +6,8 @@
 // permissions and audit trail. No SDK — the protocol is JSON events over a
 // websocket.
 
+import type { TurnGateDecision } from "@meet/shared"
+
 /** The audio format both directions of the session speak: 24 kHz mono PCM16. */
 export const REALTIME_SAMPLE_RATE = 24_000
 
@@ -64,6 +66,12 @@ export interface VoiceSession {
    * silent to @mentions forever (#112).
    */
   promptChatReply(line: string): void
+  /**
+   * A chat message whose gate decision was "speak": surface it AND elicit a
+   * SPOKEN reply, prefaced as a response to the chat (a gated on-mention
+   * agent answering a chat mention aloud, or an explicit ask to speak).
+   */
+  promptSpokenReply(line: string): void
   setGateOpen(open: boolean): void
   callOn(): void
   cancelResponse(): void
@@ -140,15 +148,15 @@ export type RealtimeSessionOptions = {
     mention: RegExp
     onHandRaise: () => void
     /**
-     * When false, even a name mention doesn't grant the floor — the agent
-     * raises its hand and waits for callOn() (turn_policy "raise-hand").
-     * Defaults to true (mentions speak, turn_policy "on-mention").
+     * The turn-policy decision (see @meet/shared's decideTurn): a closure
+     * over the live session state, so the session itself carries no policy
+     * knowledge — it only executes whatever action comes back.
      */
-    mentionSpeaks?: () => boolean
+    decide: (mentioned: boolean) => TurnGateDecision
     /** Observability: every gate decision, with the transcript that drove it. */
     onDecision?: (
       transcript: string,
-      decision: "speak" | "deliberate" | "raise-hand",
+      decision: TurnGateDecision["action"],
     ) => void
   }
 }
@@ -495,9 +503,10 @@ export class RealtimeSession implements VoiceSession {
         this.#partialTranscripts.set(item, partial)
         if (this.#earlyAnswered.has(item) || this.#responding) break
         if (!gate.mention.test(partial)) break
-        // Raise-hand policy keeps the slow path: the hand-raise decision
-        // wants the full transcript, and nothing audible is waiting on it.
-        if (!(gate.mentionSpeaks?.() ?? true)) break
+        // Only a full "speak" decision may fire early. Raise-hand (and any
+        // other outcome) keeps the slow path: the hand-raise decision wants
+        // the full transcript, and nothing audible is waiting on it.
+        if (gate.decide(true).action !== "speak") break
         this.#earlyAnswered.add(item)
         gate.onDecision?.(partial, "speak")
         this.#send({ type: "response.create" })
@@ -521,19 +530,15 @@ export class RealtimeSession implements VoiceSession {
         if (!gate || this.#gateOpen) break
         const transcript = String(event.transcript ?? "")
         if (!transcript.trim()) break
-        const mentioned = gate.mention.test(transcript)
-        const speaks = mentioned && (gate.mentionSpeaks?.() ?? true)
-        if (mentioned && !speaks) {
+        const decision = gate.decide(gate.mention.test(transcript))
+        gate.onDecision?.(transcript, decision.action)
+        if (decision.action === "raise-hand") {
           // Addressed by name under raise-hand policy: it clearly has the
           // floor to ask for — no deliberation needed, hand goes straight up.
-          gate.onDecision?.(transcript, "raise-hand")
           gate.onHandRaise()
-          break
-        }
-        gate.onDecision?.(transcript, speaks ? "speak" : "deliberate")
-        if (speaks) {
+        } else if (decision.action === "speak") {
           if (!this.#responding) this.#send({ type: "response.create" })
-        } else if (!this.#responding) {
+        } else if (decision.action === "deliberate" && !this.#responding) {
           this.#send({
             type: "response.create",
             response: {
@@ -809,6 +814,25 @@ export class RealtimeSession implements VoiceSession {
           "[meeting chat] message). Reply briefly into the chat with the " +
           `${CHAT_TOOL} tool — text only, do not speak. If you genuinely ` +
           "have nothing to add, reply with a short acknowledgement.",
+      },
+    })
+  }
+
+  /**
+   * A chat message whose gate decision was "speak": answer it ALOUD. An
+   * explicit response.create makes sound regardless of the gate, so this is
+   * only called when decideTurn granted the floor.
+   */
+  promptSpokenReply(line: string) {
+    this.notifyChat(line)
+    if (this.#responding) return
+    this.#send({
+      type: "response.create",
+      response: {
+        instructions:
+          "You were just addressed in the meeting's text chat (the last " +
+          "[meeting chat] message). Answer it ALOUD, briefly noting you're " +
+          "responding to the chat message, then yield the floor.",
       },
     })
   }

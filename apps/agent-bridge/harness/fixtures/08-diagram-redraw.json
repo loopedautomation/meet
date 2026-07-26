@@ -1,0 +1,7 @@
+{
+  "note": "Diagram drawn, then redrawn in place with an extra node (same id). Watch: old shapes replaced not duplicated, position stable.",
+  "steps": [
+    [ { "op": "diagram", "id": "d", "x": 200, "y": 150, "mermaid": "flowchart TD\n  A[Input] --> B[Process]\n  B --> C[Output]" } ],
+    [ { "op": "diagram", "id": "d", "mermaid": "flowchart TD\n  A[Input] --> B[Process]\n  B --> C[Output]\n  B --> D[Errors]" } ]
+  ]
+}

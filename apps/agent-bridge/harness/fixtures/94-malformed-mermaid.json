@@ -1,0 +1,6 @@
+{
+  "note": "Unsupported mermaid (sequenceDiagram) through the dagre fallback. Watch: warning explains what IS supported.",
+  "ops": [
+    { "op": "diagram", "id": "seq", "mermaid": "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi" }
+  ]
+}

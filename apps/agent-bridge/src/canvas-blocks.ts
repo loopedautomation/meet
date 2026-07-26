@@ -24,11 +24,15 @@ export const CANVAS_PROTOCOL_NOTE =
   `containing only ${CANVAS_BLOCK_OPEN} and a line containing only ` +
   `${CANVAS_BLOCK_CLOSE} anywhere in your reply. Operations (applied in ` +
   'order): {"op":"rect"|"ellipse","id","x","y","w","h","label?","color?",' +
-  '"fill?":"none"|"semi"|"solid"}, {"op":"text","id","x","y","text",' +
+  '"fill?":"none"|"semi"|"solid"|"hatch","stroke?":"solid"|"dashed"|' +
+  '"dotted","strokeWidth?":"thin"|"medium"|"bold"}, ' +
+  '{"op":"text","id","x","y","text",' +
   '"size?":"s"|"m"|"l"|"xl"}, {"op":"note","id","x","y","text","color?"}, ' +
   '{"op":"arrow","id","from?","to?","label?"} (from/to are shape ids), ' +
-  '{"op":"move","id","x","y"}, {"op":"update","id","label?","text?",' +
-  '"color?","w?","h?"}, {"op":"delete","id"}, {"op":"clear"}, ' +
+  '{"op":"move","id","x","y"} or {"op":"move","id","dx","dy"} (relative ' +
+  'nudge), {"op":"update","id","label?","text?",' +
+  '"color?","w?","h?","fill?","stroke?","strokeWidth?"} (restyle or ' +
+  'resize anything in place), {"op":"delete","id"}, {"op":"clear"}, ' +
   '{"op":"diagram","id","mermaid"} (Mermaid source — PREFER this for any ' +
   "boxes-and-arrows structure: flowcharts render with full Mermaid fidelity " +
   "(subgraphs, diamonds, all node shapes), sequence and class diagrams " +
@@ -60,17 +64,45 @@ export class CanvasBlockExtractor extends MarkerBlockExtractor {
 export function parseCanvasBlock(
   block: string,
 ): { ops: CanvasOp[] } | { error: string } {
-  let raw: unknown
-  try {
-    raw = JSON.parse(block)
-  } catch {
-    return { error: "The canvas block wasn't valid JSON." }
+  const attempt = (text: string): { value: unknown } | { failure: Error } => {
+    try {
+      return { value: JSON.parse(text) }
+    } catch (err) {
+      return { failure: err as Error }
+    }
+  }
+  let result = attempt(block)
+  if ("failure" in result) {
+    // Trailing commas are the most common model slip, and stripping one
+    // before a closing bracket can never change valid JSON's meaning.
+    result = attempt(block.replace(/,\s*([\]}])/g, "$1"))
+  }
+  if ("failure" in result) {
+    // Point at the breakage — "wasn't valid JSON" alone gives a retrying
+    // model nothing to change.
+    const at = /position (\d+)/.exec(result.failure.message)?.[1]
+    const pos = at ? Number(at) : null
+    const near =
+      pos !== null
+        ? ` near “…${block.slice(Math.max(0, pos - 20), pos + 20)}…”`
+        : ""
+    return {
+      error: `The canvas block wasn't valid JSON${near}. Send a JSON array of op objects.`,
+    }
+  }
+  let raw = result.value
+  // A single op object is unmistakable intent — accept it as a batch of one.
+  if (raw && typeof raw === "object" && !Array.isArray(raw) && "op" in raw) {
+    raw = [raw]
   }
   const parsed = canvasOpBatchSchema.safeParse(raw)
   if (!parsed.success) {
     const issue = parsed.error.issues[0]
+    const hint = issue?.message.includes("<=50")
+      ? " Split large drawings into several blocks of at most 50 ops."
+      : ""
     return {
-      error: `The canvas block was invalid (${issue?.path.join(".")}: ${issue?.message}).`,
+      error: `The canvas block was invalid (${issue?.path.join(".")}: ${issue?.message}).${hint}`,
     }
   }
   return { ops: parsed.data }

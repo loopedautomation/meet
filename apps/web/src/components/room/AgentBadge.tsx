@@ -17,6 +17,7 @@ const stateLabel: Record<AgentState, string> = {
   deafened: "deafened",
   "hand-raised": "hand raised",
   zapped: "zapped",
+  deliberating: "deliberating…",
 }
 
 export function useAgentState(participant: Participant): AgentState {
@@ -65,7 +66,7 @@ export function AgentBadge({ participant }: { participant: Participant }) {
         <Bot className="size-3" />
       )}
       {stateLabel[state]}
-      {state === "thinking" && (
+      {(state === "thinking" || state === "deliberating") && (
         <span className="loading loading-dots loading-xs" />
       )}
     </span>
