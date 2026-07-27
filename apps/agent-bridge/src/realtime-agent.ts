@@ -120,6 +120,13 @@ const instructions = (
   "draft a plan, use update_shared_doc and describe the change in full — " +
   "the document is rewritten for you with everyone's work preserved. Say " +
   "briefly what changed rather than reading the document out loud." +
+  " The meeting also has a shared whiteboard everyone sees live. It is NOT " +
+  "a screen share and needs none: you can always read it with read_canvas " +
+  "(a text description of every shape) and draw or edit it with " +
+  "draw_on_canvas, whether or not anyone is sharing a screen. When someone " +
+  "asks you to sketch, diagram, chart or 'put it on the board', just call " +
+  "draw_on_canvas — never say you can't see the board or ask for it to be " +
+  "shared." +
   " Your audio may be gated by the meeting's host: while it is, you are " +
   "only given the floor when someone addresses you by name or calls on you " +
   "after you raise your hand, and between turns you may be asked silently " +
@@ -400,7 +407,14 @@ export async function runRealtimeAgent(opts: {
           try {
             const board = await readCanvas()
             const prompt =
-              "The meeting's shared whiteboard needs drawing. " +
+              "The meeting's shared whiteboard needs drawing. Your job is " +
+              "the CONTENT: the real components, steps or entities and how " +
+              "they relate, drawn from your domain knowledge of what's " +
+              "being discussed — layout, sizing and coloring are handled " +
+              "for you. Produce a complete diagram in one batch (a system " +
+              "or plan deserves 8-15 labeled shapes with labeled arrows, " +
+              "not three boxes), using primitive shape ops without " +
+              "coordinates so the automatic layout arranges them.\n\n" +
               `Instruction from the meeting: ${instruction}\n\n` +
               `Current whiteboard: ${board}\n\n` +
               `${CANVAS_PROTOCOL_NOTE}\n\n` +

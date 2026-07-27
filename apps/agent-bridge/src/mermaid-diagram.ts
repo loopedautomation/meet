@@ -254,13 +254,37 @@ export function parseMermaidFlowchart(source: string): ParsedDiagram | null {
   return { direction, nodes, edges }
 }
 
-/** Rough node box sized to its label; dagre spaces boxes, we size them. */
+/**
+ * Fold a long node label into lines so the box wraps the text instead of
+ * the text overflowing the box. Mirrors canvas-records' sticky wrapping.
+ */
+function wrapLabel(label: string, maxChars = 24): string {
+  if (label.includes("\n") || label.length <= maxChars) return label
+  const lines: string[] = []
+  let line = ""
+  for (const word of label.split(/\s+/)) {
+    if (line && line.length + 1 + word.length > maxChars) {
+      lines.push(line)
+      line = word
+    } else {
+      line = line ? `${line} ${word}` : word
+    }
+  }
+  if (line) lines.push(line)
+  return lines.join("\n")
+}
+
+/**
+ * Node box sized to its (wrapped) label; dagre spaces boxes, we size them.
+ * 12px/char matches the label renderer's own metric (fontSize 20 * 0.6) —
+ * a narrower estimate here guarantees clipped text there.
+ */
 function nodeSize(label: string): { width: number; height: number } {
   const lines = label.split("\n")
   const longest = Math.max(...lines.map((l) => l.length), 1)
   return {
-    width: Math.min(Math.max(longest * 11 + 48, 120), 360),
-    height: Math.max(lines.length * 28 + 32, 64),
+    width: Math.max(longest * 12 + 48, 120),
+    height: Math.max(lines.length * 28 + 36, 64),
   }
 }
 
@@ -285,8 +309,10 @@ export function expandDiagram(
     marginy: 0,
   })
   graph.setDefaultEdgeLabel(() => ({}))
+  const wrapped = new Map<string, string>()
   for (const node of parsed.nodes.values()) {
-    graph.setNode(node.id, nodeSize(node.label))
+    wrapped.set(node.id, wrapLabel(node.label))
+    graph.setNode(node.id, nodeSize(wrapped.get(node.id) ?? node.label))
   }
   for (const edge of parsed.edges) {
     if (parsed.nodes.has(edge.from) && parsed.nodes.has(edge.to)) {
@@ -323,7 +349,9 @@ export function expandDiagram(
       y: placed.y - placed.height / 2 - minY,
       w: placed.width,
       h: placed.height,
-      label: node.label,
+      label: wrapped.get(node.id) ?? node.label,
+      // No explicit style → the renderer's palette rotation colors the
+      // node (see autoColor in canvas-records); style directives still win.
       color: node.color,
       fill: node.color ? "semi" : undefined,
     })

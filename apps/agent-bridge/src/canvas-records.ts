@@ -174,6 +174,46 @@ function measure(text: string, fontSize: number) {
   }
 }
 
+/**
+ * Wrap and shrink a label until it fits inside its container. Static scenes
+ * render stored text exactly — Excalidraw only re-fits during editing — so
+ * fitting is the bridge's job, and a label that measures wider than its box
+ * is guaranteed to render clipped.
+ */
+function fitLabel(text: string, w: number, h: number) {
+  let best = { text, fontSize: 11, size: measure(text, 11) }
+  for (const fontSize of [20, 16, 13, 11]) {
+    const maxChars = Math.max(6, Math.floor((w - 16) / (fontSize * 0.6)))
+    const wrapped = wrapText(text, maxChars)
+    const size = measure(wrapped, fontSize)
+    best = { text: wrapped, fontSize, size }
+    if (size.width <= w - 12 && size.height <= h - 8) return best
+  }
+  return best
+}
+
+/**
+ * The default palette rotation for shapes whose op named no color: stable
+ * per id, so redraws keep their color while neighbouring shapes differ.
+ * Colorful boards are bridge policy, not a model choice — an uncolored
+ * batch must not come out monochrome.
+ */
+const AUTO_PALETTE: CanvasColor[] = [
+  "blue",
+  "green",
+  "orange",
+  "violet",
+  "red",
+  "light-blue",
+  "yellow",
+  "light-green",
+]
+function autoColor(id: string): CanvasColor {
+  let h = 0
+  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0
+  return AUTO_PALETTE[h % AUTO_PALETTE.length]
+}
+
 type Box = { x: number; y: number; w: number; h: number }
 
 /** Breathing room between auto-placed shapes, matching the tool's advice. */
@@ -292,6 +332,11 @@ export function buildCanvasRecords(
   // block is placed once — at the op's x/y, or in free space like any other
   // create — and each primitive is offset to its spot in the block.
   const ops: CanvasOp[] = []
+  // Each diagram's Mermaid source rides on its first element as customData,
+  // so read_canvas can hand the source back for edit-and-reissue — without
+  // it a rendered diagram is uneditable (the brain can't reconstruct the
+  // source from shapes, and converted elements have opaque ids).
+  const pendingSources = new Map<string, { diagram: string; mermaid: string }>()
   for (const op of rawOps) {
     // Browser-converted diagrams skip the dagre expansion — they reach the
     // op loop below as-is and are injected as full elements there.
@@ -365,6 +410,13 @@ export function buildCanvasRecords(
     actions.push(
       `laid out diagram ${op.id} (${shapes.length} nodes) at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
     )
+    const first = shapes[0] as { id: string } | undefined
+    if (first) {
+      pendingSources.set(resolveId(first.id), {
+        diagram: op.id,
+        mermaid: op.mermaid,
+      })
+    }
   }
 
   // Graph-aware auto-placement: when a batch creates coordinate-free shapes
@@ -467,21 +519,27 @@ export function buildCanvasRecords(
     color: string,
   ) => {
     const id = labelId(containerId)
-    const fontSize = 20
-    const size = measure(text, fontSize)
     const cw = (container.width as number) ?? 0
     const ch = (container.height as number) ?? 0
+    // Closed shapes get fit-to-shape (wrap, then step the font down);
+    // arrows keep the plain midpoint label — their bbox is no container.
+    const closed =
+      container.type === "rectangle" || container.type === "ellipse"
+    const fitted =
+      closed && cw > 0 && ch > 0
+        ? fitLabel(text, cw, ch)
+        : { text, fontSize: 20, size: measure(text, 20) }
     put(id, {
       ...baseElement(id, at),
       type: "text",
-      x: (container.x as number) + cw / 2 - size.width / 2,
-      y: (container.y as number) + ch / 2 - size.height / 2,
-      width: size.width,
-      height: size.height,
+      x: (container.x as number) + cw / 2 - fitted.size.width / 2,
+      y: (container.y as number) + ch / 2 - fitted.size.height / 2,
+      width: fitted.size.width,
+      height: fitted.size.height,
       strokeColor: color,
-      text,
+      text: fitted.text,
       originalText: text,
-      fontSize,
+      fontSize: fitted.fontSize,
       fontFamily: 5,
       textAlign: "center",
       verticalAlign: "middle",
@@ -624,7 +682,12 @@ export function buildCanvasRecords(
       case "rect":
       case "ellipse": {
         const id = resolveId(op.id)
-        const color = STROKE_COLORS[op.color ?? "black"]
+        // Unstyled shapes come out colorful by default: palette-rotated
+        // stroke with a soft matching fill. "none" still opts out of fill,
+        // and an explicit color always wins.
+        const colorName = op.color ?? autoColor(op.id)
+        const fill = op.fill ?? "semi"
+        const color = STROKE_COLORS[colorName]
         // Re-creating an existing id is an edit, not a new shape: keep its
         // spot (unless coords say otherwise) or the placer nudges it away
         // from itself and the "changed" shape appears to duplicate.
@@ -642,11 +705,8 @@ export function buildCanvasRecords(
           height: op.h,
           strokeColor: color,
           backgroundColor:
-            op.fill && op.fill !== "none"
-              ? BACKGROUND_COLORS[op.color ?? "blue"]
-              : "transparent",
-          fillStyle:
-            op.fill && op.fill !== "none" ? FILL_STYLES[op.fill] : "solid",
+            fill !== "none" ? BACKGROUND_COLORS[colorName] : "transparent",
+          fillStyle: fill !== "none" ? FILL_STYLES[fill] : "solid",
           roundness: op.op === "rect" ? { type: 3 } : null,
           ...styleFields(op),
         }
@@ -901,16 +961,21 @@ export function buildCanvasRecords(
           } else {
             const label = liveElement(working.get(labelId(id)))
             if (label) {
-              // Re-measure and re-center: static scenes render the stored
-              // box exactly, so longer text in the old box comes out clipped.
-              const size = measure(text, (label.fontSize as number) ?? 20)
-              patch(labelId(id), {
+              // Re-fit and re-center: static scenes render the stored box
+              // exactly, so longer text in the old box comes out clipped.
+              const fitted = fitLabel(
                 text,
+                (updates.width as number) ?? (element.width as number) ?? 0,
+                (updates.height as number) ?? (element.height as number) ?? 0,
+              )
+              patch(labelId(id), {
+                text: fitted.text,
                 originalText: text,
-                width: size.width,
-                height: size.height,
-                x: centerOf(element).x - size.width / 2,
-                y: centerOf(element).y - size.height / 2,
+                fontSize: fitted.fontSize,
+                width: fitted.size.width,
+                height: fitted.size.height,
+                x: centerOf(element).x - fitted.size.width / 2,
+                y: centerOf(element).y - fitted.size.height / 2,
               })
             } else {
               const bindings = Array.isArray(element.boundElements)
@@ -1060,6 +1125,16 @@ export function buildCanvasRecords(
         actions.push(
           `rendered diagram ${op.id} (${converted.length} elements) at (${Math.round(spot.x)}, ${Math.round(spot.y)})`,
         )
+        const firstConverted = converted[0]
+        if (firstConverted) {
+          const carrier = idMap.get(String(firstConverted.id))
+          if (carrier) {
+            pendingSources.set(carrier, {
+              diagram: op.id,
+              mermaid: op.mermaid,
+            })
+          }
+        }
         break
       }
       case "clear": {
@@ -1073,6 +1148,22 @@ export function buildCanvasRecords(
         actions.push(`cleared the canvas (${cleared} shapes)`)
         break
       }
+    }
+  }
+
+  // Stamp each rendered diagram's Mermaid source onto its carrier element
+  // (customData survives Excalidraw round-trips), so describeCanvas can
+  // offer the source back for in-place edits.
+  for (const [elementId, source] of pendingSources) {
+    const element = liveElement(working.get(elementId))
+    if (element) {
+      patch(elementId, {
+        customData: {
+          ...(element.customData as Record<string, unknown> | undefined),
+          meetDiagram: source.diagram,
+          meetMermaid: source.mermaid,
+        },
+      })
     }
   }
 
@@ -1165,6 +1256,23 @@ export function describeCanvas(
         end?.elementId ? nameOf(end.elementId) : "free"
       }${text ? ` "${text}"` : ""} (id ${id})`,
     )
+  }
+
+  // Rendered diagrams carry their Mermaid source (stamped at draw time):
+  // hand it back, because editing a diagram means editing its source and
+  // re-sending the same diagram id — shapes alone can't be reconstructed.
+  for (const [, element] of elements) {
+    const data = element.customData as
+      | { meetDiagram?: string; meetMermaid?: string }
+      | undefined
+    if (data?.meetDiagram && data.meetMermaid) {
+      lines.push(
+        `Diagram "${data.meetDiagram}" was rendered from this Mermaid source ` +
+          `(to change it, edit the source and re-send ` +
+          `{"op":"diagram","id":"${data.meetDiagram}","mermaid":…} — it ` +
+          `re-renders in place):\n${truncate(data.meetMermaid, 1500)}`,
+      )
+    }
   }
 
   let out = lines.join("\n")
