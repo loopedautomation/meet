@@ -1174,6 +1174,12 @@ export const tokenRequestSchema = z.object({
   rejoinToken: z.string().optional(),
   /** The creator's key from room creation — starts the meeting on arrival. */
   hostKey: z.string().optional(),
+  /**
+   * A mid-meeting token renewal: keep the identity from the (verified)
+   * rejoinToken instead of minting a fresh one, so room-scoped API calls
+   * keep working past the token TTL without the participant reconnecting.
+   */
+  refresh: z.boolean().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 
