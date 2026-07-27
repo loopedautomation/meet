@@ -36,7 +36,8 @@ move, update, or delete shapes in later turns.
 | `rect`, `ellipse`, `diamond` | `id, x?, y?, w?, h?, label?, color?, fill?, stroke?, strokeWidth?` (omit w/h to size the box to its label) | `fill`: `none` (default), `semi` (hachure), `solid`, `hatch` (cross-hatch); `stroke`: `solid`/`dashed`/`dotted`; `strokeWidth`: `thin`/`medium`/`bold` |
 | `text` | `id, x, y, text, size?, color?` | `size`: `s`, `m`, `l` (heading), `xl` (title) |
 | `note` | `id, x, y, text, color?` | a sticky note; sizes itself to the text |
-| `arrow` | `id, from?, to?, fromPoint?, toPoint?, label?, color?` | `from`/`to` are shape ids — bound arrows re-route when shapes move; prefer them over free points |
+| `arrow` | `id, from?, to?, fromPoint?, toPoint?, rounded?, label?, color?` | `from`/`to` are shape ids — bound arrows re-route when shapes move; prefer them over free points (a free point landing on a shape binds to it anyway). `rounded: true` curves the arrow — use it when straight lines would overlap or cross; omit it and routing decides (auto-routed arrows curve, direct ones stay straight). A second arrow between the same two shapes bows to the side on its own, and `from` = `to` draws a self-loop |
+| `layout` | `style: "flowchart"` \| `"mindmap"` | how this block's connected shapes are arranged: `flowchart` (default) is layered top-down — right for processes, pipelines, decision trees; `mindmap` is radial around the most connected hub — right for brainstorms, concept maps, spider diagrams. Put it first in the block |
 | `draw` | `id, points, color?` | freehand polyline, `points: [{x, y}, …]` |
 | `move` | `id, x, y` or `id, dx, dy` | reposition absolutely, or nudge relative to where it sits — bound arrows re-route either way |
 | `update` | `id, label?, text?, color?, w?, h?, fill?, stroke?, strokeWidth?` | restyle, relabel, refill, retexture or resize in place — labels re-center, arrows re-route; `fill: "none"` clears a fill |
@@ -47,6 +48,12 @@ move, update, or delete shapes in later turns.
 **Default to primitive ops, not `diagram`**: coordinate-free rects/ellipses
 connected by arrows are laid out as a clean graph automatically, and every
 shape stays individually addressable for later edits.
+
+**Pick the layout for the job**: a process, pipeline, or anything with
+direction reads best as a `flowchart` (the default); a brainstorm, topic
+breakdown, or web of related ideas reads best as a `mindmap` — one central
+idea, branches radiating outward. Add `{"op":"layout","style":"mindmap"}`
+as the first op when the meeting is mapping ideas rather than steps.
 
 Colors: `black`, `grey`, `blue`, `light-blue`, `violet`,
 `light-violet`, `green`, `light-green`, `yellow`, `orange`, `red`,
