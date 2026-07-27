@@ -127,7 +127,9 @@ export function AgentControls({
   return (
     <div>
       <div
-        className={`flex gap-1 ${vertical ? "flex-col" : "items-center"}`}
+        // The panel row wraps: eight controls no longer fit one line in the
+        // 22rem panel, and clipped buttons beat nobody noticing they exist.
+        className={`flex gap-1 ${vertical ? "flex-col" : "flex-wrap items-center"}`}
         onMouseLeave={() => setTip(null)}
       >
         <ControlButton
