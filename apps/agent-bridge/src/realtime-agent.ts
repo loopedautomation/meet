@@ -303,6 +303,17 @@ export async function runRealtimeAgent(opts: {
     }
   }
   let workInFlight = 0
+  // A rolling window of the last finalized utterances, kept for the drawing
+  // delegation below: the voice model's instruction is often thinner than
+  // what was actually said ("draw the pipeline we discussed"), and the
+  // brain composing the shapes never heard the meeting. Unlike the
+  // worker's heardSince this is never consumed — it's context, not a queue.
+  const recentTalk: string[] = []
+  opts.onUtterance?.((_identity, name, text, final) => {
+    if (!final || !text.trim()) return
+    recentTalk.push(`${name}: ${text.trim()}`)
+    if (recentTalk.length > 24) recentTalk.shift()
+  })
   // The model occasionally fires the same do_task twice for one utterance;
   // the second identical ask gets told to wait rather than a second brain
   // run — which could execute real-world actions twice.
@@ -440,6 +451,13 @@ export async function runRealtimeAgent(opts: {
               "not three boxes), using primitive shape ops without " +
               "coordinates so the automatic layout arranges them.\n\n" +
               `Instruction from the meeting: ${instruction}\n\n` +
+              // The instruction is one model's paraphrase; the transcript
+              // is what was actually said. Both, so a thin instruction
+              // still lands on the meeting's real content.
+              (recentTalk.length
+                ? `Recent discussion (for content the instruction ` +
+                  `left out):\n${recentTalk.join("\n")}\n\n`
+                : "") +
               `Current whiteboard: ${board}\n\n` +
               `${CANVAS_PROTOCOL_NOTE}\n\n` +
               "Reply with the canvas block(s) and nothing else — no " +
