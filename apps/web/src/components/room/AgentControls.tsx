@@ -3,10 +3,12 @@
 import { useParticipantAttributes } from "@livekit/components-react"
 import {
   AGENT_BARGE_IN_ATTRIBUTE,
+  AGENT_CHATTINESS_ATTRIBUTE,
   AGENT_DEAFENED_ATTRIBUTE,
   AGENT_MUTED_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
   type AgentControl,
+  type Chattiness,
   type TurnPolicy,
 } from "@meet/shared"
 import type { Participant } from "livekit-client"
@@ -21,6 +23,9 @@ import {
   MicOff,
   Scissors,
   UserX,
+  Volume,
+  Volume1,
+  Volume2,
   Zap,
 } from "lucide-react"
 import { useParams } from "next/navigation"
@@ -84,6 +89,25 @@ export function AgentControls({
     "raise-hand":
       "Raise hand — waits to be called on, raising a hand when it has something",
   }
+  // Loudness button cycles through the three chattiness levels. Absent
+  // attribute (older bridge) reads as quiet — the deployment default.
+  const chattiness = (attributes?.[AGENT_CHATTINESS_ATTRIBUTE] ??
+    "quiet") as Chattiness
+  const nextChattiness: Record<Chattiness, Chattiness> = {
+    quiet: "normal",
+    normal: "chatty",
+    chatty: "quiet",
+  }
+  const chattinessTip: Record<Chattiness, string> = {
+    quiet: "Quiet — a sentence or two, only when directly addressed",
+    normal: "Normal — concise, offers the occasional important point",
+    chatty: "Chatty — volunteers ideas and elaborates freely",
+  }
+  const chattinessIcon: Record<Chattiness, React.ReactNode> = {
+    quiet: <Volume className="size-4" />,
+    normal: <Volume1 className="size-4" />,
+    chatty: <Volume2 className="size-4" />,
+  }
 
   const zapTip = zapped
     ? "Zapped — responding freely for 30 seconds"
@@ -126,6 +150,21 @@ export function AgentControls({
           ) : (
             <Megaphone className="size-4" />
           )}
+        </ControlButton>
+        <ControlButton
+          disabled={disabled}
+          onTip={withCaption ? setTip : undefined}
+          tip={chattinessTip[chattiness]}
+          active={chattiness !== "quiet"}
+          onClick={() =>
+            sendControl({
+              type: "set-chattiness",
+              agentId,
+              chattiness: nextChattiness[chattiness],
+            })
+          }
+        >
+          {chattinessIcon[chattiness]}
         </ControlButton>
         <ControlButton
           disabled={disabled}

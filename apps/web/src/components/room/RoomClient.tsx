@@ -168,6 +168,54 @@ export function RoomClient({
     } catch {}
   }, [slug])
 
+  // Tokens expire after an hour, and room-scoped API routes (agent invites,
+  // admit, doc) authenticate with the stored one — so a meeting running past
+  // the TTL strands those calls with 401s while the WebRTC session carries on
+  // fine. Renew the proof in the background well before it lapses; the server
+  // keeps the same identity for a verified refresh.
+  useEffect(() => {
+    if (!session) return
+    const timer = setInterval(
+      () => {
+        try {
+          const raw = sessionStorage.getItem(`rejoin:${slug}`)
+          if (!raw) return
+          const stored = JSON.parse(raw) as {
+            prefs: JoinPreferences
+            rejoinToken?: string
+          }
+          if (!stored.rejoinToken) return
+          void fetch(`/api/rooms/${slug}/token`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              displayName: stored.prefs.displayName,
+              rejoinToken: stored.rejoinToken,
+              refresh: true,
+            }),
+          })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((fresh: TokenResponse | null) => {
+              // Never downgrade a good token to a "waiting" one: a failed
+              // refresh leaves the old proof in place until it expires.
+              if (fresh && !fresh.waiting) {
+                sessionStorage.setItem(
+                  `rejoin:${slug}`,
+                  JSON.stringify({
+                    prefs: stored.prefs,
+                    rejoinToken: fresh.token,
+                  }),
+                )
+              }
+            })
+            .catch(() => undefined)
+        } catch {}
+      },
+      40 * 60 * 1000,
+    )
+    return () => clearInterval(timer)
+  }, [session, slug])
+
   const handleLeave = useCallback(() => {
     try {
       sessionStorage.removeItem(`rejoin:${slug}`)

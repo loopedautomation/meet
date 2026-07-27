@@ -45,6 +45,9 @@ export const AGENT_POLICY_ATTRIBUTE = "agent.policy"
 /** "1"/"0": whether talking over this agent cuts it off (barge-in). */
 export const AGENT_BARGE_IN_ATTRIBUTE = "agent.bargein"
 
+/** Participant attribute holding an agent's effective chattiness level. */
+export const AGENT_CHATTINESS_ATTRIBUTE = "agent.chattiness"
+
 /**
  * How a participant's camera feed should be displayed, e.g. "90,h" —
  * rotation degrees plus flip flags. Published as an attribute so every
@@ -257,6 +260,13 @@ export const OPENAI_TTS_VOICES = [
 export const turnPolicySchema = z.enum(["open", "on-mention", "raise-hand"])
 export type TurnPolicy = z.infer<typeof turnPolicySchema>
 
+/**
+ * How much an agent says when it has the floor — independent of its turn
+ * policy, which controls when it may speak at all.
+ */
+export const chattinessSchema = z.enum(["quiet", "normal", "chatty"])
+export type Chattiness = z.infer<typeof chattinessSchema>
+
 /** True for infrastructure participants that the UI should not render. */
 export function isServiceParticipant(metadata: string | undefined): boolean {
   return parseParticipantMeta(metadata)?.kind === "service"
@@ -282,6 +292,8 @@ export const agentControlSchema = z.object({
     // Allow or forbid barge-in (speech cutting the agent off mid-reply).
     // Carries `bargeIn`.
     "set-barge-in",
+    // Change how much the agent says when it speaks. Carries `chattiness`.
+    "set-chattiness",
     // Not a control the bridge acts on — removal goes through the control
     // API. Broadcast purely so the room can say who did it, like every
     // other agent control.
@@ -290,6 +302,7 @@ export const agentControlSchema = z.object({
   agentId: z.string(),
   policy: turnPolicySchema.optional(),
   bargeIn: z.boolean().optional(),
+  chattiness: chattinessSchema.optional(),
   /**
    * Who pressed the button. Optional so older clients still parse, and
    * carried on the message rather than resolved from the sender identity:
@@ -378,6 +391,10 @@ export function describeAgentControl(
     case "set-turn-policy":
       return control.policy
         ? `set ${agentName}'s response mode to ${control.policy}`
+        : null
+    case "set-chattiness":
+      return control.chattiness
+        ? `set ${agentName}'s chattiness to ${control.chattiness}`
         : null
     case "set-barge-in":
       return control.bargeIn === undefined
@@ -854,7 +871,7 @@ export function chunkCanvasChanges(
  */
 const canvasPointSchema = z.object({ x: z.number(), y: z.number() })
 
-export const canvasColorSchema = z.enum([
+const CANVAS_COLORS = [
   "black",
   "grey",
   "light-violet",
@@ -868,8 +885,110 @@ export const canvasColorSchema = z.enum([
   "light-red",
   "red",
   "white",
-])
-export type CanvasColor = z.infer<typeof canvasColorSchema>
+] as const
+export type CanvasColor = (typeof CANVAS_COLORS)[number]
+
+/** Common off-palette names models reach for, mapped to the palette. */
+const CANVAS_COLOR_ALIASES: Record<string, CanvasColor> = {
+  gray: "grey",
+  silver: "grey",
+  purple: "violet",
+  magenta: "violet",
+  indigo: "violet",
+  lavender: "light-violet",
+  pink: "light-red",
+  salmon: "light-red",
+  navy: "blue",
+  azure: "blue",
+  cyan: "light-blue",
+  teal: "light-blue",
+  "sky-blue": "light-blue",
+  lime: "light-green",
+  mint: "light-green",
+  emerald: "green",
+  olive: "green",
+  gold: "yellow",
+  amber: "yellow",
+  brown: "orange",
+  maroon: "red",
+  crimson: "red",
+  scarlet: "red",
+  dark: "black",
+  light: "white",
+  cream: "white",
+  beige: "white",
+}
+
+/** The stroke palette in RGB, for snapping hex inputs to the nearest name. */
+const CANVAS_COLOR_RGB: Record<CanvasColor, [number, number, number]> = {
+  black: [0x1e, 0x1e, 0x1e],
+  grey: [0x86, 0x8e, 0x96],
+  "light-violet": [0xb1, 0x97, 0xfc],
+  violet: [0x97, 0x75, 0xfa],
+  blue: [0x19, 0x71, 0xc2],
+  "light-blue": [0x74, 0xc0, 0xfc],
+  yellow: [0xf0, 0x8c, 0x00],
+  orange: [0xe8, 0x59, 0x0c],
+  green: [0x2f, 0x9e, 0x44],
+  "light-green": [0x69, 0xdb, 0x7c],
+  "light-red": [0xff, 0xa8, 0xa8],
+  red: [0xe0, 0x31, 0x31],
+  white: [0xff, 0xff, 0xff],
+}
+
+function nearestCanvasColor(hex: string): CanvasColor {
+  const digits =
+    hex.length === 4
+      ? hex.replace(/[0-9a-f]/gi, (c) => c + c).slice(1)
+      : hex.slice(1)
+  const n = Number.parseInt(digits, 16)
+  const [r, g, b] = [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
+  let best: CanvasColor = "black"
+  let bestDist = Number.POSITIVE_INFINITY
+  for (const name of CANVAS_COLORS) {
+    const [cr, cg, cb] = CANVAS_COLOR_RGB[name]
+    const dist = (r - cr) ** 2 + (g - cg) ** 2 + (b - cb) ** 2
+    if (dist < bestDist) {
+      bestDist = dist
+      best = name
+    }
+  }
+  return best
+}
+
+/**
+ * Lenient by design: a wrong color must never fail a draw. Models reach
+ * for names and hex codes outside the 13-color vocabulary, and a rejected
+ * op makes voice agents announce the error and retry aloud — snapping to
+ * the closest palette color is always the better meeting experience.
+ */
+export const canvasColorSchema = z
+  .string()
+  .transform((raw, ctx): CanvasColor => {
+    const name = raw
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, "-")
+    if ((CANVAS_COLORS as readonly string[]).includes(name)) {
+      return name as CanvasColor
+    }
+    const aliased = CANVAS_COLOR_ALIASES[name]
+    if (aliased) return aliased
+    // "dark-green", "light-orange": drop the shade prefix and take the base.
+    const base = name.replace(/^(light|dark|pale|deep|bright)-/, "")
+    if ((CANVAS_COLORS as readonly string[]).includes(base)) {
+      return base as CanvasColor
+    }
+    if (CANVAS_COLOR_ALIASES[base]) return CANVAS_COLOR_ALIASES[base]
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(name)) {
+      return nearestCanvasColor(name)
+    }
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: `unknown color "${raw}"; use one of ${CANVAS_COLORS.join(", ")}`,
+    })
+    return z.NEVER
+  })
 
 export const canvasOpSchema = z.discriminatedUnion("op", [
   // Create ops may omit x/y: the bridge auto-places the shape in free space
@@ -1055,6 +1174,12 @@ export const tokenRequestSchema = z.object({
   rejoinToken: z.string().optional(),
   /** The creator's key from room creation — starts the meeting on arrival. */
   hostKey: z.string().optional(),
+  /**
+   * A mid-meeting token renewal: keep the identity from the (verified)
+   * rejoinToken instead of minting a fresh one, so room-scoped API calls
+   * keep working past the token TTL without the participant reconnecting.
+   */
+  refresh: z.boolean().optional(),
 })
 export type TokenRequest = z.infer<typeof tokenRequestSchema>
 

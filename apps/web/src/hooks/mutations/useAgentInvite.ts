@@ -4,7 +4,12 @@ import { useMutation } from "@tanstack/react-query"
 import { readHostKey } from "@/lib/hostKey"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 
-export type AgentMode = "realtime" | "gemini" | "pipeline" | "elevenlabs"
+export type AgentMode =
+  | "realtime"
+  | "realtime-mini"
+  | "gemini"
+  | "pipeline"
+  | "elevenlabs"
 
 export function useAgentInvite(slug: string) {
   return useMutation({
