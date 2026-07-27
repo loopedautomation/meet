@@ -122,7 +122,10 @@ function baseElement(id: string, at: number): LooseElement {
     fillStyle: "solid",
     strokeWidth: 2,
     strokeStyle: "solid",
-    roughness: 1,
+    // Excalidraw's "sloppiness": 0 = architect (clean lines). Agent
+    // diagrams are read, not doodled — the hand-drawn wobble costs
+    // legibility on dense boards.
+    roughness: 0,
     opacity: 100,
     groupIds: [],
     frameId: null,
