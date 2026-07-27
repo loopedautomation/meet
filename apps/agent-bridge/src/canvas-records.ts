@@ -321,6 +321,84 @@ function placeCreate(
   return { x, y, nudged: x !== desired.x || y !== desired.y }
 }
 
+/**
+ * A radial "mind map" arrangement: the most connected node sits at the
+ * center, its neighbours ring around it, and each subtree fans out inside
+ * its parent's angular sector — the organic spider look, versus dagre's
+ * layered flowchart rows. Deterministic: BFS from the hub, sectors split by
+ * subtree leaf counts. Disconnected shapes drop into a row underneath.
+ */
+function radialLayout(
+  connectable: ReadonlyMap<string, { w: number; h: number }>,
+  edges: { from?: string; to?: string }[],
+): { nodeId: string; x: number; y: number }[] {
+  const adj = new Map<string, string[]>()
+  for (const id of connectable.keys()) adj.set(id, [])
+  for (const e of edges) {
+    if (!e.from || !e.to || e.from === e.to) continue
+    if (!adj.get(e.from)!.includes(e.to)) adj.get(e.from)!.push(e.to)
+    if (!adj.get(e.to)!.includes(e.from)) adj.get(e.to)!.push(e.from)
+  }
+  const hub = [...connectable.keys()].reduce((best, id) =>
+    adj.get(id)!.length > adj.get(best)!.length ? id : best,
+  )
+  // BFS tree from the hub, keeping children in first-seen order.
+  const depth = new Map<string, number>([[hub, 0]])
+  const children = new Map<string, string[]>()
+  const queue = [hub]
+  while (queue.length) {
+    const id = queue.shift()!
+    for (const next of adj.get(id)!) {
+      if (depth.has(next)) continue
+      depth.set(next, depth.get(id)! + 1)
+      children.set(id, [...(children.get(id) ?? []), next])
+      queue.push(next)
+    }
+  }
+  const leaves = (id: string): number => {
+    const kids = children.get(id) ?? []
+    return kids.length === 0
+      ? 1
+      : kids.reduce((sum, kid) => sum + leaves(kid), 0)
+  }
+  const RING = 280
+  const centers = new Map<string, { x: number; y: number }>()
+  const assign = (id: string, a0: number, a1: number) => {
+    const d = depth.get(id)!
+    const mid = (a0 + a1) / 2
+    centers.set(id, {
+      x: d === 0 ? 0 : Math.cos(mid) * d * RING,
+      y: d === 0 ? 0 : Math.sin(mid) * d * RING,
+    })
+    const kids = children.get(id) ?? []
+    const total = kids.reduce((sum, kid) => sum + leaves(kid), 0)
+    // The hub's subtrees share the full circle; deeper nodes fan their
+    // children inside their own sector so branches don't cross.
+    let cursor = a0
+    for (const kid of kids) {
+      const span = ((a1 - a0) * leaves(kid)) / (total || 1)
+      assign(kid, cursor, cursor + span)
+      cursor += span
+    }
+  }
+  assign(hub, 0, Math.PI * 2)
+  const nodes: { nodeId: string; x: number; y: number }[] = []
+  for (const [id, c] of centers) {
+    const size = connectable.get(id)!
+    nodes.push({ nodeId: id, x: c.x - size.w / 2, y: c.y - size.h / 2 })
+  }
+  // Shapes with no path to the hub: a plain row under the map.
+  const strayY =
+    Math.max(...nodes.map((n) => n.y + connectable.get(n.nodeId)!.h)) + 120
+  let strayX = Math.min(...nodes.map((n) => n.x))
+  for (const id of connectable.keys()) {
+    if (centers.has(id)) continue
+    nodes.push({ nodeId: id, x: strayX, y: strayY })
+    strayX += connectable.get(id)!.w + 60
+  }
+  return nodes
+}
+
 export function buildCanvasRecords(
   rawOps: CanvasOp[],
   existing: ReadonlyMap<string, CanvasRecord>,
@@ -461,19 +539,32 @@ export function buildCanvasRecords(
         connectable.has(op.from) &&
         connectable.has(op.to),
     )
+    // The agent picks the arrangement per block: layered flowchart (the
+    // default) or a radial mind map around the most connected hub.
+    const layoutStyle =
+      ops.reduce<"flowchart" | "mindmap" | null>(
+        (style, op) => (op.op === "layout" ? op.style : style),
+        null,
+      ) ?? "flowchart"
     if (edges.length > 0 && connectable.size >= 2) {
-      const graph = new dagre.graphlib.Graph()
-      graph.setGraph({ rankdir: "TB", nodesep: 110, ranksep: 130 })
-      graph.setDefaultEdgeLabel(() => ({}))
-      for (const [nodeId, size] of connectable) {
-        graph.setNode(nodeId, { width: size.w, height: size.h })
+      let nodes: { nodeId: string; x: number; y: number }[]
+      let graph: dagre.graphlib.Graph | null = null
+      if (layoutStyle === "mindmap") {
+        nodes = radialLayout(connectable, edges)
+      } else {
+        graph = new dagre.graphlib.Graph()
+        graph.setGraph({ rankdir: "TB", nodesep: 110, ranksep: 130 })
+        graph.setDefaultEdgeLabel(() => ({}))
+        for (const [nodeId, size] of connectable) {
+          graph.setNode(nodeId, { width: size.w, height: size.h })
+        }
+        for (const edge of edges) graph.setEdge(edge.from!, edge.to!)
+        dagre.layout(graph)
+        nodes = [...connectable.keys()].map((nodeId) => {
+          const n = graph!.node(nodeId)
+          return { nodeId, x: n.x - n.width / 2, y: n.y - n.height / 2 }
+        })
       }
-      for (const edge of edges) graph.setEdge(edge.from!, edge.to!)
-      dagre.layout(graph)
-      const nodes = [...connectable.keys()].map((nodeId) => {
-        const n = graph.node(nodeId)
-        return { nodeId, x: n.x - n.width / 2, y: n.y - n.height / 2 }
-      })
       const minX = Math.min(...nodes.map((n) => n.x))
       const minY = Math.min(...nodes.map((n) => n.y))
       const bboxW =
@@ -490,8 +581,37 @@ export function buildCanvasRecords(
       for (let i = 0; i < ops.length; i++) {
         const op = ops[i]
         const coords = placed.get((op as { id?: string }).id ?? "")
-        if (coords && (op.op === "rect" || op.op === "ellipse")) {
+        if (
+          coords &&
+          (op.op === "rect" || op.op === "ellipse" || op.op === "diamond")
+        ) {
           ops[i] = { ...op, ...coords }
+        }
+        // Arrows inherit dagre's edge routing as waypoints, so they bend
+        // around intervening nodes instead of slicing straight through.
+        // (Mind maps radiate from a hub, so their arrows stay direct.)
+        if (
+          graph &&
+          op.op === "arrow" &&
+          !op.via &&
+          op.from &&
+          op.to &&
+          placed.has(op.from) &&
+          placed.has(op.to)
+        ) {
+          const routed = graph.edge(op.from, op.to) as
+            | { points?: { x: number; y: number }[] }
+            | undefined
+          const inner = routed?.points?.slice(1, -1) ?? []
+          if (inner.length > 0) {
+            ops[i] = {
+              ...op,
+              via: inner.map((p) => ({
+                x: p.x - minX + spot.x,
+                y: p.y - minY + spot.y,
+              })),
+            }
+          }
         }
       }
       actions.push(
@@ -613,6 +733,36 @@ export function buildCanvasRecords(
     return { x: c.x + dx * scale, y: c.y + dy * scale }
   }
 
+  /**
+   * The topmost bindable shape under (or within `pad` px of) a point —
+   * how free arrow endpoints snap to the shape they were aimed at.
+   */
+  const shapeAtPoint = (
+    point: { x: number; y: number },
+    pad = 12,
+  ): [string, LooseElement] | null => {
+    let found: [string, LooseElement] | null = null
+    for (const [id, entry] of working) {
+      const el = liveElement(entry)
+      if (!el || el.containerId) continue
+      const type = el.type as string
+      if (type === "arrow" || type === "freedraw" || type === "text") continue
+      const { x, y, width, height } = el as Partial<
+        Record<"x" | "y" | "width" | "height", number>
+      >
+      if (typeof x !== "number" || typeof y !== "number") continue
+      if (
+        point.x >= x - pad &&
+        point.x <= x + (width ?? 0) + pad &&
+        point.y >= y - pad &&
+        point.y <= y + (height ?? 0) + pad
+      ) {
+        found = [id, el]
+      }
+    }
+    return found
+  }
+
   /** Absolute start plus relative points for an arrow between anchors. */
   const arrowGeometry = (
     fromShape: LooseElement | null,
@@ -640,6 +790,59 @@ export function buildCanvasRecords(
       [end.x - start.x, end.y - start.y],
     ]
     return { start, end, points }
+  }
+
+  /**
+   * A self-loop's waypoints: out the right side of the shape and back, so
+   * "A depends on itself" reads as a circle instead of a zero-length stub.
+   */
+  const selfLoopVia = (el: LooseElement) => {
+    const c = centerOf(el)
+    const w = ((el.width as number) ?? 0) / 2
+    const h = ((el.height as number) ?? 0) / 2
+    return [
+      { x: c.x + w + 40, y: c.y - h / 2 - 24 },
+      { x: c.x + w + 64, y: c.y },
+      { x: c.x + w + 40, y: c.y + h / 2 + 24 },
+    ]
+  }
+
+  /**
+   * A bowed midpoint for the k-th arrow between the same two shapes, so
+   * parallel and opposite-direction arrows fan out instead of stacking on
+   * one line. The first arrow of a pair stays straight; later ones bow to
+   * alternating sides, further out each round.
+   */
+  const parallelBow = (
+    arrowId: string,
+    fromId: string,
+    toId: string,
+    fromShape: LooseElement,
+    toShape: LooseElement,
+  ) => {
+    let priors = 0
+    for (const [otherId, entry] of working) {
+      if (otherId === arrowId) continue
+      const other = liveElement(entry)
+      if (!other || other.type !== "arrow") continue
+      const sb = (other.startBinding as { elementId?: string } | null)
+        ?.elementId
+      const eb = (other.endBinding as { elementId?: string } | null)?.elementId
+      if ((sb === fromId && eb === toId) || (sb === toId && eb === fromId)) {
+        priors++
+      }
+    }
+    if (priors === 0) return []
+    const a = centerOf(fromShape)
+    const b = centerOf(toShape)
+    const len = Math.hypot(b.x - a.x, b.y - a.y) || 1
+    const offset = Math.ceil(priors / 2) * 48 * (priors % 2 === 1 ? 1 : -1)
+    return [
+      {
+        x: (a.x + b.x) / 2 + (-(b.y - a.y) / len) * offset,
+        y: (a.y + b.y) / 2 + ((b.x - a.x) / len) * offset,
+      },
+    ]
   }
 
   const bboxOf = (points: [number, number][]) => ({
@@ -852,24 +1055,48 @@ export function buildCanvasRecords(
         actions.push(`freehand line (id ${op.id})`)
         break
       }
+      case "layout":
+        // Consumed by the pre-pass that arranges connected shapes.
+        break
       case "arrow": {
         const id = resolveId(op.id)
-        const fromId = op.from ? resolveId(op.from) : null
-        const toId = op.to ? resolveId(op.to) : null
-        const fromShape = fromId ? liveElement(working.get(fromId)) : null
-        const toShape = toId ? liveElement(working.get(toId)) : null
+        let fromId = op.from ? resolveId(op.from) : null
+        let toId = op.to ? resolveId(op.to) : null
+        let fromShape = fromId ? liveElement(working.get(fromId)) : null
+        let toShape = toId ? liveElement(working.get(toId)) : null
         if (fromId && !fromShape) {
           warnings.push(`arrow "${op.id}": no shape with id ${op.from}.`)
         }
         if (toId && !toShape) {
           warnings.push(`arrow "${op.id}": no shape with id ${op.to}.`)
         }
+        // Free endpoints that land on (or near) a shape bind to it: an
+        // arrow that merely points at a box floats away the moment the box
+        // moves, which is never what "arrow to that box" meant.
+        if (!fromShape && op.fromPoint) {
+          const hit = shapeAtPoint(op.fromPoint)
+          if (hit) [fromId, fromShape] = hit
+        }
+        if (!toShape && op.toPoint) {
+          const hit = shapeAtPoint(op.toPoint)
+          if (hit) [toId, toShape] = hit
+        }
+        // Without explicit waypoints, route around collisions: self-loops
+        // circle out of the shape, and repeat arrows between the same pair
+        // bow to alternating sides instead of stacking on one line.
+        let via = op.via ?? []
+        if (via.length === 0 && fromShape && toShape && fromId && toId) {
+          via =
+            fromId === toId
+              ? selfLoopVia(fromShape)
+              : parallelBow(id, fromId, toId, fromShape, toShape)
+        }
         const { start, points } = arrowGeometry(
           fromShape,
           toShape,
           op.fromPoint,
           op.toPoint,
-          op.via ?? [],
+          via,
         )
         const element: LooseElement = {
           ...baseElement(id, at),
@@ -887,6 +1114,9 @@ export function buildCanvasRecords(
           startArrowhead: null,
           endArrowhead: "arrow",
           elbowed: false,
+          // The op's own choice wins; otherwise waypointed arrows curve
+          // smoothly and plain point-to-point arrows stay straight.
+          roundness: (op.rounded ?? via.length > 0) ? { type: 2 } : null,
         }
         const bound: { type: string; id: string }[] = []
         if (op.label) {

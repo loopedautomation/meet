@@ -951,6 +951,12 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
      * straight through the boxes it passes.
      */
     via: z.array(canvasPointSchema).max(16).optional(),
+    /**
+     * Curved vs straight rendering. Omitted, the bridge decides: arrows
+     * with waypoints (or auto-routed around a collision) curve, plain
+     * point-to-point arrows stay straight.
+     */
+    rounded: z.boolean().optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
   }),
@@ -989,6 +995,13 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
   }),
   z.object({
     op: z.literal("clear"),
+  }),
+  // How this block's arrow-connected shapes are auto-arranged: "flowchart"
+  // is layered top-down (the default), "mindmap" is radial around the most
+  // connected hub — the organic spider style. Applies to the whole block.
+  z.object({
+    op: z.literal("layout"),
+    style: z.enum(["flowchart", "mindmap"]),
   }),
   // A whole structured diagram from Mermaid flowchart source: the bridge
   // parses the topology and lays it out with a real graph-layout algorithm,

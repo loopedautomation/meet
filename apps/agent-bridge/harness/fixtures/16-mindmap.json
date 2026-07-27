@@ -1,0 +1,24 @@
+{
+  "note": "layout:mindmap — radial spider layout around the hub. Watch: hub centered, branches fanned in sectors, no layered rows, stray shape rowed underneath.",
+  "ops": [
+    { "op": "layout", "style": "mindmap" },
+    { "op": "rect", "id": "launch", "w": 200, "h": 90, "label": "Product Launch" },
+    { "op": "rect", "id": "mktg", "w": 170, "h": 70, "label": "Marketing" },
+    { "op": "rect", "id": "eng", "w": 170, "h": 70, "label": "Engineering" },
+    { "op": "rect", "id": "sales", "w": 170, "h": 70, "label": "Sales" },
+    { "op": "rect", "id": "social", "w": 150, "h": 60, "label": "Social" },
+    { "op": "rect", "id": "press", "w": 150, "h": 60, "label": "Press Kit" },
+    { "op": "rect", "id": "beta", "w": 150, "h": 60, "label": "Beta Program" },
+    { "op": "rect", "id": "perf", "w": 150, "h": 60, "label": "Perf Testing" },
+    { "op": "rect", "id": "training", "w": 150, "h": 60, "label": "Training" },
+    { "op": "rect", "id": "stray", "w": 150, "h": 60, "label": "Unconnected" },
+    { "op": "arrow", "id": "m1", "from": "launch", "to": "mktg" },
+    { "op": "arrow", "id": "m2", "from": "launch", "to": "eng" },
+    { "op": "arrow", "id": "m3", "from": "launch", "to": "sales" },
+    { "op": "arrow", "id": "m4", "from": "mktg", "to": "social" },
+    { "op": "arrow", "id": "m5", "from": "mktg", "to": "press" },
+    { "op": "arrow", "id": "m6", "from": "eng", "to": "beta" },
+    { "op": "arrow", "id": "m7", "from": "eng", "to": "perf" },
+    { "op": "arrow", "id": "m8", "from": "sales", "to": "training" }
+  ]
+}
