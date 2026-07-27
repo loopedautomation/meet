@@ -424,6 +424,7 @@ export async function runRealtimeAgent(opts: {
             agentId: entry.id,
             name: "draw_on_canvas",
             arguments: instruction.slice(0, 300),
+            source: "body",
             at: drawStartedAt,
           })
           workInFlight++
@@ -471,6 +472,7 @@ export async function runRealtimeAgent(opts: {
               name: "draw_on_canvas",
               content: outcomes.join(" ").slice(0, 8000),
               durationMs: Date.now() - drawStartedAt,
+              source: "body",
               at: Date.now(),
             })
             const failed = outcomes.every((o) => !o.startsWith("Drew:"))

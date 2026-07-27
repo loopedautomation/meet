@@ -204,6 +204,7 @@ export class LoopedVoiceAgent extends voice.Agent {
         agentId: entry.id,
         name: "update_shared_doc",
         arguments: "",
+        source: "body",
         at: startedAt,
       })
       void callbacks
@@ -216,6 +217,7 @@ export class LoopedVoiceAgent extends voice.Agent {
             name: "update_shared_doc",
             content: outcome ?? "",
             durationMs: Date.now() - startedAt,
+            source: "body",
             at: Date.now(),
           })
         })
@@ -227,6 +229,7 @@ export class LoopedVoiceAgent extends voice.Agent {
         agentId: entry.id,
         name: "draw_on_canvas",
         arguments: "",
+        source: "body",
         at: startedAt,
       })
       void callbacks
@@ -239,6 +242,7 @@ export class LoopedVoiceAgent extends voice.Agent {
             name: "draw_on_canvas",
             content: content ?? "",
             durationMs: Date.now() - startedAt,
+            source: "body",
             at: Date.now(),
           })
         })

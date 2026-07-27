@@ -905,6 +905,7 @@ export default defineAgent({
             name: "update_shared_doc",
             content: outcome,
             durationMs: 0,
+            source: "body",
             at: Date.now(),
           })
         }
@@ -918,6 +919,7 @@ export default defineAgent({
             name: "draw_on_canvas",
             content: outcome,
             durationMs: 0,
+            source: "body",
             at: Date.now(),
           })
         }

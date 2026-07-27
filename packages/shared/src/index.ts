@@ -410,6 +410,13 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     agentId: z.string(),
     name: z.string(),
     arguments: z.string(),
+    /**
+     * Who acted: "brain" (the looped agent's own tool work, the default)
+     * or "body" (the meeting surface — drawing, doc writes — performed by
+     * the bridge on the voice model's behalf). Optional so old events and
+     * bridges still parse.
+     */
+    source: z.enum(["brain", "body"]).optional(),
     at: z.number(),
   }),
   z.object({
@@ -418,6 +425,7 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     name: z.string(),
     content: z.string(),
     durationMs: z.number(),
+    source: z.enum(["brain", "body"]).optional(),
     at: z.number(),
   }),
   z.object({
