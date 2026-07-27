@@ -550,6 +550,9 @@ export async function runRealtimeAgent(opts: {
     model: realtime.model,
     voice: realtime.voice,
     apiKey,
+    transcriptionHint:
+      `This is a meeting. One participant is an AI assistant named ` +
+      `"${entry.name}", who is often addressed by that exact name.`,
     instructions: instructions(
       entry,
       canSeeScreens,

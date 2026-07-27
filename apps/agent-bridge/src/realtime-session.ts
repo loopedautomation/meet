@@ -123,6 +123,12 @@ export type RealtimeSessionOptions = {
   lookAtScreen?: () => Promise<string>
   /** Leave the meeting on request; removal happens shortly after. */
   leaveMeeting?: () => void
+  /**
+   * A hint fed to the input transcriber (gated sessions): the words a turn
+   * decision hinges on — above all the agent's own name, which STT
+   * otherwise renders as a homophone the mention regex can't match.
+   */
+  transcriptionHint?: string
   /** Speak these 24 kHz mono PCM16 bytes into the room. */
   onAudio: (pcm: Uint8Array) => void
   /** The human started talking over us — cut off whatever is still playing. */
@@ -383,6 +389,43 @@ export class RealtimeSession implements VoiceSession {
     this.#resolveReady = resolve
   })
   #responding = false
+  /**
+   * Any response in flight, created → done — including text-only ones,
+   * which #responding (audio) never sees. Creating a response while one is
+   * active is an API error the server rejects; before this existed, every
+   * silent deliberation raced the next mention and the mention lost — the
+   * main "the agent ignored me" failure mode.
+   */
+  #activeResponse: "spoken" | "silent" | null = null
+  /** A response worth waiting for, queued behind the active one. */
+  #queuedResponse: Record<string, unknown> | null = null
+
+  /**
+   * The only way a response gets created. Queued creations fire when the
+   * active response finishes; an active SILENT response (deliberation,
+   * chat reply) is cancelled to make way — an addressed turn always
+   * outranks housekeeping. Returns false when the creation was dropped.
+   */
+  #createResponse(
+    kind: "spoken" | "silent",
+    response?: Record<string, unknown>,
+    opts?: { queue?: boolean },
+  ): boolean {
+    const payload = response
+      ? { type: "response.create", response }
+      : { type: "response.create" }
+    if (this.#activeResponse) {
+      if (!opts?.queue) return false
+      this.#queuedResponse = payload // last ask wins
+      if (this.#activeResponse === "silent") {
+        this.#send({ type: "response.cancel" })
+      }
+      return true
+    }
+    this.#activeResponse = kind
+    this.#send(payload)
+    return true
+  }
 
   constructor(opts: RealtimeSessionOptions) {
     this.#opts = opts
@@ -424,7 +467,17 @@ export class RealtimeSession implements VoiceSession {
               format: { type: "audio/pcm", rate: REALTIME_SAMPLE_RATE },
               // Gated sessions need the turn's text to check for a mention.
               ...(this.#opts.gate
-                ? { transcription: { model: "gpt-4o-mini-transcribe" } }
+                ? {
+                    transcription: {
+                      model: "gpt-4o-mini-transcribe",
+                      // Bias the transcriber toward the one word the gate
+                      // hinges on — without it, names come back as their
+                      // homophones ("Scott") and the mention never matches.
+                      ...(this.#opts.transcriptionHint
+                        ? { prompt: this.#opts.transcriptionHint }
+                        : {}),
+                    },
+                  }
                 : {}),
               // Server-side VAD is what makes this feel like a conversation:
               // the model decides when a turn ended and interrupts itself
@@ -448,7 +501,12 @@ export class RealtimeSession implements VoiceSession {
           })),
         },
       })
-      this.#resolveReady()
+      // Ready when the server ACCEPTS the configuration ("session.updated"),
+      // not when the socket opens: a rejected session.update used to leave
+      // a gated agent looking healthy but permanently mute (no transcription
+      // events ever arrive). The timer is a safety net for servers that
+      // never ack — degraded is better than stuck.
+      setTimeout(() => this.#resolveReady(), 5_000)
     }
 
     ws.onmessage = (raw) => {
@@ -481,10 +539,28 @@ export class RealtimeSession implements VoiceSession {
         }
         this.#opts.onAudio(fromBase64(event.delta as string))
         break
-      case "response.done":
-        this.#responding = false
-        this.#opts.onIdle?.()
+      case "session.updated":
+        // The server accepted our configuration (incl. transcription for
+        // gated sessions) — the session is genuinely ready.
+        this.#resolveReady()
         break
+      case "response.created":
+        // Server-initiated responses (gate open, VAD auto-response) never
+        // went through #createResponse — track them too.
+        this.#activeResponse ??= "spoken"
+        break
+      case "response.done": {
+        this.#responding = false
+        this.#activeResponse = null
+        this.#opts.onIdle?.()
+        const queued = this.#queuedResponse
+        if (queued) {
+          this.#queuedResponse = null
+          this.#activeResponse = "spoken"
+          this.#send(queued)
+        }
+        break
+      }
       case "input_audio_buffer.speech_started":
         // The human started talking over us: drop what we were about to say.
         this.#responding = false
@@ -501,7 +577,7 @@ export class RealtimeSession implements VoiceSession {
         const partial =
           (this.#partialTranscripts.get(item) ?? "") + String(event.delta ?? "")
         this.#partialTranscripts.set(item, partial)
-        if (this.#earlyAnswered.has(item) || this.#responding) break
+        if (this.#earlyAnswered.has(item)) break
         if (!gate.mention.test(partial)) break
         // Only a full "speak" decision may fire early. Raise-hand (and any
         // other outcome) keeps the slow path: the hand-raise decision wants
@@ -509,13 +585,18 @@ export class RealtimeSession implements VoiceSession {
         if (gate.decide(true).action !== "speak") break
         this.#earlyAnswered.add(item)
         gate.onDecision?.(partial, "speak")
-        this.#send({ type: "response.create" })
+        // Queued if something else is mid-flight — a mention must never be
+        // dropped because a deliberation happened to be running.
+        this.#createResponse("spoken", undefined, { queue: true })
         break
       }
       case "conversation.item.input_audio_transcription.failed": {
         const item = String(event.item_id ?? "")
         this.#partialTranscripts.delete(item)
         this.#earlyAnswered.delete(item)
+        // Visible in the debug log: a gated agent whose turns fail to
+        // transcribe is mute for a reason nobody can otherwise see.
+        this.#opts.gate?.onDecision?.("(transcription failed)", "ignore")
         break
       }
       case "conversation.item.input_audio_transcription.completed": {
@@ -529,7 +610,12 @@ export class RealtimeSession implements VoiceSession {
         const gate = this.#opts.gate
         if (!gate || this.#gateOpen) break
         const transcript = String(event.transcript ?? "")
-        if (!transcript.trim()) break
+        if (!transcript.trim()) {
+          // A turn the transcriber returned empty for ("Scout?") would
+          // otherwise vanish without a trace in the debug log.
+          gate.onDecision?.("(empty transcript)", "ignore")
+          break
+        }
         const decision = gate.decide(gate.mention.test(transcript))
         gate.onDecision?.(transcript, decision.action)
         if (decision.action === "raise-hand") {
@@ -537,14 +623,12 @@ export class RealtimeSession implements VoiceSession {
           // floor to ask for — no deliberation needed, hand goes straight up.
           gate.onHandRaise()
         } else if (decision.action === "speak") {
-          if (!this.#responding) this.#send({ type: "response.create" })
-        } else if (decision.action === "deliberate" && !this.#responding) {
-          this.#send({
-            type: "response.create",
-            response: {
-              output_modalities: ["text"],
-              instructions: DELIBERATE_INSTRUCTIONS,
-            },
+          this.#createResponse("spoken", undefined, { queue: true })
+        } else if (decision.action === "deliberate") {
+          // Best-effort: never queued, and skipped while anything runs.
+          this.#createResponse("silent", {
+            output_modalities: ["text"],
+            instructions: DELIBERATE_INSTRUCTIONS,
           })
         }
         break
@@ -613,7 +697,7 @@ export class RealtimeSession implements VoiceSession {
         type: "conversation.item.create",
         item: { type: "function_call_output", call_id: call.call_id, output },
       })
-      this.#send({ type: "response.create" })
+      this.#createResponse("spoken", undefined, { queue: true })
     }
 
     let request: string
@@ -665,10 +749,10 @@ export class RealtimeSession implements VoiceSession {
         content: [{ type: "input_text", text: note }],
       },
     })
-    // Speak to the outcome unless mid-reply; then it surfaces next turn.
+    // Speak to the outcome unless mid-response; then it surfaces next turn.
     // A cancelled task stays silent — the cancel_task ack already spoke.
-    if (!this.#responding && !note.startsWith("[task cancelled]")) {
-      this.#send({ type: "response.create" })
+    if (!note.startsWith("[task cancelled]")) {
+      this.#createResponse("spoken")
     }
   }
 
@@ -685,7 +769,7 @@ export class RealtimeSession implements VoiceSession {
           : "There was no task running.",
       },
     })
-    this.#send({ type: "response.create" })
+    this.#createResponse("spoken", undefined, { queue: true })
   }
 
   async #readDocText(): Promise<string> {
@@ -742,7 +826,7 @@ export class RealtimeSession implements VoiceSession {
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: callId, output },
     })
-    this.#send({ type: "response.create" })
+    this.#createResponse("spoken", undefined, { queue: true })
   }
 
   /**
@@ -761,7 +845,7 @@ export class RealtimeSession implements VoiceSession {
       type: "conversation.item.create",
       item: { type: "function_call_output", call_id: callId, output },
     })
-    this.#send({ type: "response.create" })
+    this.#createResponse("spoken", undefined, { queue: true })
   }
 
   /** The model posted to the meeting chat; ack the call without forcing speech. */
@@ -804,17 +888,13 @@ export class RealtimeSession implements VoiceSession {
    */
   promptChatReply(line: string) {
     this.notifyChat(line)
-    if (this.#responding) return
-    this.#send({
-      type: "response.create",
-      response: {
-        output_modalities: ["text"],
-        instructions:
-          "You were just addressed in the meeting's text chat (the last " +
-          "[meeting chat] message). Reply briefly into the chat with the " +
-          `${CHAT_TOOL} tool — text only, do not speak. If you genuinely ` +
-          "have nothing to add, reply with a short acknowledgement.",
-      },
+    this.#createResponse("silent", {
+      output_modalities: ["text"],
+      instructions:
+        "You were just addressed in the meeting's text chat (the last " +
+        "[meeting chat] message). Reply briefly into the chat with the " +
+        `${CHAT_TOOL} tool — text only, do not speak. If you genuinely ` +
+        "have nothing to add, reply with a short acknowledgement.",
     })
   }
 
@@ -825,16 +905,16 @@ export class RealtimeSession implements VoiceSession {
    */
   promptSpokenReply(line: string) {
     this.notifyChat(line)
-    if (this.#responding) return
-    this.#send({
-      type: "response.create",
-      response: {
+    this.#createResponse(
+      "spoken",
+      {
         instructions:
           "You were just addressed in the meeting's text chat (the last " +
           "[meeting chat] message). Answer it ALOUD, briefly noting you're " +
           "responding to the chat message, then yield the floor.",
       },
-    })
+      { queue: true },
+    )
   }
 
   #gateOpen = false
@@ -865,19 +945,21 @@ export class RealtimeSession implements VoiceSession {
 
   /** A human called on the agent: give it the floor for one response. */
   callOn() {
-    if (this.#responding) return
-    this.#send({
-      type: "response.create",
-      response: {
+    this.#createResponse(
+      "spoken",
+      {
         instructions:
           "You raised your hand and have now been called on. Briefly say " +
           "what you wanted to contribute, then yield the floor.",
       },
-    })
+      { queue: true },
+    )
   }
 
   /** Cancel the in-progress response (tap-to-interrupt / hard mute). */
   cancelResponse() {
+    // A human cut the agent off: whatever was queued to say next is stale.
+    this.#queuedResponse = null
     if (!this.#responding) return
     this.#responding = false
     this.#send({ type: "response.cancel" })
@@ -885,11 +967,8 @@ export class RealtimeSession implements VoiceSession {
 
   /** Ask the model to say something specific (e.g. the join greeting). */
   say(text: string) {
-    // Creating a response while one is active is an API error; skip instead.
-    if (this.#responding) return
-    this.#send({
-      type: "response.create",
-      response: { instructions: `Say, more or less: ${text}` },
+    this.#createResponse("spoken", {
+      instructions: `Say, more or less: ${text}`,
     })
   }
 
