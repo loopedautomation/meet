@@ -19,7 +19,17 @@ export function Markdown({
     <div
       className={`prose prose-sm max-w-none break-words prose-headings:font-medium prose-pre:rounded-box prose-pre:bg-base-200 prose-pre:text-base-content prose-code:before:content-none prose-code:after:content-none ${className}`}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          // Open links in a new tab so navigating doesn't tear down the meeting.
+          a: ({ node: _node, ...props }) => (
+            <a {...props} target="_blank" rel="noopener noreferrer" />
+          ),
+        }}
+      >
+        {text}
+      </ReactMarkdown>
     </div>
   )
 }
