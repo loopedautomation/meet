@@ -965,7 +965,10 @@ function nearestCanvasColor(hex: string): CanvasColor {
 export const canvasColorSchema = z
   .string()
   .transform((raw, ctx): CanvasColor => {
-    const name = raw.trim().toLowerCase().replace(/[_\s]+/g, "-")
+    const name = raw
+      .trim()
+      .toLowerCase()
+      .replace(/[_\s]+/g, "-")
     if ((CANVAS_COLORS as readonly string[]).includes(name)) {
       return name as CanvasColor
     }

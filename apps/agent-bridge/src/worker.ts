@@ -10,9 +10,9 @@ import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
   AGENT_BARGE_IN_ATTRIBUTE,
+  AGENT_CHATTINESS_ATTRIBUTE,
   AGENT_DEAFENED_ATTRIBUTE,
   AGENT_MUTED_ATTRIBUTE,
-  AGENT_CHATTINESS_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
   AGENT_STATE_ATTRIBUTE,
   AGENT_VOICES,
