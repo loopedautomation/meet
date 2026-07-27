@@ -415,6 +415,17 @@ export async function runRealtimeAgent(opts: {
           drawInFlight = true
           callbacks.setState("thinking")
           debug("info", `drawing started: "${instruction.slice(0, 200)}"`)
+          // The draw is itself the visible activity: the brain composes
+          // canvas blocks directly (no tool calls), so without this the
+          // activity feed stays empty for every drawing turn.
+          const drawStartedAt = Date.now()
+          callbacks.publishActivity({
+            type: "tool_call",
+            agentId: entry.id,
+            name: "draw_on_canvas",
+            arguments: instruction.slice(0, 300),
+            at: drawStartedAt,
+          })
           workInFlight++
           try {
             const board = await readCanvas()
@@ -454,6 +465,14 @@ export async function runRealtimeAgent(opts: {
               "info",
               `drawing outcome: ${outcomes.join(" ").slice(0, 400)}`,
             )
+            callbacks.publishActivity({
+              type: "tool_result",
+              agentId: entry.id,
+              name: "draw_on_canvas",
+              content: outcomes.join(" ").slice(0, 8000),
+              durationMs: Date.now() - drawStartedAt,
+              at: Date.now(),
+            })
             const failed = outcomes.every((o) => !o.startsWith("Drew:"))
             return failed
               ? outcomes.join(" ")

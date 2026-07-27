@@ -1041,6 +1041,21 @@ export default defineAgent({
       // itself via the send_chat_message tool (see realtime-agent.ts). The
       // heard buffer gets a copy too, so the brain follows the chat as well.
       ctx.room.on("dataReceived", (payload: Uint8Array, sender, _k, topic) => {
+        if (topic === DataTopic.Canvas) {
+          // Fold every canvas diff into the worker's cache, exactly like the
+          // pipeline path. Without this the realtime bridge drew against the
+          // LAGGING snapshot store: after a client re-authored an element
+          // (Excalidraw normalizes what it mounts), the bridge's next
+          // move/update carried a stale LWW clock and silently lost on
+          // every client — first draws rendered, edits never did.
+          try {
+            const diff = canvasDiffSchema.parse(
+              JSON.parse(new TextDecoder().decode(payload)),
+            )
+            mergeIntoCanvasCache(diff.changes)
+          } catch {}
+          return
+        }
         if (topic === DataTopic.Chat) {
           try {
             const message = chatMessageSchema.parse(
