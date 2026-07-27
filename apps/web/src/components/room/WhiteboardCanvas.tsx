@@ -240,6 +240,20 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
             elements: sceneFromCache() as any,
             captureUpdate: CaptureUpdateAction.NEVER,
           })
+          // What restoreElements just did to the mounted elements is
+          // normalization, not a local edit — but it can touch CONTENT
+          // fields (repairBindings rewrites bindings, drops one whose
+          // shape hasn't streamed in yet), which the churn check can't
+          // wave through. Left unadopted, the next onSceneChange
+          // re-authors the whole board under this client's identity,
+          // over and over — an LWW clock storm every subsequent agent
+          // update/move arrives too late to beat, so "make it red" and
+          // "move it below" silently lose while delete-and-redraw wins
+          // (fresh ids race nothing). Adopting the post-restore state
+          // keeps the clock still until a human actually edits.
+          for (const element of api.getSceneElementsIncludingDeleted() as unknown as LooseElement[]) {
+            adoptCanvasRecord(element.id as string, element)
+          }
         } catch (err) {
           // One bad element must not take the board down.
           console.warn("whiteboard: scene update failed", err)
