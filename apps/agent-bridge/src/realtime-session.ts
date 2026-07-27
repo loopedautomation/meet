@@ -174,6 +174,14 @@ export type RealtimeSessionOptions = {
   }
 }
 
+/**
+ * How much silence ends a human's turn. The server default (~500ms) makes
+ * the agent pounce on mid-sentence pauses — a breath, a "let me think" —
+ * which reads as interrupting. Meetings favour patience over snappiness:
+ * a person still holds the floor through a thinking pause.
+ */
+const TURN_SILENCE_MS = Number(process.env.REALTIME_TURN_SILENCE_MS) || 900
+
 /** Silent text-only check run after unaddressed turns when gated. */
 const DELIBERATE_INSTRUCTIONS =
   "Do not speak. Silently decide: given what was just said, do you have " +
@@ -501,6 +509,7 @@ export class RealtimeSession implements VoiceSession {
                 type: "server_vad",
                 create_response: !this.#opts.gate,
                 interrupt_response: true,
+                silence_duration_ms: TURN_SILENCE_MS,
               },
             },
             output: {
@@ -949,6 +958,7 @@ export class RealtimeSession implements VoiceSession {
               type: "server_vad",
               create_response: open,
               interrupt_response: true,
+              silence_duration_ms: TURN_SILENCE_MS,
             },
           },
         },
