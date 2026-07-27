@@ -198,9 +198,7 @@ export async function POST(request: Request, { params }: Params) {
   // still-connected LiveKit participant. Only honored with verified,
   // admitted proof — never from the request body alone.
   const identity =
-    body.data.refresh && rejoinIdentity
-      ? rejoinIdentity
-      : `user-${nanoid(10)}`
+    body.data.refresh && rejoinIdentity ? rejoinIdentity : `user-${nanoid(10)}`
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),
