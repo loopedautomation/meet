@@ -450,8 +450,17 @@ export async function runRealtimeAgent(opts: {
               }
               outcomes.push(await drawCanvas(parsed.ops))
             }
-            debug("info", "drawing applied")
-            return outcomes.join(" ")
+            debug(
+              "info",
+              `drawing outcome: ${outcomes.join(" ").slice(0, 400)}`,
+            )
+            const failed = outcomes.every((o) => !o.startsWith("Drew:"))
+            return failed
+              ? outcomes.join(" ")
+              : `${outcomes.join(" ")} The drawing is DONE and already ` +
+                  "visible to everyone — do NOT call draw_on_canvas again " +
+                  "for this request; only call again if someone asks for a " +
+                  "change."
           } catch (err) {
             debug("error", `drawing failed: ${(err as Error).message}`)
             throw err

@@ -428,7 +428,7 @@ export function buildCanvasRecords(
     const connectable = new Map<string, { w: number; h: number }>()
     for (const op of ops) {
       if (
-        (op.op === "rect" || op.op === "ellipse") &&
+        (op.op === "rect" || op.op === "ellipse" || op.op === "diamond") &&
         op.x === undefined &&
         op.y === undefined
       ) {
@@ -524,7 +524,9 @@ export function buildCanvasRecords(
     // Closed shapes get fit-to-shape (wrap, then step the font down);
     // arrows keep the plain midpoint label — their bbox is no container.
     const closed =
-      container.type === "rectangle" || container.type === "ellipse"
+      container.type === "rectangle" ||
+      container.type === "ellipse" ||
+      container.type === "diamond"
     const fitted =
       closed && cw > 0 && ch > 0
         ? fitLabel(text, cw, ch)
@@ -680,7 +682,8 @@ export function buildCanvasRecords(
   for (const op of ops) {
     switch (op.op) {
       case "rect":
-      case "ellipse": {
+      case "ellipse":
+      case "diamond": {
         const id = resolveId(op.id)
         // Unstyled shapes come out colorful by default: palette-rotated
         // stroke with a soft matching fill. "none" still opts out of fill,
@@ -698,7 +701,12 @@ export function buildCanvasRecords(
             : placeCreate(working, id, op, op.w, op.h)
         const element: LooseElement = {
           ...baseElement(id, at),
-          type: op.op === "rect" ? "rectangle" : "ellipse",
+          type:
+            op.op === "rect"
+              ? "rectangle"
+              : op.op === "diamond"
+                ? "diamond"
+                : "ellipse",
           x: spot.x,
           y: spot.y,
           width: op.w,

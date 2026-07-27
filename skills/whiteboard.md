@@ -33,7 +33,7 @@ move, update, or delete shapes in later turns.
 
 | Op | Fields | Notes |
 | --- | --- | --- |
-| `rect`, `ellipse` | `id, x, y, w, h, label?, color?, fill?, stroke?, strokeWidth?` | `fill`: `none` (default), `semi` (hachure), `solid`, `hatch` (cross-hatch); `stroke`: `solid`/`dashed`/`dotted`; `strokeWidth`: `thin`/`medium`/`bold` |
+| `rect`, `ellipse`, `diamond` | `id, x, y, w, h, label?, color?, fill?, stroke?, strokeWidth?` | `fill`: `none` (default), `semi` (hachure), `solid`, `hatch` (cross-hatch); `stroke`: `solid`/`dashed`/`dotted`; `strokeWidth`: `thin`/`medium`/`bold` |
 | `text` | `id, x, y, text, size?, color?` | `size`: `s`, `m`, `l` (heading), `xl` (title) |
 | `note` | `id, x, y, text, color?` | a sticky note; sizes itself to the text |
 | `arrow` | `id, from?, to?, fromPoint?, toPoint?, label?, color?` | `from`/`to` are shape ids — bound arrows re-route when shapes move; prefer them over free points |

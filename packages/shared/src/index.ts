@@ -894,6 +894,21 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     stroke: z.enum(["solid", "dashed", "dotted"]).optional(),
     strokeWidth: z.enum(["thin", "medium", "bold"]).optional(),
   }),
+  // A decision diamond — flowcharts ask for these constantly, and without
+  // the primitive the model invents an op name and the whole block fails.
+  z.object({
+    op: z.literal("diamond"),
+    id: z.string().min(1),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    w: z.number().positive(),
+    h: z.number().positive(),
+    label: z.string().optional(),
+    color: canvasColorSchema.optional(),
+    fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
+    stroke: z.enum(["solid", "dashed", "dotted"]).optional(),
+    strokeWidth: z.enum(["thin", "medium", "bold"]).optional(),
+  }),
   z.object({
     op: z.literal("text"),
     id: z.string().min(1),

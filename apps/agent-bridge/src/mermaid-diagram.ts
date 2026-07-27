@@ -16,7 +16,7 @@ import type { CanvasColor, CanvasOp } from "@meet/shared"
 type ParsedNode = {
   id: string
   label: string
-  shape: "rect" | "ellipse"
+  shape: "rect" | "ellipse" | "diamond"
   color?: CanvasColor
 }
 
@@ -110,7 +110,10 @@ function cleanLabel(raw: string): string {
     .trim()
 }
 
-function nodeShape(bracket: string | undefined): "rect" | "ellipse" {
+function nodeShape(
+  bracket: string | undefined,
+): "rect" | "ellipse" | "diamond" {
+  if (bracket === "{" || bracket === "{{") return "diamond"
   return bracket === "(" ||
     bracket === "((" ||
     bracket === "([" ||

@@ -23,7 +23,7 @@ export const CANVAS_PROTOCOL_NOTE =
   `live. To do so, include a JSON array of drawing operations between a line ` +
   `containing only ${CANVAS_BLOCK_OPEN} and a line containing only ` +
   `${CANVAS_BLOCK_CLOSE} anywhere in your reply. Operations (applied in ` +
-  'order): {"op":"rect"|"ellipse","id","x?","y?","w","h","label?","color?",' +
+  'order): {"op":"rect"|"ellipse"|"diamond","id","x?","y?","w","h","label?","color?",' +
   '"fill?":"none"|"semi"|"solid"|"hatch","stroke?":"solid"|"dashed"|' +
   '"dotted","strokeWidth?":"thin"|"medium"|"bold"}, ' +
   '{"op":"text","id","x?","y?","text",' +
