@@ -905,6 +905,7 @@ export default defineAgent({
             name: "update_shared_doc",
             content: outcome,
             durationMs: 0,
+            source: "body",
             at: Date.now(),
           })
         }
@@ -918,6 +919,7 @@ export default defineAgent({
             name: "draw_on_canvas",
             content: outcome,
             durationMs: 0,
+            source: "body",
             at: Date.now(),
           })
         }
@@ -1041,6 +1043,21 @@ export default defineAgent({
       // itself via the send_chat_message tool (see realtime-agent.ts). The
       // heard buffer gets a copy too, so the brain follows the chat as well.
       ctx.room.on("dataReceived", (payload: Uint8Array, sender, _k, topic) => {
+        if (topic === DataTopic.Canvas) {
+          // Fold every canvas diff into the worker's cache, exactly like the
+          // pipeline path. Without this the realtime bridge drew against the
+          // LAGGING snapshot store: after a client re-authored an element
+          // (Excalidraw normalizes what it mounts), the bridge's next
+          // move/update carried a stale LWW clock and silently lost on
+          // every client — first draws rendered, edits never did.
+          try {
+            const diff = canvasDiffSchema.parse(
+              JSON.parse(new TextDecoder().decode(payload)),
+            )
+            mergeIntoCanvasCache(diff.changes)
+          } catch {}
+          return
+        }
         if (topic === DataTopic.Chat) {
           try {
             const message = chatMessageSchema.parse(
@@ -1293,8 +1310,9 @@ export default defineAgent({
             sessionState.turnPolicy = control.policy
             // A policy change ends any zap window: the human just redefined
             // how this agent takes turns, so a stale grant must not leak
-            // through the new policy.
+            // through the new policy. Same for the engaged window.
             sessionState.zappedUntil = 0
+            sessionState.engagedUntil = 0
             if (zapTimer) {
               clearTimeout(zapTimer)
               zapTimer = null
@@ -1344,8 +1362,9 @@ export default defineAgent({
           } else if (control.type === "mute" && !sessionState.muted) {
             sessionState.muted = true
             sessionState.notifiedMuted = false
-            // An explicit mute overrides any pending zap grant.
+            // An explicit mute overrides any pending zap/engaged grant.
             sessionState.zappedUntil = 0
+            sessionState.engagedUntil = 0
             session.interrupt()
             setState("muted")
           } else if (control.type === "unmute" && sessionState.muted) {
@@ -1353,8 +1372,9 @@ export default defineAgent({
             setState("listening")
           } else if (control.type === "deafen" && !sessionState.deafened) {
             sessionState.deafened = true
-            // An explicit deafen overrides any pending zap grant.
+            // An explicit deafen overrides any pending zap/engaged grant.
             sessionState.zappedUntil = 0
+            sessionState.engagedUntil = 0
             session.input.setAudioEnabled(false)
             setState("deafened")
             publishChat(

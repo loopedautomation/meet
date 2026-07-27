@@ -1,0 +1,12 @@
+{
+  "note": "Long labels everywhere: fit-to-shape must wrap and shrink so nothing clips. Watch: no label wider than its box, mermaid nodes wrap instead of overflowing, sticky wraps.",
+  "ops": [
+    { "op": "rect", "id": "ingest", "w": 220, "h": 100, "label": "Streaming ingestion service (Kafka consumer group A)" },
+    { "op": "rect", "id": "enrich", "w": 180, "h": 80, "label": "Entity enrichment and deduplication worker pool" },
+    { "op": "ellipse", "id": "store", "w": 200, "h": 90, "label": "Time-series storage with 90-day retention policy" },
+    { "op": "arrow", "id": "a1", "from": "ingest", "to": "enrich", "label": "normalized events" },
+    { "op": "arrow", "id": "a2", "from": "enrich", "to": "store", "label": "upserts" },
+    { "op": "note", "id": "caveat", "text": "Retention drops to 30 days for the free tier; enterprise contracts negotiate their own windows per region." },
+    { "op": "diagram", "id": "flow", "mermaid": "flowchart TD\n  gateway[Public API gateway with request signing] --> ratelimit[Distributed rate limiter backed by Redis]\n  ratelimit --> orchestrator[Workflow orchestration engine v2]\n  orchestrator --> billing[Usage metering and billing reconciliation]" }
+  ]
+}

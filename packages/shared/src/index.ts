@@ -410,6 +410,13 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     agentId: z.string(),
     name: z.string(),
     arguments: z.string(),
+    /**
+     * Who acted: "brain" (the looped agent's own tool work, the default)
+     * or "body" (the meeting surface — drawing, doc writes — performed by
+     * the bridge on the voice model's behalf). Optional so old events and
+     * bridges still parse.
+     */
+    source: z.enum(["brain", "body"]).optional(),
     at: z.number(),
   }),
   z.object({
@@ -418,6 +425,7 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     name: z.string(),
     content: z.string(),
     durationMs: z.number(),
+    source: z.enum(["brain", "body"]).optional(),
     at: z.number(),
   }),
   z.object({
@@ -872,8 +880,9 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     id: z.string().min(1),
     x: z.number().optional(),
     y: z.number().optional(),
-    w: z.number().positive(),
-    h: z.number().positive(),
+    // Omitted size = the bridge sizes the box to its label.
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
     /** Background texture: semi = hachure lines, hatch = cross-hatch. */
@@ -886,8 +895,25 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     id: z.string().min(1),
     x: z.number().optional(),
     y: z.number().optional(),
-    w: z.number().positive(),
-    h: z.number().positive(),
+    // Omitted size = the bridge sizes the box to its label.
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
+    label: z.string().optional(),
+    color: canvasColorSchema.optional(),
+    fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
+    stroke: z.enum(["solid", "dashed", "dotted"]).optional(),
+    strokeWidth: z.enum(["thin", "medium", "bold"]).optional(),
+  }),
+  // A decision diamond — flowcharts ask for these constantly, and without
+  // the primitive the model invents an op name and the whole block fails.
+  z.object({
+    op: z.literal("diamond"),
+    id: z.string().min(1),
+    x: z.number().optional(),
+    y: z.number().optional(),
+    // Omitted size = the bridge sizes the box to its label.
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
     fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
@@ -1120,14 +1146,28 @@ export type TurnGateInput = {
   zapped: boolean
   /** A participant called on the hand-raised agent. */
   callOnPending: boolean
+  /**
+   * Inside an engaged window: the agent was directly addressed moments ago
+   * and answered, so the conversation is still with it — people say the
+   * name once, then keep talking. Compute with zapActive(engagedUntil).
+   */
+  engaged?: boolean
   muted: boolean
   deafened: boolean
 }
 
+/**
+ * How long after a direct address (mention, call-on, zap) follow-up turns
+ * keep the floor without re-naming the agent. Only DIRECT addresses arm or
+ * refresh the window — engaged-granted turns don't extend it, or one
+ * mention would hold the floor forever in a busy meeting.
+ */
+export const ENGAGED_WINDOW_MS = 20_000
+
 export type TurnGateDecision =
   | {
       action: "speak"
-      via: "open" | "mention" | "zap" | "call-on" | "chat-mention"
+      via: "open" | "mention" | "zap" | "call-on" | "engaged" | "chat-mention"
       /** Caller must clear state.callOnPending. */
       consumeCallOn: boolean
       /** Caller must clear state.zappedUntil — zap is a one-shot grant. */
@@ -1203,6 +1243,17 @@ export function decideTurn(input: TurnGateInput): TurnGateDecision {
       via: "zap",
       consumeCallOn: false,
       consumeZap: true,
+    }
+  }
+  // The engaged window outranks the mention rules on BOTH gated policies:
+  // it only ever opens after the agent legitimately held the floor, and a
+  // follow-up in the same exchange shouldn't require re-naming it.
+  if (input.engaged) {
+    return {
+      action: "speak",
+      via: "engaged",
+      consumeCallOn: false,
+      consumeZap: false,
     }
   }
   if (input.mentioned) {

@@ -12,7 +12,7 @@ import {
   parseParticipantMeta,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Bot, ChevronDown, Plus, Wrench } from "lucide-react"
+import { Bot, Brain, ChevronDown, Plus } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { AgentControls } from "@/components/room/AgentControls"
@@ -692,7 +692,14 @@ function ActivityItem({
         onClick={() => setOpen((v) => !v)}
       >
         <span className="flex items-center gap-1 text-primary">
-          <Wrench className="size-3" />
+          {/* Who acted: the brain (the looped agent's own tool work) or the
+              body (meeting-surface actions the bridge performs — drawing,
+              doc writes). */}
+          {e.source === "body" ? (
+            <Bot className="size-3" aria-label="body" />
+          ) : (
+            <Brain className="size-3" aria-label="brain" />
+          )}
           {e.type === "tool_call" ? `→ ${e.name}` : `← ${e.name}`}
           {e.type === "tool_result" && (
             <span className="text-base-content/50">{e.durationMs}ms</span>

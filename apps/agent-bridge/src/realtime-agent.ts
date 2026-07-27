@@ -18,6 +18,7 @@ import {
   chatMessageSchema,
   DataTopic,
   decideTurn,
+  ENGAGED_WINDOW_MS,
   mentionsName,
   requestsSpeech,
   spokenMentionRegExp,
@@ -120,6 +121,13 @@ const instructions = (
   "draft a plan, use update_shared_doc and describe the change in full — " +
   "the document is rewritten for you with everyone's work preserved. Say " +
   "briefly what changed rather than reading the document out loud." +
+  " The meeting also has a shared whiteboard everyone sees live. It is NOT " +
+  "a screen share and needs none: you can always read it with read_canvas " +
+  "(a text description of every shape) and draw or edit it with " +
+  "draw_on_canvas, whether or not anyone is sharing a screen. When someone " +
+  "asks you to sketch, diagram, chart or 'put it on the board', just call " +
+  "draw_on_canvas — never say you can't see the board or ask for it to be " +
+  "shared." +
   " Your audio may be gated by the meeting's host: while it is, you are " +
   "only given the floor when someone addresses you by name or calls on you " +
   "after you raise your hand, and between turns you may be asked silently " +
@@ -391,16 +399,46 @@ export async function runRealtimeAgent(opts: {
    * conversational realtime models (Gemini native audio especially), which
    * cannot hold a spatial map while talking.
    */
+  let drawInFlight = false
   const drawOnCanvas =
     readCanvas && drawCanvas
       ? async (instruction: string): Promise<string> => {
+          // One drawing at a time: a brain round-trip takes 10-20s, and
+          // stacked calls raced each other onto the board as duplicates.
+          if (drawInFlight) {
+            debug("info", "drawing rejected: one already in progress")
+            return (
+              "A drawing is already in progress. Wait for its result, " +
+              "then send ONE instruction with any additions or changes."
+            )
+          }
+          drawInFlight = true
           callbacks.setState("thinking")
           debug("info", `drawing started: "${instruction.slice(0, 200)}"`)
+          // The draw is itself the visible activity: the brain composes
+          // canvas blocks directly (no tool calls), so without this the
+          // activity feed stays empty for every drawing turn.
+          const drawStartedAt = Date.now()
+          callbacks.publishActivity({
+            type: "tool_call",
+            agentId: entry.id,
+            name: "draw_on_canvas",
+            arguments: instruction.slice(0, 300),
+            source: "body",
+            at: drawStartedAt,
+          })
           workInFlight++
           try {
             const board = await readCanvas()
             const prompt =
-              "The meeting's shared whiteboard needs drawing. " +
+              "The meeting's shared whiteboard needs drawing. Your job is " +
+              "the CONTENT: the real components, steps or entities and how " +
+              "they relate, drawn from your domain knowledge of what's " +
+              "being discussed — layout, sizing and coloring are handled " +
+              "for you. Produce a complete diagram in one batch (a system " +
+              "or plan deserves 8-15 labeled shapes with labeled arrows, " +
+              "not three boxes), using primitive shape ops without " +
+              "coordinates so the automatic layout arranges them.\n\n" +
               `Instruction from the meeting: ${instruction}\n\n` +
               `Current whiteboard: ${board}\n\n` +
               `${CANVAS_PROTOCOL_NOTE}\n\n` +
@@ -424,12 +462,31 @@ export async function runRealtimeAgent(opts: {
               }
               outcomes.push(await drawCanvas(parsed.ops))
             }
-            debug("info", "drawing applied")
-            return outcomes.join(" ")
+            debug(
+              "info",
+              `drawing outcome: ${outcomes.join(" ").slice(0, 400)}`,
+            )
+            callbacks.publishActivity({
+              type: "tool_result",
+              agentId: entry.id,
+              name: "draw_on_canvas",
+              content: outcomes.join(" ").slice(0, 8000),
+              durationMs: Date.now() - drawStartedAt,
+              source: "body",
+              at: Date.now(),
+            })
+            const failed = outcomes.every((o) => !o.startsWith("Drew:"))
+            return failed
+              ? outcomes.join(" ")
+              : `${outcomes.join(" ")} The drawing is DONE and already ` +
+                  "visible to everyone — do NOT call draw_on_canvas again " +
+                  "for this request; only call again if someone asks for a " +
+                  "change."
           } catch (err) {
             debug("error", `drawing failed: ${(err as Error).message}`)
             throw err
           } finally {
+            drawInFlight = false
             workInFlight--
             callbacks.setState(state.muted ? "muted" : "listening")
           }
@@ -470,6 +527,7 @@ export async function runRealtimeAgent(opts: {
             debug("error", `doc update failed: ${(err as Error).message}`)
             throw err
           } finally {
+            drawInFlight = false
             workInFlight--
             callbacks.setState(state.muted ? "muted" : "listening")
           }
@@ -515,17 +573,28 @@ export async function runRealtimeAgent(opts: {
       : zapActive(state.zappedUntil)
         ? "zapped"
         : "listening"
-  /** The policy decision for a voice turn, over live session state. */
-  const decideVoice = (mentioned: boolean) =>
-    decideTurn({
+  /**
+   * The policy decision for a voice turn, over live session state. A speak
+   * granted by a DIRECT address (mention/zap) arms the engaged window, so
+   * follow-up turns keep the floor without re-naming the agent; engaged
+   * speaks never extend it.
+   */
+  const decideVoice = (mentioned: boolean) => {
+    const decision = decideTurn({
       policy: state.turnPolicy,
       channel: "voice",
       mentioned,
       zapped: zapActive(state.zappedUntil),
       callOnPending: false,
+      engaged: zapActive(state.engagedUntil),
       muted: state.muted,
       deafened: state.deafened,
     })
+    if (decision.action === "speak" && decision.via !== "engaged") {
+      state.engagedUntil = Date.now() + ENGAGED_WINDOW_MS
+    }
+    return decision
+  }
 
   // The gate's open/closed truth, recomputed from policy + zap window in one
   // place. Assigned once the session exists; declared here so the option
@@ -536,6 +605,9 @@ export async function runRealtimeAgent(opts: {
     model: realtime.model,
     voice: realtime.voice,
     apiKey,
+    transcriptionHint:
+      `This is a meeting. One participant is an AI assistant named ` +
+      `"${entry.name}", who is often addressed by that exact name.`,
     instructions: instructions(
       entry,
       canSeeScreens,
@@ -554,7 +626,12 @@ export async function runRealtimeAgent(opts: {
     readCanvas,
     drawCanvas: drawOnCanvas,
     leaveMeeting: opts.leaveMeeting
-      ? () => void opts.leaveMeeting?.()
+      ? () => {
+          // Visible in the debug feed: a model-initiated exit otherwise
+          // looks identical to a crash or a human removal.
+          debug("info", "leave_meeting invoked by the model — leaving")
+          void opts.leaveMeeting?.()
+        }
       : undefined,
     onAgentSpoke: opts.onSpoke,
     // Offered only when a look could actually succeed. A webhook brain
@@ -618,6 +695,8 @@ export async function runRealtimeAgent(opts: {
           clearTimeout(zapTimer)
           zapTimer = null
         }
+        // The zap was an explicit summons — treat the exchange as engaged.
+        state.engagedUntil = Date.now() + ENGAGED_WINDOW_MS
         applyGate()
       }
       if (!state.muted) callbacks.setState("speaking")
@@ -974,6 +1053,7 @@ export async function runRealtimeAgent(opts: {
         // leak through the new policy.
         handRaised = false
         state.zappedUntil = 0
+        state.engagedUntil = 0
         if (zapTimer) {
           clearTimeout(zapTimer)
           zapTimer = null
@@ -990,6 +1070,7 @@ export async function runRealtimeAgent(opts: {
         publishStats()
       } else if (control.type === "call-on") {
         handRaised = false
+        state.engagedUntil = Date.now() + ENGAGED_WINDOW_MS
         session.callOn()
       } else if (control.type === "zap") {
         // Zap = "I addressed you directly — why aren't you answering?" It
@@ -1023,16 +1104,18 @@ export async function runRealtimeAgent(opts: {
       } else if (control.type === "mute") {
         // The worker's control handler flips the muted flag; this one makes
         // mute take effect audibly by cutting playback mid-word. An explicit
-        // mute also overrides any pending zap grant.
+        // mute also overrides any pending zap/engaged grant.
         state.muted = true
         state.zappedUntil = 0
+        state.engagedUntil = 0
         applyGate()
         hardCut()
         callbacks.setState("muted")
       } else if (control.type === "deafen") {
-        // An explicit deafen overrides any pending zap grant too — the
-        // worker's handler owns the deafened flag and state attribute.
+        // An explicit deafen overrides any pending zap/engaged grant too —
+        // the worker's handler owns the deafened flag and state attribute.
         state.zappedUntil = 0
+        state.engagedUntil = 0
         applyGate()
       }
     } catch {}

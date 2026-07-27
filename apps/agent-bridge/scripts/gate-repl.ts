@@ -17,6 +17,7 @@
 import * as readline from "node:readline"
 import {
   decideTurn,
+  ENGAGED_WINDOW_MS,
   mentionsName,
   requestsSpeech,
   spokenMentionRegExp,
@@ -39,6 +40,7 @@ const state = {
   deafened: false,
   callOnPending: false,
   zappedUntil: 0,
+  engagedUntil: 0,
   now: 0, // simulated clock, ms
 }
 
@@ -63,11 +65,13 @@ const paintAction = (d: TurnGateDecision) => {
 
 function showState() {
   const zapLeft = Math.max(0, state.zappedUntil - state.now)
+  const engagedLeft = Math.max(0, state.engagedUntil - state.now)
   console.log(
     dim(
       `  policy=${state.policy} muted=${state.muted} deafened=${state.deafened}` +
         ` callOnPending=${state.callOnPending}` +
         ` zap=${zapLeft > 0 ? `${(zapLeft / 1000).toFixed(0)}s left` : "inactive"}` +
+        ` engaged=${engagedLeft > 0 ? `${(engagedLeft / 1000).toFixed(0)}s left` : "no"}` +
         ` clock=${(state.now / 1000).toFixed(0)}s`,
     ),
   )
@@ -80,6 +84,7 @@ function runTurn(channel: "voice" | "chat", text: string) {
       : mentionsName(text, name)
   const speakRequested = channel === "chat" ? requestsSpeech(text) : undefined
   const zapped = zapActive(state.zappedUntil, state.now)
+  const engaged = zapActive(state.engagedUntil, state.now)
   const decision = decideTurn({
     policy: state.policy,
     channel,
@@ -87,6 +92,7 @@ function runTurn(channel: "voice" | "chat", text: string) {
     speakRequested,
     zapped,
     callOnPending: state.callOnPending,
+    engaged,
     muted: state.muted,
     deafened: state.deafened,
   })
@@ -94,7 +100,7 @@ function runTurn(channel: "voice" | "chat", text: string) {
     dim(
       `  inputs: mentioned=${mentioned}` +
         (channel === "chat" ? ` speakRequested=${speakRequested}` : "") +
-        ` zapped=${zapped} callOnPending=${state.callOnPending}`,
+        ` zapped=${zapped} engaged=${engaged} callOnPending=${state.callOnPending}`,
     ),
   )
   console.log(`  → ${paintAction(decision)}`)
@@ -106,6 +112,16 @@ function runTurn(channel: "voice" | "chat", text: string) {
     if (decision.consumeZap) {
       state.zappedUntil = 0
       console.log(dim("  (zap consumed — one-shot grant used, re-gated)"))
+    }
+    if (
+      channel === "voice" &&
+      decision.via !== "engaged" &&
+      decision.via !== "open"
+    ) {
+      state.engagedUntil = state.now + ENGAGED_WINDOW_MS
+      console.log(
+        dim("  (direct address — engaged window open for follow-ups, 20s)"),
+      )
     }
   }
 }
@@ -140,9 +156,12 @@ rl.on("line", (raw) => {
           break
         }
         state.policy = parsed.data
-        // Same rule as the workers: a policy change ends any zap window.
+        // Same rule as the workers: a policy change ends any grants.
         state.zappedUntil = 0
-        console.log(`  policy → ${state.policy} ${dim("(zap window cleared)")}`)
+        state.engagedUntil = 0
+        console.log(
+          `  policy → ${state.policy} ${dim("(zap/engaged windows cleared)")}`,
+        )
         break
       }
       case "zap":
@@ -161,6 +180,7 @@ rl.on("line", (raw) => {
       case "mute":
         state.muted = true
         state.zappedUntil = 0
+        state.engagedUntil = 0
         console.log(`  muted ${dim("(zap window cleared)")}`)
         break
       case "unmute":
@@ -170,6 +190,7 @@ rl.on("line", (raw) => {
       case "deafen":
         state.deafened = true
         state.zappedUntil = 0
+        state.engagedUntil = 0
         console.log(`  deafened ${dim("(zap window cleared)")}`)
         break
       case "undeafen":
