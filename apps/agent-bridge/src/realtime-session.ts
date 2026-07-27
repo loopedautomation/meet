@@ -315,9 +315,15 @@ export function toolDeclarations(
                 instruction: {
                   type: "string",
                   description:
-                    "What to draw or change, in full sentences and " +
-                    "self-contained: the shapes or diagram wanted, every " +
-                    "label to use, and how parts connect or relate.",
+                    "What to draw or change, in full sentences and fully " +
+                    "self-contained — the artist has NOT heard the " +
+                    "meeting, so 'draw what we discussed' produces a " +
+                    "generic guess. Name every component, step or entity " +
+                    "to draw, the exact label for each, and how they " +
+                    "connect or relate ('X calls Y', 'A branches to B and " +
+                    "C'). A real diagram instruction lists 8-15 named " +
+                    "parts. Say whether it's a process flow or a mind map " +
+                    "of ideas when that isn't obvious.",
                 },
               },
               required: ["instruction"],

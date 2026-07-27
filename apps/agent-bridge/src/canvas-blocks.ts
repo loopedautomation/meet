@@ -28,7 +28,13 @@ export const CANVAS_PROTOCOL_NOTE =
   '"dotted","strokeWidth?":"thin"|"medium"|"bold"}, ' +
   '{"op":"text","id","x?","y?","text",' +
   '"size?":"s"|"m"|"l"|"xl"}, {"op":"note","id","x?","y?","text","color?"}, ' +
-  '{"op":"arrow","id","from?","to?","label?"} (from/to are shape ids), ' +
+  '{"op":"arrow","id","from?","to?","label?","rounded?"} (from/to are ' +
+  "shape ids; rounded:true curves the arrow — use it when straight lines " +
+  "would overlap), " +
+  '{"op":"layout","style":"flowchart"|"mindmap"} (how THIS block\'s ' +
+  "connected shapes are arranged: flowchart = layered top-down for " +
+  "processes and pipelines, mindmap = radial around the most connected " +
+  "hub for brainstorms and concept maps — pick per drawing), " +
   '{"op":"move","id","x","y"} or {"op":"move","id","dx","dy"} (relative ' +
   'nudge), {"op":"update","id","label?","text?",' +
   '"color?","w?","h?","fill?","stroke?","strokeWidth?"} (restyle or ' +

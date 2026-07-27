@@ -1,0 +1,19 @@
+{
+  "note": "Arrow routing: parallel + opposite arrows bow apart (curved), a self-loop circles the shape, rounded:true/false overrides, and a free endpoint near a shape snap-binds to it.",
+  "steps": [
+    [
+      { "op": "rect", "id": "a", "x": 0, "y": 0, "w": 180, "h": 80, "label": "Service A" },
+      { "op": "rect", "id": "b", "x": 500, "y": 0, "w": 180, "h": 80, "label": "Service B" },
+      { "op": "arrow", "id": "req", "from": "a", "to": "b", "label": "request" },
+      { "op": "arrow", "id": "resp", "from": "b", "to": "a", "label": "response" },
+      { "op": "arrow", "id": "retry", "from": "a", "to": "b", "label": "retry" },
+      { "op": "arrow", "id": "self", "from": "b", "to": "b", "label": "poll" }
+    ],
+    [
+      { "op": "rect", "id": "c", "x": 0, "y": 300, "w": 180, "h": 80, "label": "Curved" },
+      { "op": "rect", "id": "d", "x": 500, "y": 300, "w": 180, "h": 80, "label": "Straight" },
+      { "op": "arrow", "id": "forced-round", "from": "c", "to": "d", "rounded": true, "label": "rounded:true" },
+      { "op": "arrow", "id": "snap", "fromPoint": { "x": 90, "y": 385 }, "toPoint": { "x": 505, "y": 340 }, "label": "snap-bound" }
+    ]
+  ]
+}
