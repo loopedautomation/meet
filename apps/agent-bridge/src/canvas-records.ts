@@ -463,7 +463,7 @@ export function buildCanvasRecords(
     )
     if (edges.length > 0 && connectable.size >= 2) {
       const graph = new dagre.graphlib.Graph()
-      graph.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80 })
+      graph.setGraph({ rankdir: "TB", nodesep: 110, ranksep: 130 })
       graph.setDefaultEdgeLabel(() => ({}))
       for (const [nodeId, size] of connectable) {
         graph.setNode(nodeId, { width: size.w, height: size.h })

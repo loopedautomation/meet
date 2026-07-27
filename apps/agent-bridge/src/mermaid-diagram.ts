@@ -306,8 +306,8 @@ export function expandDiagram(
   const graph = new dagre.graphlib.Graph()
   graph.setGraph({
     rankdir: parsed.direction,
-    nodesep: 60,
-    ranksep: 80,
+    nodesep: 110,
+    ranksep: 130,
     marginx: 0,
     marginy: 0,
   })
