@@ -1120,14 +1120,28 @@ export type TurnGateInput = {
   zapped: boolean
   /** A participant called on the hand-raised agent. */
   callOnPending: boolean
+  /**
+   * Inside an engaged window: the agent was directly addressed moments ago
+   * and answered, so the conversation is still with it — people say the
+   * name once, then keep talking. Compute with zapActive(engagedUntil).
+   */
+  engaged?: boolean
   muted: boolean
   deafened: boolean
 }
 
+/**
+ * How long after a direct address (mention, call-on, zap) follow-up turns
+ * keep the floor without re-naming the agent. Only DIRECT addresses arm or
+ * refresh the window — engaged-granted turns don't extend it, or one
+ * mention would hold the floor forever in a busy meeting.
+ */
+export const ENGAGED_WINDOW_MS = 20_000
+
 export type TurnGateDecision =
   | {
       action: "speak"
-      via: "open" | "mention" | "zap" | "call-on" | "chat-mention"
+      via: "open" | "mention" | "zap" | "call-on" | "engaged" | "chat-mention"
       /** Caller must clear state.callOnPending. */
       consumeCallOn: boolean
       /** Caller must clear state.zappedUntil — zap is a one-shot grant. */
@@ -1203,6 +1217,17 @@ export function decideTurn(input: TurnGateInput): TurnGateDecision {
       via: "zap",
       consumeCallOn: false,
       consumeZap: true,
+    }
+  }
+  // The engaged window outranks the mention rules on BOTH gated policies:
+  // it only ever opens after the agent legitimately held the floor, and a
+  // follow-up in the same exchange shouldn't require re-naming it.
+  if (input.engaged) {
+    return {
+      action: "speak",
+      via: "engaged",
+      consumeCallOn: false,
+      consumeZap: false,
     }
   }
   if (input.mentioned) {

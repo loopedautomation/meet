@@ -4,6 +4,7 @@ import {
   type AgentActivityEvent,
   type AgentState,
   decideTurn,
+  ENGAGED_WINDOW_MS,
   spokenMentionRegExp,
   type TurnPolicy,
   zapActive,
@@ -49,6 +50,12 @@ export class SessionState {
   callOnPending = false
   /** Zapped: the agent responds freely until this epoch-ms deadline. */
   zappedUntil = 0
+  /**
+   * Engaged: directly addressed moments ago — follow-up turns until this
+   * deadline keep the floor without re-naming the agent. Armed only by
+   * direct addresses (mention/call-on/zap), never extended by itself.
+   */
+  engagedUntil = 0
   /**
    * Effective turn policy: seeded from the registry, but the meeting's host
    * can change it mid-call (see the "set-turn-policy" control).
@@ -120,6 +127,7 @@ export class LoopedVoiceAgent extends voice.Agent {
       mentioned: spokenMentionRegExp(entry.name).test(input),
       zapped: zapActive(state.zappedUntil),
       callOnPending: state.callOnPending,
+      engaged: zapActive(state.engagedUntil),
       muted: state.muted,
       deafened: state.deafened,
     })
@@ -133,6 +141,12 @@ export class LoopedVoiceAgent extends voice.Agent {
         // Zap is a one-shot grant: the floor is given for this turn only,
         // then the agent returns to its gated policy.
         if (decision.consumeZap) state.zappedUntil = 0
+        // A DIRECT address opens the engaged window: follow-ups in the same
+        // exchange keep the floor without re-naming the agent. Engaged
+        // turns themselves never extend it.
+        if (decision.via !== "engaged" && decision.via !== "open") {
+          state.engagedUntil = Date.now() + ENGAGED_WINDOW_MS
+        }
         if (state.turnPolicy !== "open") {
           callbacks.setState(state.muted ? "muted" : "thinking")
         }

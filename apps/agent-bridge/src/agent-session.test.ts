@@ -88,7 +88,7 @@ describe("LoopedVoiceAgent.llmNode gating", () => {
     expect(callbacks.setState).toHaveBeenCalledWith("hand-raised")
   })
 
-  it("raise-hand: zap grants exactly one turn, then re-gates", async () => {
+  it("raise-hand: zap grants one turn, opens the engaged window, then re-gates", async () => {
     const { brain, runTurn } = fakeBrain()
     state.turnPolicy = "raise-hand"
     state.zappedUntil = Date.now() + 30_000
@@ -96,9 +96,26 @@ describe("LoopedVoiceAgent.llmNode gating", () => {
     const first = await run(agent, "so, any thoughts?")
     expect(first).not.toBeNull()
     expect(state.zappedUntil).toBe(0) // consumed
-    const second = await run(agent, "and another thing…")
-    expect(second).toBeNull()
-    expect(runTurn).toHaveBeenCalledOnce()
+    // The zap was a direct address: follow-ups keep the floor for a while.
+    expect(state.engagedUntil).toBeGreaterThan(Date.now())
+    const followUp = await run(agent, "and another thing…")
+    expect(followUp).not.toBeNull()
+    // Once the window lapses, the agent is gated again.
+    state.engagedUntil = 0
+    const later = await run(agent, "unrelated chatter")
+    expect(later).toBeNull()
+    expect(runTurn).toHaveBeenCalledTimes(2)
+  })
+
+  it("on-mention: a mention opens the engaged window; follow-ups speak unnamed", async () => {
+    const { brain, runTurn } = fakeBrain()
+    state.turnPolicy = "on-mention"
+    const agent = agentWith(brain)
+    const first = await run(agent, "Scout, draw me a flowchart")
+    expect(first).not.toBeNull()
+    const followUp = await run(agent, "of how espresso is dialed in")
+    expect(followUp).not.toBeNull()
+    expect(runTurn).toHaveBeenCalledTimes(2)
   })
 
   it("expired zap grants nothing", async () => {
