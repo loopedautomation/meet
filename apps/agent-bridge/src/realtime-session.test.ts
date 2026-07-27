@@ -32,7 +32,14 @@ class FakeWebSocket {
     queueMicrotask(() => this.onopen?.())
   }
   send(data: string) {
-    this.sent.push(JSON.parse(data))
+    const frame = JSON.parse(data) as Frame
+    this.sent.push(frame)
+    // The server acks configuration; open() resolves on this, not onopen.
+    if (frame.type === "session.update") {
+      queueMicrotask(() =>
+        this.onmessage?.({ data: JSON.stringify({ type: "session.updated" }) }),
+      )
+    }
   }
   close() {
     this.readyState = 3
@@ -49,6 +56,7 @@ const harness = async (policy: TurnPolicy) => {
     voice: "marin",
     apiKey: "test",
     instructions: "You are Scout.",
+    transcriptionHint: 'An AI assistant named "Scout" may be addressed.',
     delegate: async () => "",
     onAudio: () => {},
     onInterrupt: () => {},
@@ -185,5 +193,65 @@ describe("RealtimeSession wire-level gating", () => {
     const { receive, onHandRaise } = await harness("on-mention")
     receive({ type: "response.output_text.done", text: "RAISE_HAND" })
     expect(onHandRaise).toHaveBeenCalledOnce()
+  })
+
+  it("a mention during an active deliberation is queued, not dropped — the original miss", async () => {
+    const { receive, responsesCreated } = await harness("on-mention")
+    // Unaddressed turn starts a silent deliberation…
+    receive(completedTurn("let's talk about the roadmap", "item-1"))
+    expect(responsesCreated()).toHaveLength(1)
+    // …and the mention lands while it's still running. Before the fix this
+    // second response.create was rejected by the server and lost forever.
+    receive(completedTurn("Scout, what do you think?", "item-2"))
+    // Not sent yet (one active response), but queued; a cancel went out to
+    // clear the deliberation.
+    expect(responsesCreated()).toHaveLength(1)
+    receive({ type: "response.done" })
+    const created = responsesCreated()
+    expect(created).toHaveLength(2)
+    expect(created[1].response).toBeUndefined() // the audible reply
+  })
+
+  it("cancels an active deliberation to make way for a mention", async () => {
+    const { receive, ws } = await harness("on-mention")
+    receive(completedTurn("unrelated chatter", "item-1"))
+    receive(completedTurn("Scout, you there?", "item-2"))
+    expect(ws.sent.some((f) => f.type === "response.cancel")).toBe(true)
+  })
+
+  it("back-to-back deliberations never stack (second is skipped, not queued)", async () => {
+    const { receive, responsesCreated } = await harness("on-mention")
+    receive(completedTurn("first unaddressed turn", "item-1"))
+    receive(completedTurn("second unaddressed turn", "item-2"))
+    expect(responsesCreated()).toHaveLength(1)
+  })
+
+  it("interrupt drops whatever was queued", async () => {
+    const { session, receive, responsesCreated } = await harness("on-mention")
+    receive(completedTurn("unrelated chatter", "item-1"))
+    receive(completedTurn("Scout, question for you", "item-2"))
+    session.cancelResponse()
+    receive({ type: "response.done" })
+    expect(responsesCreated()).toHaveLength(1) // queued reply was discarded
+  })
+
+  it("failed and empty transcripts are logged as gate decisions", async () => {
+    const { receive, decisions } = await harness("on-mention")
+    receive({
+      type: "conversation.item.input_audio_transcription.failed",
+      item_id: "item-1",
+    })
+    receive(completedTurn("   ", "item-2"))
+    expect(decisions).toEqual(["ignore", "ignore"])
+  })
+
+  it("the transcriber is biased toward the agent's name", async () => {
+    const { ws } = await harness("on-mention")
+    const setup = ws.sent.find((f) => f.type === "session.update") as Frame & {
+      session: {
+        audio: { input: { transcription: { model: string; prompt?: string } } }
+      }
+    }
+    expect(setup.session.audio.input.transcription.prompt).toContain("Scout")
   })
 })

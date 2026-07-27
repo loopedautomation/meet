@@ -198,6 +198,21 @@ function fitLabel(text: string, w: number, h: number) {
  * Colorful boards are bridge policy, not a model choice — an uncolored
  * batch must not come out monochrome.
  */
+/**
+ * Size a closed shape whose op named no w/h: fit the (wrapped) label with
+ * comfortable padding, or fall back to a standard box. Bridge-owned sizing
+ * — "size the box to the label, never the reverse".
+ */
+function autoSize(label: string | undefined): { w: number; h: number } {
+  if (!label) return { w: 200, h: 90 }
+  const wrapped = wrapText(label, 24)
+  const size = measure(wrapped, 20)
+  return {
+    w: Math.max(Math.ceil(size.width) + 48, 160),
+    h: Math.max(Math.ceil(size.height) + 40, 80),
+  }
+}
+
 const AUTO_PALETTE: CanvasColor[] = [
   "blue",
   "green",
@@ -428,11 +443,14 @@ export function buildCanvasRecords(
     const connectable = new Map<string, { w: number; h: number }>()
     for (const op of ops) {
       if (
-        (op.op === "rect" || op.op === "ellipse") &&
+        (op.op === "rect" || op.op === "ellipse" || op.op === "diamond") &&
         op.x === undefined &&
         op.y === undefined
       ) {
-        connectable.set(op.id, { w: op.w, h: op.h })
+        connectable.set(op.id, {
+          w: op.w ?? autoSize(op.label).w,
+          h: op.h ?? autoSize(op.label).h,
+        })
       }
     }
     const edges = ops.filter(
@@ -445,7 +463,7 @@ export function buildCanvasRecords(
     )
     if (edges.length > 0 && connectable.size >= 2) {
       const graph = new dagre.graphlib.Graph()
-      graph.setGraph({ rankdir: "TB", nodesep: 60, ranksep: 80 })
+      graph.setGraph({ rankdir: "TB", nodesep: 110, ranksep: 130 })
       graph.setDefaultEdgeLabel(() => ({}))
       for (const [nodeId, size] of connectable) {
         graph.setNode(nodeId, { width: size.w, height: size.h })
@@ -524,7 +542,9 @@ export function buildCanvasRecords(
     // Closed shapes get fit-to-shape (wrap, then step the font down);
     // arrows keep the plain midpoint label — their bbox is no container.
     const closed =
-      container.type === "rectangle" || container.type === "ellipse"
+      container.type === "rectangle" ||
+      container.type === "ellipse" ||
+      container.type === "diamond"
     const fitted =
       closed && cw > 0 && ch > 0
         ? fitLabel(text, cw, ch)
@@ -680,7 +700,8 @@ export function buildCanvasRecords(
   for (const op of ops) {
     switch (op.op) {
       case "rect":
-      case "ellipse": {
+      case "ellipse":
+      case "diamond": {
         const id = resolveId(op.id)
         // Unstyled shapes come out colorful by default: palette-rotated
         // stroke with a soft matching fill. "none" still opts out of fill,
@@ -688,6 +709,8 @@ export function buildCanvasRecords(
         const colorName = op.color ?? autoColor(op.id)
         const fill = op.fill ?? "semi"
         const color = STROKE_COLORS[colorName]
+        const w = op.w ?? autoSize(op.label).w
+        const h = op.h ?? autoSize(op.label).h
         // Re-creating an existing id is an edit, not a new shape: keep its
         // spot (unless coords say otherwise) or the placer nudges it away
         // from itself and the "changed" shape appears to duplicate.
@@ -695,14 +718,19 @@ export function buildCanvasRecords(
         const spot =
           existing && op.x === undefined && op.y === undefined
             ? { x: existing.x as number, y: existing.y as number }
-            : placeCreate(working, id, op, op.w, op.h)
+            : placeCreate(working, id, op, w, h)
         const element: LooseElement = {
           ...baseElement(id, at),
-          type: op.op === "rect" ? "rectangle" : "ellipse",
+          type:
+            op.op === "rect"
+              ? "rectangle"
+              : op.op === "diamond"
+                ? "diamond"
+                : "ellipse",
           x: spot.x,
           y: spot.y,
-          width: op.w,
-          height: op.h,
+          width: w,
+          height: h,
           strokeColor: color,
           backgroundColor:
             fill !== "none" ? BACKGROUND_COLORS[colorName] : "transparent",

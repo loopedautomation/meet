@@ -153,6 +153,35 @@ describe("decideTurn: chat", () => {
   })
 })
 
+describe("engaged window", () => {
+  it("a follow-up turn inside the window speaks without a mention", () => {
+    for (const policy of ["on-mention", "raise-hand"] as const) {
+      expect(turn({ policy, engaged: true })).toMatchObject({
+        action: "speak",
+        via: "engaged",
+        consumeZap: false,
+        consumeCallOn: false,
+      })
+    }
+  })
+
+  it("engaged never overrides deafened, and expires back to gating", () => {
+    expect(
+      turn({ policy: "on-mention", engaged: true, deafened: true }),
+    ).toEqual({ action: "ignore", reason: "deafened" })
+    expect(turn({ policy: "on-mention", engaged: false })).toEqual({
+      action: "deliberate",
+      mayChat: true,
+    })
+  })
+
+  it("call-on and zap still outrank it (they consume their grants)", () => {
+    expect(
+      turn({ policy: "raise-hand", engaged: true, zapped: true }),
+    ).toMatchObject({ action: "speak", via: "zap", consumeZap: true })
+  })
+})
+
 describe("zap window semantics", () => {
   it("zapActive is a strict deadline", () => {
     expect(zapActive(1000, 999)).toBe(true)

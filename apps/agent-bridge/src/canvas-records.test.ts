@@ -712,6 +712,59 @@ describe("styling controls", () => {
   })
 })
 
+describe("diamond primitive", () => {
+  it("creates a labeled decision diamond and connects arrows to it", () => {
+    const { changes, warnings } = build([
+      { op: "rect", id: "start", x: 0, y: 0, w: 160, h: 80, label: "Start" },
+      {
+        op: "diamond",
+        id: "check",
+        x: 0,
+        y: 300,
+        w: 200,
+        h: 120,
+        label: "Is it valid?",
+      },
+      { op: "arrow", id: "a1", from: "start", to: "check" },
+    ])
+    expect(warnings).toEqual([])
+    const diamond = elementOf(changes, "agent-check")
+    expect(diamond.type).toBe("diamond")
+    expect(elementOf(changes, "agent-check-label").text).toBe("Is it valid?")
+    const arrow = elementOf(changes, "agent-a1")
+    expect((arrow.endBinding as { elementId: string }).elementId).toBe(
+      "agent-check",
+    )
+  })
+
+  it("mermaid {decision} nodes render as diamonds", () => {
+    const { changes } = build([
+      {
+        op: "diagram",
+        id: "d",
+        mermaid: "flowchart TD\n  a[Start] --> b{Valid?}\n  b --> c[Done]",
+      },
+    ])
+    expect(elementOf(changes, "agent-d_b").type).toBe("diamond")
+  })
+})
+
+describe("auto sizing", () => {
+  it("a box without w/h is sized to its label", () => {
+    const { changes, warnings } = build([
+      { op: "rect", id: "svc", label: "Measure Beans" },
+      { op: "diamond", id: "check", label: "Is the shot balanced?" },
+      { op: "arrow", id: "a1", from: "svc", to: "check" },
+    ] as CanvasOp[])
+    expect(warnings).toEqual([])
+    const rect = elementOf(changes, "agent-svc")
+    expect(rect.width as number).toBeGreaterThanOrEqual(160)
+    const label = elementOf(changes, "agent-svc-label")
+    expect(label.width as number).toBeLessThanOrEqual(rect.width as number)
+    expect(elementOf(changes, "agent-check").type).toBe("diamond")
+  })
+})
+
 describe("label fitting", () => {
   it("wraps and shrinks a long label so it never exceeds its box", () => {
     const text = "Streaming ingestion service with a very long name"
