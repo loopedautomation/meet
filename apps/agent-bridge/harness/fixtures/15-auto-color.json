@@ -1,0 +1,17 @@
+{
+  "note": "No colors specified anywhere: the palette rotation must produce a colorful board — distinct stroke colors with soft matching fills, stable per id. Watch: zero black-on-transparent boxes, neighbouring shapes differ, mermaid nodes colored too.",
+  "ops": [
+    { "op": "rect", "id": "web", "w": 200, "h": 90, "label": "Web App" },
+    { "op": "rect", "id": "api", "w": 200, "h": 90, "label": "API" },
+    { "op": "rect", "id": "worker", "w": 200, "h": 90, "label": "Worker" },
+    { "op": "ellipse", "id": "queue", "w": 180, "h": 80, "label": "Queue" },
+    { "op": "ellipse", "id": "cache", "w": 180, "h": 80, "label": "Cache" },
+    { "op": "rect", "id": "db", "w": 200, "h": 90, "label": "Database" },
+    { "op": "arrow", "id": "a1", "from": "web", "to": "api" },
+    { "op": "arrow", "id": "a2", "from": "api", "to": "queue" },
+    { "op": "arrow", "id": "a3", "from": "queue", "to": "worker" },
+    { "op": "arrow", "id": "a4", "from": "worker", "to": "db" },
+    { "op": "arrow", "id": "a5", "from": "api", "to": "cache" },
+    { "op": "diagram", "id": "mono", "mermaid": "flowchart LR\n  a[Ingress] --> b[Router]\n  b --> c[Handler]\n  c --> d[Sink]" }
+  ]
+}

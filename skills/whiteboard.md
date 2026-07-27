@@ -42,19 +42,28 @@ move, update, or delete shapes in later turns.
 | `update` | `id, label?, text?, color?, w?, h?, fill?, stroke?, strokeWidth?` | restyle, relabel, refill, retexture or resize in place — labels re-center, arrows re-route; `fill: "none"` clears a fill |
 | `delete` | `id` | arrows pointing at it stay but unbind |
 | `clear` | — | wipes the board; only when asked |
-| `diagram` | `id, mermaid, x?, y?` | a whole Mermaid `flowchart`/`graph` laid out automatically — **prefer this for any boxes-and-arrows structure**; node ids become `<id>.<node>` for later `move`/`update`/`arrow` ops. Mermaid `style <node> fill:<color>` / `classDef` / `:::class` colors are honored (snapped to the palette below). **Editing:** re-send the same diagram `id` with the edited Mermaid and it updates in place — the way to add, remove, recolor or relabel parts of an existing diagram |
+| `diagram` | `id, mermaid, x?, y?` | a whole Mermaid `flowchart`/`graph` laid out automatically — for when Mermaid source is explicitly wanted; node ids become `<id>.<node>` for later `move`/`update`/`arrow` ops. Mermaid `style <node> fill:<color>` / `classDef` / `:::class` colors are honored (snapped to the palette below). **Editing:** re-send the same diagram `id` with the edited Mermaid and it updates in place — the way to add, remove, recolor or relabel parts of an existing diagram. The board description hands you back each diagram's source for exactly this |
 
-Colors: `black` (default), `grey`, `blue`, `light-blue`, `violet`,
+**Default to primitive ops, not `diagram`**: coordinate-free rects/ellipses
+connected by arrows are laid out as a clean graph automatically, and every
+shape stays individually addressable for later edits.
+
+Colors: `black`, `grey`, `blue`, `light-blue`, `violet`,
 `light-violet`, `green`, `light-green`, `yellow`, `orange`, `red`,
-`light-red`, `white`.
+`light-red`, `white`. **Unstyled shapes are auto-colored** from a rotating
+palette with a soft matching fill — boards are colorful by default. Set a
+color only when it should MEAN something: red for failure paths, green for
+healthy/done, one hue per subsystem. Never aim for a monochrome board.
 
 ## Layout that stays legible
 
 - Coordinates are page pixels on roughly a **1600x1000** area, origin
   top-left — **`y` grows downward**. Lay diagrams out left-to-right or
   top-down starting near (0,0).
-- Boxes around **160x80**, with **~80px gaps**. Never place two shapes at
-  the same spot.
+- Boxes around **220x100**, with **~80px gaps** — size the box to its
+  label, never the reverse (labels wrap and shrink to fit, but a roomy box
+  reads best). Keep labels under ~30 characters; longer explanations go in
+  a `note`. Never place two shapes at the same spot.
 - For charts and aligned layouts, compute positions with arithmetic, never
   by eye: bars on a shared baseline all end at the same `y + h`, so a
   taller bar starts at a **smaller** `y`; draw the axes from that same

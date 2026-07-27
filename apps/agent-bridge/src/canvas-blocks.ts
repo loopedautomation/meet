@@ -23,31 +23,37 @@ export const CANVAS_PROTOCOL_NOTE =
   `live. To do so, include a JSON array of drawing operations between a line ` +
   `containing only ${CANVAS_BLOCK_OPEN} and a line containing only ` +
   `${CANVAS_BLOCK_CLOSE} anywhere in your reply. Operations (applied in ` +
-  'order): {"op":"rect"|"ellipse","id","x","y","w","h","label?","color?",' +
+  'order): {"op":"rect"|"ellipse","id","x?","y?","w","h","label?","color?",' +
   '"fill?":"none"|"semi"|"solid"|"hatch","stroke?":"solid"|"dashed"|' +
   '"dotted","strokeWidth?":"thin"|"medium"|"bold"}, ' +
-  '{"op":"text","id","x","y","text",' +
-  '"size?":"s"|"m"|"l"|"xl"}, {"op":"note","id","x","y","text","color?"}, ' +
+  '{"op":"text","id","x?","y?","text",' +
+  '"size?":"s"|"m"|"l"|"xl"}, {"op":"note","id","x?","y?","text","color?"}, ' +
   '{"op":"arrow","id","from?","to?","label?"} (from/to are shape ids), ' +
   '{"op":"move","id","x","y"} or {"op":"move","id","dx","dy"} (relative ' +
   'nudge), {"op":"update","id","label?","text?",' +
   '"color?","w?","h?","fill?","stroke?","strokeWidth?"} (restyle or ' +
   'resize anything in place), {"op":"delete","id"}, {"op":"clear"}, ' +
-  '{"op":"diagram","id","mermaid"} (Mermaid source — PREFER this for any ' +
-  "boxes-and-arrows structure: flowcharts render with full Mermaid fidelity " +
-  "(subgraphs, diamonds, all node shapes), sequence and class diagrams " +
-  "also work; layout is automatic, no coordinates needed; node ids " +
-  'become "<id>.<node>" for later moves/updates; Mermaid style/classDef ' +
-  "fill colors are honored, snapped to the palette; re-sending the same " +
-  "diagram id with edited Mermaid updates the diagram IN PLACE — the way " +
-  "to add, remove, recolor or relabel parts of it). Coordinates " +
-  "are page pixels on roughly a 1600x1000 area, y growing downward from " +
-  "the top-left origin — align related shapes by arithmetic (bars on a " +
-  "shared baseline end at the same y+h). Omit x/y on creates to " +
-  "auto-place clear of existing shapes. Give every shape a short memorable " +
-  "id so you can connect, move or update it later. If you have a whiteboard " +
-  "skill, read it before drawing. The block is drawn, not spoken; any text " +
-  "outside it is spoken as usual — never mention coordinates or ids aloud."
+  '{"op":"diagram","id","mermaid"} (Mermaid flowchart source, for when ' +
+  "someone explicitly wants a flowchart/sequence rendered from Mermaid; " +
+  'node ids become "<id>.<node>", and re-sending the same diagram id with ' +
+  "edited source updates it IN PLACE). DEFAULT to the primitive ops, not " +
+  "diagram: OMIT x/y on creates and layout is automatic — arrow-connected " +
+  "shapes are arranged as a clean graph, everything else lands clear of " +
+  "existing shapes. Only give coordinates for deliberate geometry (charts, " +
+  "timelines, aligned bars: page pixels on roughly 1600x1000, y growing " +
+  "downward). BE AMBITIOUS: a real diagram of a system or plan has 8-15 " +
+  "labeled shapes with labeled arrows, groups shown as proximity, and " +
+  "notes for caveats — not three boxes. Use your own domain knowledge to " +
+  "fill in the real component names and relationships being discussed. " +
+  "Keep every label under ~30 characters (labels wrap and shrink to fit, " +
+  "but short labels read best); put longer explanations in a note. Color " +
+  "is automatic — unstyled shapes get distinct palette colors — so only " +
+  "set color to MEAN something (e.g. red for failure paths, green for " +
+  "healthy, one color per subsystem); never produce a deliberately " +
+  "monochrome board. Give every shape a short memorable id so you can " +
+  "connect, move or update it later. If you have a whiteboard skill, read " +
+  "it before drawing. The block is drawn, not spoken; any text outside it " +
+  "is spoken as usual — never mention coordinates or ids aloud."
 
 /** The whiteboard channel's extractor: same mechanics, its own markers. */
 export class CanvasBlockExtractor extends MarkerBlockExtractor {

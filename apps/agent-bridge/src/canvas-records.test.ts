@@ -711,3 +711,126 @@ describe("styling controls", () => {
     expect(third.warnings.some((w) => w.includes("dx/dy"))).toBe(true)
   })
 })
+
+describe("label fitting", () => {
+  it("wraps and shrinks a long label so it never exceeds its box", () => {
+    const text = "Streaming ingestion service with a very long name"
+    const { changes } = build([
+      { op: "rect", id: "svc", x: 0, y: 0, w: 180, h: 80, label: text },
+    ])
+    const box = elementOf(changes, "agent-svc")
+    const label = elementOf(changes, "agent-svc-label")
+    expect(String(label.text)).toContain("\n")
+    expect(label.width as number).toBeLessThanOrEqual(box.width as number)
+    expect(label.fontSize as number).toBeLessThanOrEqual(20)
+    expect(label.originalText).toBe(text)
+  })
+
+  it("keeps short labels at full size", () => {
+    const { changes } = build([
+      { op: "rect", id: "db", x: 0, y: 0, w: 200, h: 90, label: "Postgres" },
+    ])
+    const label = elementOf(changes, "agent-db-label")
+    expect(label.fontSize).toBe(20)
+    expect(label.text).toBe("Postgres")
+  })
+
+  it("refits the label when update sets longer text", () => {
+    const first = build([
+      { op: "rect", id: "a", x: 0, y: 0, w: 160, h: 80, label: "A" },
+    ])
+    const second = build(
+      [
+        {
+          op: "update",
+          id: "a",
+          label: "Distributed rate limiter backed by Redis",
+        },
+      ],
+      first.changes,
+    )
+    const box = elementOf(second.changes, "agent-a")
+    const label = elementOf(second.changes, "agent-a-label")
+    expect(String(label.text)).toContain("\n")
+    expect(label.width as number).toBeLessThanOrEqual(box.width as number)
+  })
+
+  it("mermaid nodes wrap long labels inside their boxes", () => {
+    const { changes } = build([
+      {
+        op: "diagram",
+        id: "d",
+        mermaid:
+          "flowchart TD\n  a[Distributed rate limiter backed by Redis] --> b[Sink]",
+      },
+    ])
+    for (const change of changes) {
+      const el = change.record as Record<string, unknown>
+      if (el.type !== "text" || !el.containerId) continue
+      const container = changes.find((c) => c.id === el.containerId)
+        ?.record as Record<string, unknown>
+      expect(el.width as number).toBeLessThanOrEqual(container.width as number)
+    }
+  })
+})
+
+describe("colorful defaults", () => {
+  it("uncolored shapes get palette colors with soft fills", () => {
+    const { changes } = build([
+      { op: "rect", id: "web", x: 0, y: 0, w: 200, h: 90 },
+      { op: "rect", id: "api", x: 300, y: 0, w: 200, h: 90 },
+      { op: "ellipse", id: "queue", x: 600, y: 0, w: 180, h: 80 },
+    ])
+    for (const id of ["agent-web", "agent-api", "agent-queue"]) {
+      const shape = elementOf(changes, id)
+      expect(shape.strokeColor).not.toBe("#1e1e1e")
+      expect(shape.backgroundColor).not.toBe("transparent")
+    }
+  })
+
+  it("auto-color is stable across redraws of the same id", () => {
+    const first = build([{ op: "rect", id: "web", x: 0, y: 0, w: 200, h: 90 }])
+    const second = build([{ op: "rect", id: "web", x: 0, y: 0, w: 240, h: 90 }])
+    expect(elementOf(second.changes, "agent-web").strokeColor).toBe(
+      elementOf(first.changes, "agent-web").strokeColor,
+    )
+  })
+
+  it("explicit color and fill:none still win", () => {
+    const { changes } = build([
+      {
+        op: "rect",
+        id: "x",
+        x: 0,
+        y: 0,
+        w: 100,
+        h: 60,
+        color: "red",
+        fill: "none",
+      },
+    ])
+    const shape = elementOf(changes, "agent-x")
+    expect(shape.strokeColor).toBe("#e03131")
+    expect(shape.backgroundColor).toBe("transparent")
+  })
+})
+
+describe("diagram editability", () => {
+  it("a rendered diagram carries its source and the board offers it back", () => {
+    const mermaid = "flowchart TD\n  a[Ingress] --> b[Handler]"
+    const { changes } = build([{ op: "diagram", id: "arch", mermaid }])
+    const carrier = changes.find(
+      (c) =>
+        (c.record as { customData?: { meetMermaid?: string } }).customData
+          ?.meetMermaid,
+    )
+    expect(carrier).toBeDefined()
+    expect(
+      (carrier?.record as { customData: { meetDiagram: string } }).customData
+        .meetDiagram,
+    ).toBe("arch")
+    const description = describeCanvas(changes)
+    expect(description).toContain('Diagram "arch"')
+    expect(description).toContain("flowchart TD")
+  })
+})
