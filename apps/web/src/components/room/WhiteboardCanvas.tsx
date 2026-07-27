@@ -159,6 +159,25 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
   }
 
   /**
+   * The exact element versions this client last handed to Excalidraw
+   * (initial mount and every remote rebuild). A scene element still at its
+   * mounted version has not been touched by any local gesture — the one
+   * reliable way to tell "the cache moved ahead of the scene" (a remote
+   * edit pending rebuild) from "the scene moved ahead of the cache" (a
+   * real local edit that must be re-authored).
+   */
+  const mountedVersion = useRef(new Map<string, string>())
+  const versionKey = (el: LooseElement) => `${el.version}:${el.versionNonce}`
+  const noteMounted = (api: ExcalidrawImperativeAPI) => {
+    for (const element of api.getSceneElementsIncludingDeleted() as unknown as LooseElement[]) {
+      mountedVersion.current.set(element.id as string, versionKey(element))
+      // Fold restore's normalization into the cache too (repairBindings
+      // rewrites content fields the churn check can't wave through).
+      adoptCanvasRecord(element.id as string, element)
+    }
+  }
+
+  /**
    * Outgoing: every scene change is diffed against the cache by Excalidraw's
    * own version/versionNonce, which is also what makes remote applies safe —
    * an element we just merged in matches the cache exactly and is skipped,
@@ -181,6 +200,16 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
         cached.version === element.version &&
         cached.versionNonce === element.versionNonce
       ) {
+        continue
+      }
+      // Untouched since we mounted it: no local gesture happened, so any
+      // cache difference is a REMOTE change awaiting its scene rebuild.
+      // Re-authoring here would push the element's stale scene state over
+      // the fresh remote record with a winning clock — the exact failure
+      // where an agent's update/move op lands, gets instantly reverted,
+      // and "make it red" silently never happens while delete-and-redraw
+      // (fresh ids, no scene rival) works fine.
+      if (mountedVersion.current.get(id) === versionKey(element)) {
         continue
       }
       // A cache tombstone with a still-live scene element is a remote
@@ -240,20 +269,10 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
             elements: sceneFromCache() as any,
             captureUpdate: CaptureUpdateAction.NEVER,
           })
-          // What restoreElements just did to the mounted elements is
-          // normalization, not a local edit — but it can touch CONTENT
-          // fields (repairBindings rewrites bindings, drops one whose
-          // shape hasn't streamed in yet), which the churn check can't
-          // wave through. Left unadopted, the next onSceneChange
-          // re-authors the whole board under this client's identity,
-          // over and over — an LWW clock storm every subsequent agent
-          // update/move arrives too late to beat, so "make it red" and
-          // "move it below" silently lose while delete-and-redraw wins
-          // (fresh ids race nothing). Adopting the post-restore state
-          // keeps the clock still until a human actually edits.
-          for (const element of api.getSceneElementsIncludingDeleted() as unknown as LooseElement[]) {
-            adoptCanvasRecord(element.id as string, element)
-          }
+          // Remember exactly what was mounted (and adopt restore's
+          // normalization): elements still at these versions carry no
+          // local edit, so onSceneChange must never re-author them.
+          noteMounted(api)
         } catch (err) {
           // One bad element must not take the board down.
           console.warn("whiteboard: scene update failed", err)
@@ -364,6 +383,9 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
       <Excalidraw
         excalidrawAPI={(api) => {
           apiRef.current = api
+          // The initial mount counts too: restoreElements already ran on
+          // initialData, and these versions are the no-local-edit baseline.
+          noteMounted(api)
         }}
         initialData={{
           // biome-ignore lint/suspicious/noExplicitAny: opaque element JSON
