@@ -872,8 +872,9 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     id: z.string().min(1),
     x: z.number().optional(),
     y: z.number().optional(),
-    w: z.number().positive(),
-    h: z.number().positive(),
+    // Omitted size = the bridge sizes the box to its label.
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
     /** Background texture: semi = hachure lines, hatch = cross-hatch. */
@@ -886,8 +887,9 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     id: z.string().min(1),
     x: z.number().optional(),
     y: z.number().optional(),
-    w: z.number().positive(),
-    h: z.number().positive(),
+    // Omitted size = the bridge sizes the box to its label.
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
     fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),
@@ -901,8 +903,9 @@ export const canvasOpSchema = z.discriminatedUnion("op", [
     id: z.string().min(1),
     x: z.number().optional(),
     y: z.number().optional(),
-    w: z.number().positive(),
-    h: z.number().positive(),
+    // Omitted size = the bridge sizes the box to its label.
+    w: z.number().positive().optional(),
+    h: z.number().positive().optional(),
     label: z.string().optional(),
     color: canvasColorSchema.optional(),
     fill: z.enum(["none", "semi", "solid", "hatch"]).optional(),

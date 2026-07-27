@@ -39,7 +39,8 @@ export const CANVAS_PROTOCOL_NOTE =
   "edited source updates it IN PLACE). DEFAULT to the primitive ops, not " +
   "diagram: OMIT x/y on creates and layout is automatic — arrow-connected " +
   "shapes are arranged as a clean graph, everything else lands clear of " +
-  "existing shapes. Only give coordinates for deliberate geometry (charts, " +
+  "existing shapes — and OMIT w/h to have boxes sized to their labels. " +
+  "Only give coordinates for deliberate geometry (charts, " +
   "timelines, aligned bars: page pixels on roughly 1600x1000, y growing " +
   "downward). BE AMBITIOUS: a real diagram of a system or plan has 8-15 " +
   "labeled shapes with labeled arrows, groups shown as proximity, and " +

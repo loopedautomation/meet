@@ -198,6 +198,21 @@ function fitLabel(text: string, w: number, h: number) {
  * Colorful boards are bridge policy, not a model choice — an uncolored
  * batch must not come out monochrome.
  */
+/**
+ * Size a closed shape whose op named no w/h: fit the (wrapped) label with
+ * comfortable padding, or fall back to a standard box. Bridge-owned sizing
+ * — "size the box to the label, never the reverse".
+ */
+function autoSize(label: string | undefined): { w: number; h: number } {
+  if (!label) return { w: 200, h: 90 }
+  const wrapped = wrapText(label, 24)
+  const size = measure(wrapped, 20)
+  return {
+    w: Math.max(Math.ceil(size.width) + 48, 160),
+    h: Math.max(Math.ceil(size.height) + 40, 80),
+  }
+}
+
 const AUTO_PALETTE: CanvasColor[] = [
   "blue",
   "green",
@@ -432,7 +447,10 @@ export function buildCanvasRecords(
         op.x === undefined &&
         op.y === undefined
       ) {
-        connectable.set(op.id, { w: op.w, h: op.h })
+        connectable.set(op.id, {
+          w: op.w ?? autoSize(op.label).w,
+          h: op.h ?? autoSize(op.label).h,
+        })
       }
     }
     const edges = ops.filter(
@@ -691,6 +709,8 @@ export function buildCanvasRecords(
         const colorName = op.color ?? autoColor(op.id)
         const fill = op.fill ?? "semi"
         const color = STROKE_COLORS[colorName]
+        const w = op.w ?? autoSize(op.label).w
+        const h = op.h ?? autoSize(op.label).h
         // Re-creating an existing id is an edit, not a new shape: keep its
         // spot (unless coords say otherwise) or the placer nudges it away
         // from itself and the "changed" shape appears to duplicate.
@@ -698,7 +718,7 @@ export function buildCanvasRecords(
         const spot =
           existing && op.x === undefined && op.y === undefined
             ? { x: existing.x as number, y: existing.y as number }
-            : placeCreate(working, id, op, op.w, op.h)
+            : placeCreate(working, id, op, w, h)
         const element: LooseElement = {
           ...baseElement(id, at),
           type:
@@ -709,8 +729,8 @@ export function buildCanvasRecords(
                 : "ellipse",
           x: spot.x,
           y: spot.y,
-          width: op.w,
-          height: op.h,
+          width: w,
+          height: h,
           strokeColor: color,
           backgroundColor:
             fill !== "none" ? BACKGROUND_COLORS[colorName] : "transparent",

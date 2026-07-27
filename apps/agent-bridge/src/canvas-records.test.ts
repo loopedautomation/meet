@@ -749,6 +749,22 @@ describe("diamond primitive", () => {
   })
 })
 
+describe("auto sizing", () => {
+  it("a box without w/h is sized to its label", () => {
+    const { changes, warnings } = build([
+      { op: "rect", id: "svc", label: "Measure Beans" },
+      { op: "diamond", id: "check", label: "Is the shot balanced?" },
+      { op: "arrow", id: "a1", from: "svc", to: "check" },
+    ] as CanvasOp[])
+    expect(warnings).toEqual([])
+    const rect = elementOf(changes, "agent-svc")
+    expect(rect.width as number).toBeGreaterThanOrEqual(160)
+    const label = elementOf(changes, "agent-svc-label")
+    expect(label.width as number).toBeLessThanOrEqual(rect.width as number)
+    expect(elementOf(changes, "agent-check").type).toBe("diamond")
+  })
+})
+
 describe("label fitting", () => {
   it("wraps and shrinks a long label so it never exceeds its box", () => {
     const text = "Streaming ingestion service with a very long name"
