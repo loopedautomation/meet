@@ -255,7 +255,13 @@ export async function acceptRequest(request: JobRequest): Promise<void> {
 
 export default defineAgent({
   prewarm: async (proc: JobProcess) => {
-    proc.userData.vad = await silero.VAD.load()
+    // Patient end-of-turn: the default (~0.55s) fires on mid-sentence
+    // thinking pauses and the agent talks over people. Matches the OpenAI
+    // path's server-VAD silence window (realtime-session's TURN_SILENCE_MS).
+    proc.userData.vad = await silero.VAD.load({
+      minSilenceDuration:
+        (Number(process.env.REALTIME_TURN_SILENCE_MS) || 900) / 1000,
+    })
   },
   entry: async (ctx: JobContext) => {
     const entry = entryFromMetadata(ctx.job.metadata)

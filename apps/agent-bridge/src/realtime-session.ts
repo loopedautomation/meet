@@ -174,6 +174,14 @@ export type RealtimeSessionOptions = {
   }
 }
 
+/**
+ * How much silence ends a human's turn. The server default (~500ms) makes
+ * the agent pounce on mid-sentence pauses — a breath, a "let me think" —
+ * which reads as interrupting. Meetings favour patience over snappiness:
+ * a person still holds the floor through a thinking pause.
+ */
+const TURN_SILENCE_MS = Number(process.env.REALTIME_TURN_SILENCE_MS) || 900
+
 /** Silent text-only check run after unaddressed turns when gated. */
 const DELIBERATE_INSTRUCTIONS =
   "Do not speak. Silently decide: given what was just said, do you have " +
@@ -501,6 +509,7 @@ export class RealtimeSession implements VoiceSession {
                 type: "server_vad",
                 create_response: !this.#opts.gate,
                 interrupt_response: true,
+                silence_duration_ms: TURN_SILENCE_MS,
               },
             },
             output: {
@@ -949,6 +958,7 @@ export class RealtimeSession implements VoiceSession {
               type: "server_vad",
               create_response: open,
               interrupt_response: true,
+              silence_duration_ms: TURN_SILENCE_MS,
             },
           },
         },
@@ -990,7 +1000,24 @@ export class RealtimeSession implements VoiceSession {
     this.#opts.instructions = text
     this.#send({
       type: "session.update",
-      session: { type: "realtime", instructions: text },
+      session: {
+        type: "realtime",
+        instructions: text,
+        // Re-assert the turn gate alongside: a session.update that omits
+        // turn_detection can come back with the server default
+        // (create_response: true), silently ungating a raise-hand agent —
+        // it would then speak whenever it pleased until the next gate flip.
+        audio: {
+          input: {
+            turn_detection: {
+              type: "server_vad",
+              create_response: this.#opts.gate ? this.#gateOpen : true,
+              interrupt_response: true,
+              silence_duration_ms: TURN_SILENCE_MS,
+            },
+          },
+        },
+      },
     })
   }
 
