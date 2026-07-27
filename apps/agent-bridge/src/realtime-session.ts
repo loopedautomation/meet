@@ -75,6 +75,13 @@ export interface VoiceSession {
   setGateOpen(open: boolean): void
   callOn(): void
   cancelResponse(): void
+  /**
+   * Replace the session's system instructions mid-call (e.g. the host
+   * changed the agent's chattiness). Providers that can't reconfigure a
+   * live session apply the full text from the next (re)connect and inject
+   * the short `note` into the current one instead.
+   */
+  updateInstructions(text: string, note?: string): void
   close(): void
 }
 
@@ -975,6 +982,15 @@ export class RealtimeSession implements VoiceSession {
   say(text: string) {
     this.#createResponse("spoken", {
       instructions: `Say, more or less: ${text}`,
+    })
+  }
+
+  /** Swap the system instructions on the live session (and any reconnect). */
+  updateInstructions(text: string, _note?: string) {
+    this.#opts.instructions = text
+    this.#send({
+      type: "session.update",
+      session: { type: "realtime", instructions: text },
     })
   }
 

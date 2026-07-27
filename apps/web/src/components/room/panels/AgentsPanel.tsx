@@ -40,7 +40,7 @@ function voiceOptions(
   mode: AgentMode | "",
 ): readonly string[] | null {
   if (mode === "gemini") return GEMINI_VOICES
-  if (mode === "realtime") return AGENT_VOICES
+  if (mode === "realtime" || mode === "realtime-mini") return AGENT_VOICES
   if (mode === "elevenlabs") return null
   if (mode === "" && agent.realtimeProvider) {
     return agent.realtimeProvider === "gemini" ? GEMINI_VOICES : AGENT_VOICES
@@ -258,7 +258,11 @@ export function AgentsPanel({ slug }: { slug: string }) {
                             aria-label="Interaction mode"
                             options={[
                               { value: "gemini", label: "Gemini Live" },
-                              { value: "realtime", label: "GPT Realtime mini" },
+                              { value: "realtime", label: "GPT Realtime" },
+                              {
+                                value: "realtime-mini",
+                                label: "GPT Realtime mini",
+                              },
                               {
                                 value: "gpt-live",
                                 label: "GPT Live-1 (soon)",
@@ -557,7 +561,7 @@ function voiceBadges(voice: string) {
 
 function urlVoiceOptions(mode: AgentMode): readonly string[] | null {
   if (mode === "gemini") return GEMINI_VOICES
-  if (mode === "realtime") return AGENT_VOICES
+  if (mode === "realtime" || mode === "realtime-mini") return AGENT_VOICES
   if (mode === "elevenlabs") return null
   return OPENAI_TTS_VOICES
 }
@@ -628,7 +632,8 @@ function InviteByUrl({
         }}
         aria-label="Communication method"
         options={[
-          { value: "realtime", label: "GPT Realtime mini" },
+          { value: "realtime", label: "GPT Realtime" },
+          { value: "realtime-mini", label: "GPT Realtime mini" },
           { value: "gemini", label: "Gemini Live" },
         ]}
       />

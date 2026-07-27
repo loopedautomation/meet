@@ -109,6 +109,7 @@ describe("describeAgentControl", () => {
         agentId: "scout",
         ...(type === "set-turn-policy" ? { policy: "open" as const } : {}),
         ...(type === "set-barge-in" ? { bargeIn: true } : {}),
+        ...(type === "set-chattiness" ? { chattiness: "quiet" as const } : {}),
       }
       expect(describeAgentControl(control, "Scout")).toBeTruthy()
     }

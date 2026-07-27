@@ -11,6 +11,7 @@ import {
 } from "@livekit/rtc-node"
 import {
   AGENT_BARGE_IN_ATTRIBUTE,
+  AGENT_CHATTINESS_ATTRIBUTE,
   type AgentActivityEvent,
   agentControlSchema,
   type CanvasOp,
@@ -59,6 +60,40 @@ const ZAP_WINDOW_MS = 30_000
 /** How much mixed room audio each push into the session carries. */
 const MIX_INTERVAL_MS = 50
 
+/**
+ * How much the agent talks, per the registry's chattiness setting. Every
+ * level keeps the guest stance — the conversation belongs to the humans —
+ * and differs only in how eagerly it self-selects and how long it runs on.
+ */
+const chattinessInstructions: Record<AgentEntry["chattiness"], string> = {
+  quiet:
+    "You are a guest, not the host: the conversation belongs to the humans " +
+    "and is not for you. Speak ONLY when addressed by name or asked a " +
+    "direct question — never volunteer, comment on, summarize, or " +
+    "acknowledge what people say to each other, even when you know the " +
+    "answer. Never speak while someone else is mid-thought; wait for a " +
+    "clear pause and a turn that is yours. When unsure whether to speak, " +
+    "don't; if you have a useful aside or link, post it silently with " +
+    "send_chat_message instead of talking. When you do speak, answer in " +
+    "one or two short sentences and stop — no preamble, no recap of the " +
+    "question, no offering further help.",
+  normal:
+    "You are a guest, not the host: most of the conversation is between " +
+    "the humans and is not for you. Stay silent unless you are addressed " +
+    "by name, asked a direct question, or you have something genuinely " +
+    "important to contribute — never comment on, summarize, or " +
+    "acknowledge what people say to each other. When unsure whether to " +
+    "speak, don't; if you have a useful aside or link, post it with " +
+    "send_chat_message instead of talking. Keep spoken replies concise " +
+    "and conversational — a sentence or two unless asked for more.",
+  chatty:
+    "You are a participant, but the meeting is still the humans': feel " +
+    "free to volunteer relevant contributions, answers and ideas, but " +
+    "never dominate, never interrupt someone mid-sentence, and let " +
+    "exchanges between people finish before weighing in. Keep spoken " +
+    "replies conversational and reasonably brief.",
+}
+
 const instructions = (
   entry: AgentEntry,
   canSeeScreens: boolean,
@@ -106,14 +141,9 @@ const instructions = (
   "tools or delegation out loud. If a task continues in the background, " +
   "you'll get a [task finished] note with the outcome; until it arrives, " +
   "don't guess at results, and use cancel_task if someone tells you to " +
-  "stop. You are a guest, not the host: most of the conversation is " +
-  "between the humans and is not for you. Stay silent unless you are " +
-  "addressed by name, asked a direct question, or you have something " +
-  "genuinely important to contribute — never comment on, summarize, or " +
-  "acknowledge what people say to each other. When unsure whether to " +
-  "speak, don't; if you have a useful aside or link, post it with " +
-  "send_chat_message instead of talking. Keep spoken replies concise and " +
-  "conversational — a sentence or two unless asked for more. Messages " +
+  "stop. " +
+  chattinessInstructions[entry.chattiness] +
+  " Messages " +
   "prefixed [meeting chat] are the room's text chat: read them for context " +
   "and reply in chat (or aloud only if addressed there)." +
   " The meeting has a shared markdown document everyone can see and edit. " +
@@ -127,7 +157,9 @@ const instructions = (
   "draw_on_canvas, whether or not anyone is sharing a screen. When someone " +
   "asks you to sketch, diagram, chart or 'put it on the board', just call " +
   "draw_on_canvas — never say you can't see the board or ask for it to be " +
-  "shared." +
+  "shared. When any tool call comes back with a validation or formatting " +
+  "error, correct the call and retry silently — never announce the error, " +
+  "the retry, or your fix aloud; the room only ever hears the result." +
   " Your audio may be gated by the meeting's host: while it is, you are " +
   "only given the floor when someone addresses you by name or calls on you " +
   "after you raise your hand, and between turns you may be asked silently " +
@@ -619,6 +651,15 @@ export async function runRealtimeAgent(opts: {
   // callbacks below can close over it.
   let applyGate: () => void = () => {}
 
+  /** Session instructions for a chattiness level (host-adjustable mid-call). */
+  const buildInstructions = (chattiness: AgentEntry["chattiness"]) =>
+    instructions(
+      { ...entry, chattiness },
+      canSeeScreens,
+      opts.context,
+      opts.purpose,
+    )
+
   const sessionOpts: RealtimeSessionOptions = {
     model: realtime.model,
     voice: realtime.voice,
@@ -626,12 +667,7 @@ export async function runRealtimeAgent(opts: {
     transcriptionHint:
       `This is a meeting. One participant is an AI assistant named ` +
       `"${entry.name}", who is often addressed by that exact name.`,
-    instructions: instructions(
-      entry,
-      canSeeScreens,
-      opts.context,
-      opts.purpose,
-    ),
+    instructions: buildInstructions(entry.chattiness),
     delegate,
     cancelWork: () => {
       if (workInFlight === 0 || !brain.abortTurn) return false
@@ -1085,6 +1121,17 @@ export async function runRealtimeAgent(opts: {
               ? "server vad, gated (raises hand; speaks on mention/call-on)"
               : "server vad, gated (speaks on mention/call-on)"
         stats.config["turn policy"] = control.policy
+        publishStats()
+      } else if (control.type === "set-chattiness" && control.chattiness) {
+        session.updateInstructions(
+          buildInstructions(control.chattiness),
+          `The meeting's host set your chattiness to "${control.chattiness}". ` +
+            chattinessInstructions[control.chattiness],
+        )
+        local
+          .setAttributes({ [AGENT_CHATTINESS_ATTRIBUTE]: control.chattiness })
+          .catch(() => undefined)
+        stats.config.chattiness = control.chattiness
         publishStats()
       } else if (control.type === "call-on") {
         handRaised = false

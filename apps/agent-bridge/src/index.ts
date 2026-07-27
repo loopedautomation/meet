@@ -73,7 +73,13 @@ app.use("*", async (c, next) => {
   return next()
 })
 
-const INVITE_MODES = ["realtime", "gemini", "pipeline", "elevenlabs"]
+const INVITE_MODES = [
+  "realtime",
+  "realtime-mini",
+  "gemini",
+  "pipeline",
+  "elevenlabs",
+]
 
 /**
  * Shared checks for per-invite mode/voice overrides (registry and URL

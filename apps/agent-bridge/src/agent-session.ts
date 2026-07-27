@@ -71,7 +71,11 @@ export type MeetingContext = {
 
 const instructions = (entry: AgentEntry) =>
   `You are ${entry.name}, an AI agent participating in a live voice meeting. ` +
-  "Utterances arrive as '<Speaker>: <text>'. Keep spoken replies concise and conversational."
+  "Utterances arrive as '<Speaker>: <text>'. " +
+  (entry.chattiness === "quiet"
+    ? "Speak only when directly addressed, and answer in one or two short " +
+      "sentences — no preamble, no filler."
+    : "Keep spoken replies concise and conversational.")
 
 /**
  * A LiveKit voice agent whose "LLM" is a looped-af agent reached over its

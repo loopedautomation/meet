@@ -686,6 +686,16 @@ export class GeminiLiveSession implements VoiceSession {
     this.#sendUserText(`[Say, more or less: ${text}]`)
   }
 
+  /**
+   * Gemini Live can't reconfigure a running session, so the new
+   * instructions take full effect on the next (re)connect; the short note
+   * carries the change to the current one as a silent system line.
+   */
+  updateInstructions(text: string, note?: string) {
+    this.#opts.instructions = text
+    if (note) this.#sendUserText(`[${note}]`)
+  }
+
   /** Push 16 kHz mono PCM16 audio from the room into the session. */
   appendAudio(pcm: Uint8Array) {
     if (!pcm.length) return
