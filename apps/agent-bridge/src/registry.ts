@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs"
+import { chattinessSchema } from "@meet/shared"
 import { parse } from "yaml"
 import { z } from "zod"
 
@@ -32,6 +33,13 @@ const agentEntrySchema = z.object({
   // "raise-hand": like on-mention, but raises a hand when it has something,
   // so a host can call on it.
   turn_policy: z.enum(["open", "on-mention", "raise-hand"]).default("open"),
+  // How much the agent talks when it does have the floor.
+  // "quiet": speaks only when directly addressed, one or two sentences, puts
+  // asides in chat. "normal": also offers the occasional important
+  // contribution. "chatty": volunteers relevant input freely (still shouldn't
+  // dominate). Independent of turn_policy, which controls WHEN it may speak;
+  // this controls HOW MUCH it says and how eagerly it self-selects.
+  chattiness: chattinessSchema.default("quiet"),
   // When present, the agent runs on a realtime speech-to-speech model (the
   // interaction layer) that delegates tool work to the brain — no STT/TTS
   // pipeline. stt/tts below are ignored for realtime agents.

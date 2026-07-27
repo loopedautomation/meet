@@ -10,6 +10,7 @@ import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
   AGENT_BARGE_IN_ATTRIBUTE,
+  AGENT_CHATTINESS_ATTRIBUTE,
   AGENT_DEAFENED_ATTRIBUTE,
   AGENT_MUTED_ATTRIBUTE,
   AGENT_POLICY_ATTRIBUTE,
@@ -106,7 +107,7 @@ type DispatchMeta = {
   agentId: string
   // "pipeline" is the OpenAI STT/TTS pipeline; "elevenlabs" the same
   // pipeline speaking through ElevenLabs.
-  mode?: "realtime" | "gemini" | "pipeline" | "elevenlabs"
+  mode?: "realtime" | "realtime-mini" | "gemini" | "pipeline" | "elevenlabs"
   voice?: string
 }
 
@@ -155,17 +156,23 @@ function applyMode(
           } as const)
     return { ...entry, realtime: undefined, tts }
   }
-  if (mode === "realtime" && entry.realtime?.provider !== "openai") {
-    const voice = (AGENT_VOICES as readonly string[]).includes(entry.tts.voice)
-      ? entry.tts.voice
+  if (mode === "realtime" || mode === "realtime-mini") {
+    // An explicit realtime choice pins the model tier, whatever the
+    // registry's default provider or model was.
+    const model =
+      mode === "realtime-mini"
+        ? (process.env.REALTIME_MINI_MODEL ?? "gpt-realtime-2.1-mini")
+        : (process.env.REALTIME_MODEL ?? "gpt-realtime")
+    const current =
+      entry.realtime?.provider === "openai"
+        ? entry.realtime.voice
+        : entry.tts.voice
+    const voice = (AGENT_VOICES as readonly string[]).includes(current)
+      ? current
       : "marin"
     return {
       ...entry,
-      realtime: {
-        provider: "openai" as const,
-        model: process.env.REALTIME_MODEL ?? "gpt-realtime-2.1-mini",
-        voice,
-      },
+      realtime: { provider: "openai" as const, model, voice },
     }
   }
   if (mode === "gemini") {
@@ -210,6 +217,7 @@ function entryFromMetadata(metadata: string): ResolvedEntry {
         description: spec.description,
         greeting: `Hi, I'm ${spec.name}.`,
         turn_policy: "open",
+        chattiness: "quiet",
         brain: { kind: "tty", url: spec.url, token_env: "" },
         realtime: {
           provider: "openai" as const,
@@ -306,6 +314,11 @@ export default defineAgent({
         .catch(() => undefined)
     }
     publishPolicy()
+    // Seed the chattiness attribute from the registry so the panel's control
+    // shows the real starting level (flips happen in realtime-agent).
+    local
+      .setAttributes({ [AGENT_CHATTINESS_ATTRIBUTE]: entry.chattiness })
+      .catch(() => undefined)
     // Barge-in starts at the deployment default; the "set-barge-in" control
     // flips it per meeting (realtime handles its own flips in realtime-agent).
     local
