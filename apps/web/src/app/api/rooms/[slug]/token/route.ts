@@ -154,7 +154,9 @@ export async function POST(request: Request, { params }: Params) {
   // currently connected with human metadata. Identities removed by
   // moderation are refused either way: a kick must end the session, not
   // hand out a fresh identity.
-  if (waiting && body.data.rejoinToken) {
+  // The proof's verified identity, kept for `refresh` renewals below.
+  let rejoinIdentity: string | undefined
+  if ((waiting || body.data.refresh) && body.data.rejoinToken) {
     try {
       const claims = await new TokenVerifier(apiKey, apiSecret).verify(
         body.data.rejoinToken,
@@ -164,6 +166,7 @@ export async function POST(request: Request, { params }: Params) {
         const kind = parseParticipantMeta(claims.metadata)?.kind
         if (kind === "human") {
           waiting = false
+          rejoinIdentity = sub
         } else if (kind === "waiting") {
           const live = (
             await roomService()
@@ -172,6 +175,7 @@ export async function POST(request: Request, { params }: Params) {
           ).find((p) => p.identity === sub)
           if (live && parseParticipantMeta(live.metadata)?.kind === "human") {
             waiting = false
+            rejoinIdentity = sub
           }
         }
       }
@@ -189,7 +193,14 @@ export async function POST(request: Request, { params }: Params) {
       .catch(() => undefined)
   }
 
-  const identity = `user-${nanoid(10)}`
+  // A refresh renews the SAME participant: keeping the identity keeps
+  // API-auth (which derives identity from this token) consistent with the
+  // still-connected LiveKit participant. Only honored with verified,
+  // admitted proof — never from the request body alone.
+  const identity =
+    body.data.refresh && rejoinIdentity
+      ? rejoinIdentity
+      : `user-${nanoid(10)}`
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),
