@@ -1000,7 +1000,24 @@ export class RealtimeSession implements VoiceSession {
     this.#opts.instructions = text
     this.#send({
       type: "session.update",
-      session: { type: "realtime", instructions: text },
+      session: {
+        type: "realtime",
+        instructions: text,
+        // Re-assert the turn gate alongside: a session.update that omits
+        // turn_detection can come back with the server default
+        // (create_response: true), silently ungating a raise-hand agent —
+        // it would then speak whenever it pleased until the next gate flip.
+        audio: {
+          input: {
+            turn_detection: {
+              type: "server_vad",
+              create_response: this.#opts.gate ? this.#gateOpen : true,
+              interrupt_response: true,
+              silence_duration_ms: TURN_SILENCE_MS,
+            },
+          },
+        },
+      },
     })
   }
 
