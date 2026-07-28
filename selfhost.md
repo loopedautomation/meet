@@ -31,6 +31,21 @@ LIVEKIT_API_SECRET=<strong secret>
 - All LiveKit config is templated from `.env` inside the compose file — there is no separate LiveKit yaml.
 - Images are prebuilt by GitHub Actions (`.github/workflows/publish-images.yaml`) and pulled from GHCR — the deploy host never builds. If the GHCR packages are private, give the host registry credentials (e.g. Coolify's registry settings).
 - On Coolify: add the repo as a Docker Compose resource, attach the two domains to the `web` and `livekit` services, and set the env vars in the resource's environment tab.
+- **Pin a version** with `IMAGE_TAG` (e.g. `IMAGE_TAG=0.1.0`) instead of riding `:latest`; every tagged release publishes pinned images.
+
+## Telemetry
+
+The published images report anonymous usage events to PostHog (see the
+README's Telemetry section for exactly what is and isn't collected). Opt out
+at any time — read at runtime, no rebuild:
+
+```sh
+TELEMETRY_DISABLED=1
+```
+
+The deployment is identified only by a one-way hash derived from
+`MEET_ROOM_SECRET` (or `LIVEKIT_API_SECRET` when unset). Builds from source
+contain no key and send nothing.
 
 ## Networking notes (beyond localhost)
 
@@ -65,6 +80,11 @@ including `LIVEKIT_KEYS` (`"<key>: <secret>"`) under `/apps/livekit`, which
 livekit-server reads in place of the compose-templated keys. Without Infisical
 credentials the entrypoints are a no-op and everything runs off `.env` as
 before.
+
+Note on `MEET_ROOM_SECRET`: host keys, recreatable booking room codes, and the
+telemetry instance id are all derived from it, falling back to
+`LIVEKIT_API_SECRET`. Setting it explicitly lets you rotate the LiveKit key
+without breaking existing booking links.
 
 ## In-browser transcription (optional)
 
