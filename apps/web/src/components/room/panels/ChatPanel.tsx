@@ -8,10 +8,11 @@ import {
   TYPING_HEARTBEAT_MS,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Pencil, SendHorizontal, Trash2 } from "lucide-react"
+import { Pencil, SendHorizontal, Smile, Trash2 } from "lucide-react"
 import { nanoid } from "nanoid"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Markdown } from "@/components/Markdown"
+import { EmojiPicker } from "@/components/room/panels/EmojiPicker"
 import {
   completeMention,
   MentionPicker,
@@ -200,7 +201,9 @@ export function ChatPanel() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
     null,
   )
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const draftInputRef = useRef<HTMLInputElement>(null)
   const mentionables = useMentionables()
   const query = mentionQuery(draft)
   const matches = query !== null ? matchMentions(mentionables, query) : []
@@ -248,6 +251,12 @@ export function ChatPanel() {
     },
     [sendActivity],
   )
+  const pickEmoji = (emoji: string) => {
+    draftChanged(draft + emoji)
+    setEmojiPickerOpen(false)
+    draftInputRef.current?.focus()
+  }
+
   const draftChanged = (value: string) => {
     setDraft(value)
     if (!value.trim()) {
@@ -387,7 +396,14 @@ export function ChatPanel() {
             onHover={setActive}
           />
         )}
+        {emojiPickerOpen && (
+          <EmojiPicker
+            onPick={pickEmoji}
+            onClose={() => setEmojiPickerOpen(false)}
+          />
+        )}
         <input
+          ref={draftInputRef}
           className="input input-sm flex-1"
           placeholder="Send a message — @ to mention"
           value={draft}
@@ -397,6 +413,15 @@ export function ChatPanel() {
             if (typingSentAt.current) sendTyping(false)
           }}
         />
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm btn-circle"
+          aria-label="Add emoji"
+          title="Add emoji"
+          onClick={() => setEmojiPickerOpen((open) => !open)}
+        >
+          <Smile className="size-4" />
+        </button>
         <button
           type="submit"
           className="btn btn-primary btn-sm btn-circle"

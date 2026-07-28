@@ -1,6 +1,7 @@
 "use client"
 
 import ReactMarkdown from "react-markdown"
+import remarkEmoji from "remark-emoji"
 import remarkGfm from "remark-gfm"
 
 /**
@@ -20,7 +21,7 @@ export function Markdown({
       className={`prose prose-sm max-w-none break-words prose-headings:font-medium prose-pre:rounded-box prose-pre:bg-base-200 prose-pre:text-base-content prose-code:before:content-none prose-code:after:content-none ${className}`}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkEmoji]}
         components={{
           // Open links in a new tab so navigating doesn't tear down the meeting.
           a: ({ node: _node, ...props }) => (
