@@ -26,6 +26,7 @@
     "nanoid": "^5.1.5",
     "nanostores": "catalog:",
     "next": "catalog:",
+    "posthog-js": "^1.407.3",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",

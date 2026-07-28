@@ -3,6 +3,20 @@ import type {NextConfig} from "next"
 const nextConfig: NextConfig = {
   output: "standalone",
   transpilePackages: ["@meet/shared"],
+  async rewrites() {
+    return [
+      // Same-origin PostHog ingestion proxy: COEP require-corp (below) blocks
+      // third-party embeds, and first-party ingestion survives ad-blockers.
+      {
+        source: "/ingest/static/:path*",
+        destination: "https://us-assets.i.posthog.com/static/:path*",
+      },
+      {
+        source: "/ingest/:path*",
+        destination: "https://us.i.posthog.com/:path*",
+      },
+    ]
+  },
   async headers() {
     return [
       {

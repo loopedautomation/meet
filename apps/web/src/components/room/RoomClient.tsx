@@ -4,12 +4,13 @@ import { LiveKitRoom } from "@livekit/components-react"
 import type { TokenResponse } from "@meet/shared"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { setLogLevel } from "livekit-client"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
+import { track } from "@/lib/analytics"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 import {
@@ -67,6 +68,8 @@ export function RoomClient({
     } catch {}
   }, [slug])
 
+  const joinedAtRef = useRef<number | null>(null)
+
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
       setAdmitted(false)
@@ -106,6 +109,15 @@ export function RoomClient({
             JSON.stringify({ prefs, rejoinToken: token.token }),
           )
         } catch {}
+        // A refresh rejoin isn't a new join; waiting-room entries are counted
+        // on admission instead.
+        if (!rejoinToken && !token.waiting) {
+          joinedAtRef.current = Date.now()
+          track("room_joined", {
+            role: token.isHost ? "host" : "guest",
+            via_waiting_room: false,
+          })
+        }
         setSession({ token, prefs })
       } catch {
         toast.error("Could not join the meeting. Please try again.")
@@ -140,6 +152,8 @@ export function RoomClient({
   // walks straight in instead of knocking again.
   const handleAdmitted = useCallback(() => {
     setAdmitted(true)
+    joinedAtRef.current = Date.now()
+    track("room_joined", { role: "guest", via_waiting_room: true })
     const current = sessionStorage.getItem(`rejoin:${slug}`)
     if (!current) return
     try {
@@ -217,6 +231,12 @@ export function RoomClient({
   }, [session, slug])
 
   const handleLeave = useCallback(() => {
+    if (joinedAtRef.current) {
+      track("room_left", {
+        duration_seconds: Math.round((Date.now() - joinedAtRef.current) / 1000),
+      })
+      joinedAtRef.current = null
+    }
     try {
       sessionStorage.removeItem(`rejoin:${slug}`)
     } catch {}

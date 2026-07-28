@@ -46,6 +46,7 @@ import { useMeetingSounds } from "@/hooks/useMeetingSounds"
 import { usePushToTalk } from "@/hooks/usePushToTalk"
 import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
+import { track } from "@/lib/analytics"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
@@ -300,7 +301,8 @@ export function ControlBar({
           <button
             type="button"
             className={`btn btn-circle ${isScreenShareEnabled ? "btn-primary" : "btn-neutral"}`}
-            onClick={() =>
+            onClick={() => {
+              if (!isScreenShareEnabled) track("screenshare_started")
               toggle(
                 () =>
                   localParticipant.setScreenShareEnabled(
@@ -312,7 +314,7 @@ export function ControlBar({
                   ),
                 "screen share",
               )
-            }
+            }}
             aria-label="Toggle screen share"
           >
             <MonitorUp className="size-5" />
@@ -478,6 +480,7 @@ export function ControlBar({
                 $canvasUnseen.set(false)
                 // The stage holds one takeover at a time.
                 $docOnStage.set(false)
+                track("whiteboard_opened")
               }
             }}
             aria-label={
@@ -569,6 +572,7 @@ export function ControlBar({
                 if (opening) {
                   $canvasUnseen.set(false)
                   $docOnStage.set(false)
+                  track("whiteboard_opened")
                 }
                 ;(document.activeElement as HTMLElement | null)?.blur()
               }}

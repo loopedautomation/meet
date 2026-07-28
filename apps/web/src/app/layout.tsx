@@ -1,6 +1,9 @@
 import type { Metadata } from "next"
+import { connection } from "next/server"
 import type { ReactNode } from "react"
+import { TelemetryProvider } from "@/components/TelemetryProvider"
 import { ToastContainer } from "@/components/ui/Toast"
+import { instanceId, telemetryEnabled } from "@/lib/server/telemetry"
 import "@/styles/globals.css"
 
 export const metadata: Metadata = {
@@ -18,7 +21,14 @@ try {
 } catch {}
 `
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({
+  children,
+}: {
+  children: ReactNode
+}) {
+  // Render per request, not at image build: TELEMETRY_DISABLED and the
+  // instance secret are the self-hoster's runtime env, not ours.
+  await connection()
   return (
     <html lang="en" data-theme="looped-light" suppressHydrationWarning>
       <head>
@@ -26,7 +36,12 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: themeInit }} />
       </head>
       <body className="min-h-dvh bg-base-100 text-base-content antialiased">
-        {children}
+        <TelemetryProvider
+          enabled={telemetryEnabled()}
+          instanceId={instanceId()}
+        >
+          {children}
+        </TelemetryProvider>
         <ToastContainer />
       </body>
     </html>

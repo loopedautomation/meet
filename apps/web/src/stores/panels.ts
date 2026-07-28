@@ -1,4 +1,5 @@
 import { atom } from "nanostores"
+import { track } from "@/lib/analytics"
 
 export type Panel =
   | "agents"
@@ -18,6 +19,9 @@ export function togglePanel(panel: Exclude<Panel, null>) {
   const opening = $openPanel.get() !== panel
   // The doc lives in one place at a time — opening the panel pulls it off
   // the stage rather than mounting a second editor.
-  if (panel === "doc" && opening) $docOnStage.set(false)
+  if (panel === "doc" && opening) {
+    $docOnStage.set(false)
+    track("doc_panel_opened")
+  }
   $openPanel.set(opening ? panel : null)
 }

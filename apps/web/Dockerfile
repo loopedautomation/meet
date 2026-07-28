@@ -27,6 +27,10 @@ COPY apps/web apps/web
 # LIVEKIT_PUBLIC_URL is only read server-side at runtime (the token API
 # returns it as serverUrl) — nothing is inlined into the client bundle, so the
 # image needs no build-time env and is fully generic.
+# Exception: the PostHog project key (write-only, safe to expose) is inlined
+# into the client bundle here; TELEMETRY_DISABLED=1 at runtime turns it off.
+ARG NEXT_PUBLIC_POSTHOG_KEY
+ENV NEXT_PUBLIC_POSTHOG_KEY=$NEXT_PUBLIC_POSTHOG_KEY
 RUN cd apps/web && pnpm build
 
 FROM node:22-alpine AS runner

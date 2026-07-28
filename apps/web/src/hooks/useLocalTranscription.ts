@@ -9,6 +9,7 @@ import {
 } from "@meet/shared"
 import { Track } from "livekit-client"
 import { useEffect } from "react"
+import { track } from "@/lib/analytics"
 import { upsertLocalSegment } from "@/stores/localTranscript"
 
 export const LOCAL_STT_PREF_KEY = "localStt"
@@ -24,6 +25,7 @@ export function readLocalSttPref(): boolean {
 }
 
 export function writeLocalSttPref(enabled: boolean) {
+  if (enabled) track("transcription_enabled")
   try {
     localStorage.setItem(LOCAL_STT_PREF_KEY, String(enabled))
   } catch {}

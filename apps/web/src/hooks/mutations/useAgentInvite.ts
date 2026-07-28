@@ -1,6 +1,7 @@
 "use client"
 
 import { useMutation } from "@tanstack/react-query"
+import { track } from "@/lib/analytics"
 import { readHostKey } from "@/lib/hostKey"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 
@@ -44,6 +45,10 @@ export function useAgentInvite(slug: string) {
         ...(overrides ? { body: JSON.stringify(overrides) } : {}),
       })
       if (!res.ok) throw new Error(`agent ${action} failed`)
+    },
+    onSuccess: (_data, { agentId, action }) => {
+      if (action === "invite") track("agent_invited", { agent_type: agentId })
+      else track("agent_removed", { agent_type: agentId })
     },
   })
 }
