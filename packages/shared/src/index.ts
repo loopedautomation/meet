@@ -112,6 +112,14 @@ export const SELF_TRANSCRIBE_ATTRIBUTE = "stt.local"
 export const SELF_TRANSCRIBE_ACTIVE = "active"
 
 /**
+ * Attribute the transcriber service sets on itself (value "true") when its
+ * STT engine failed to load and it joined only to advertise that fact — no
+ * server-side transcription is running for anyone in the room. Lets the
+ * transcript panel tell "nothing said yet" apart from "broken deployment".
+ */
+export const TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE = "stt.unavailable"
+
+/**
  * Streaming ASR models trained on GigaSpeech emit ALL-CAPS text with no
  * punctuation, while finalized utterances are properly cased — so captions
  * visibly "flip" at utterance end. Sentence-case shouty text so interims and
