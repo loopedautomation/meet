@@ -110,6 +110,24 @@ Repo layout:
 
 The looped look lives in `apps/web/src/styles/` as DaisyUI themes (`themes.css`, OKLCH tokens). Swap the two theme blocks for your own brand colors and the whole app follows — no component changes needed.
 
+## Telemetry
+
+The published images send anonymous usage events to PostHog so we can see
+which features matter — room joins, agent invites, panel opens, and the like.
+
+What's collected: event names with coarse properties (e.g. agent type, meeting
+duration in seconds) and a one-way-hashed instance id used to count distinct
+deployments. What's never collected: room codes, participant names, chat/doc/
+transcript content, or URLs containing any of those.
+
+To opt out, set the environment variable and restart — no rebuild needed:
+
+```sh
+TELEMETRY_DISABLED=1
+```
+
+Builds from source have telemetry off by default (no key is baked in).
+
 ## License
 
 [FSL-1.1-ALv2](./LICENSE) — the [Functional Source License](https://fsl.software). You can use, copy, modify and redistribute Looped Meet for any purpose except building a competing commercial product or service. Each version automatically converts to [Apache 2.0](https://www.apache.org/licenses/LICENSE-2.0) two years after its release.

@@ -19,6 +19,7 @@ import {
   mentionQuery,
   useMentionables,
 } from "@/components/room/panels/MentionPicker"
+import { track } from "@/lib/analytics"
 import {
   $chatMessages,
   $typingAgents,
@@ -276,6 +277,7 @@ export function ChatPanel() {
     setDraft("")
     if (typingSentAt.current) sendTyping(false)
     addChatMessage(message)
+    track("chat_message_sent")
     await send(new TextEncoder().encode(JSON.stringify(message)), {
       topic: DataTopic.Chat,
       reliable: true,
