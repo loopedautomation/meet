@@ -1,4 +1,4 @@
-# Built with the repo root as context (see docker-compose.yaml) so it can
+# Built with the repo root as context (see docker-compose.build.yaml) so it can
 # copy the shared Infisical entrypoint.
 FROM alpine:3 AS infisical
 ARG TARGETARCH
