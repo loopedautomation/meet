@@ -1,4 +1,5 @@
 import { atom } from "nanostores"
+import { track } from "@/lib/analytics"
 import type { CameraEffect } from "@/lib/backgrounds"
 import { BACKGROUNDS } from "@/lib/backgrounds"
 
@@ -26,6 +27,7 @@ function initial(): CameraEffect {
 export const $cameraEffect = atom<CameraEffect>(initial())
 
 export function setCameraEffect(effect: CameraEffect) {
+  if (effect !== "none") track("camera_effect_applied", { effect })
   $cameraEffect.set(effect)
   try {
     localStorage.setItem(KEY, effect)

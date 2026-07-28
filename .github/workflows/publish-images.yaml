@@ -69,6 +69,10 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,scope=${{ matrix.service }},mode=max
+          # Bakes anonymous-telemetry ingestion into the web image; the other
+          # services ignore it. No-op until the POSTHOG_KEY secret is set.
+          build-args: |
+            NEXT_PUBLIC_POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
 
   # Tell Coolify to redeploy once ALL images are published, so it pulls the
   # freshly-pushed images instead of racing the build on git push. No-ops

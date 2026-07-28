@@ -2,6 +2,7 @@
 
 import { useLocalParticipant } from "@livekit/components-react"
 import { useEffect, useRef } from "react"
+import { track } from "@/lib/analytics"
 
 /**
  * Hold Space while muted to talk; release re-mutes. Only arms when the mic
@@ -14,6 +15,8 @@ export function usePushToTalk(enabled: boolean) {
   // The keyup must see whether *we* unmuted, not whatever state React last
   // rendered — a ref survives the re-render between down and up.
   const holding = useRef(false)
+  // Telemetry counts PTT adoption, not every press.
+  const tracked = useRef(false)
 
   useEffect(() => {
     if (!enabled) return
@@ -31,6 +34,10 @@ export function usePushToTalk(enabled: boolean) {
       if (isMicrophoneEnabled || holding.current) return
       e.preventDefault()
       holding.current = true
+      if (!tracked.current) {
+        tracked.current = true
+        track("push_to_talk_used")
+      }
       void localParticipant.setMicrophoneEnabled(true).catch(() => {
         holding.current = false
       })

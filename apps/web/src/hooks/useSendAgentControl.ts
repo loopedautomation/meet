@@ -4,6 +4,7 @@ import { useDataChannel, useLocalParticipant } from "@livekit/components-react"
 import { type AgentControl, DataTopic } from "@meet/shared"
 import { useCallback } from "react"
 import { announceAgentControl } from "@/hooks/useAgentControlToasts"
+import { track } from "@/lib/analytics"
 
 /**
  * Publishes an agent control, stamped with who pressed the button, and shows
@@ -30,6 +31,7 @@ export function useSendAgentControl(): (
         reliable: true,
       })
       announceAgentControl(stamped, agentName)
+      track("agent_control_used", { control: control.type })
     },
     [localParticipant, send],
   )

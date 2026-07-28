@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { Modal } from "@/components/ui/Modal"
+import { track } from "@/lib/analytics"
 
 const PASSWORD_KEY = "managementPassword"
 
@@ -43,6 +44,7 @@ export function HomeActions() {
         } catch {}
       }
       const data = (await res.json()) as CreateRoomResponse
+      track("room_created")
       // The creator's proof: presenting it with the token request is what
       // starts the meeting; everyone arriving earlier waits on this.
       if (data.hostKey) {
