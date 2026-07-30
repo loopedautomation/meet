@@ -28,6 +28,7 @@ import {
   useLocalTranscription,
 } from "@/hooks/useLocalTranscription"
 import { useMutedSpeakingToast } from "@/hooks/useMutedSpeakingToast"
+import { useRoomTelemetry } from "@/hooks/useRoomTelemetry"
 import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
 import { $canvasOpen } from "@/stores/canvas"
@@ -50,6 +51,7 @@ export function MeetingView({
   useLocalTranscription(readLocalSttPref())
   useMutedSpeakingToast()
   useScreenShareVisionNotice()
+  useRoomTelemetry()
   const cameraTracks = useTracks(
     [{ source: Track.Source.Camera, withPlaceholder: true }],
     { onlySubscribed: false },
