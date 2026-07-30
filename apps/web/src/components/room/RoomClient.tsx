@@ -3,7 +3,7 @@
 import { LiveKitRoom } from "@livekit/components-react"
 import type { TokenResponse } from "@meet/shared"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { setLogLevel } from "livekit-client"
+import { DisconnectReason, setLogLevel } from "livekit-client"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Lobby } from "@/components/room/Lobby"
@@ -22,6 +22,23 @@ import {
 } from "@/stores/preferences"
 
 const queryClient = new QueryClient()
+
+/** User-facing message for a disconnect the user didn't confirm themselves. */
+function involuntaryLeaveMessage(reason?: DisconnectReason): string | null {
+  if (reason === undefined || reason === DisconnectReason.CLIENT_INITIATED) {
+    return null
+  }
+  if (reason === DisconnectReason.PARTICIPANT_REMOVED) {
+    return "You were removed from the meeting."
+  }
+  if (
+    reason === DisconnectReason.ROOM_DELETED ||
+    reason === DisconnectReason.ROOM_CLOSED
+  ) {
+    return "The meeting has ended."
+  }
+  return "You were disconnected from the meeting."
+}
 
 export type JoinPreferences = {
   displayName: string
@@ -230,18 +247,33 @@ export function RoomClient({
     return () => clearInterval(timer)
   }, [session, slug])
 
-  const handleLeave = useCallback(() => {
-    if (joinedAtRef.current) {
-      track("room_left", {
-        duration_seconds: Math.round((Date.now() - joinedAtRef.current) / 1000),
-      })
-      joinedAtRef.current = null
-    }
-    try {
-      sessionStorage.removeItem(`rejoin:${slug}`)
-    } catch {}
-    setSession(null)
-  }, [slug])
+  // LiveKit reports why the connection ended. CLIENT_INITIATED is the one
+  // case that came from the user's own Leave-button click (via
+  // room.disconnect() in ControlBar); everything else — a dropped network,
+  // a failed reconnect, a moderation kick, the host ending the meeting — is
+  // involuntary and deserves a distinct message instead of silently
+  // dumping the user back at the lobby indistinguishably from a confirmed
+  // leave.
+  const handleLeave = useCallback(
+    (reason?: DisconnectReason) => {
+      if (joinedAtRef.current) {
+        track("room_left", {
+          duration_seconds: Math.round(
+            (Date.now() - joinedAtRef.current) / 1000,
+          ),
+          reason: reason !== undefined ? DisconnectReason[reason] : "unknown",
+        })
+        joinedAtRef.current = null
+      }
+      try {
+        sessionStorage.removeItem(`rejoin:${slug}`)
+      } catch {}
+      const involuntaryMessage = involuntaryLeaveMessage(reason)
+      if (involuntaryMessage) toast.info(involuntaryMessage)
+      setSession(null)
+    },
+    [slug],
+  )
 
   // Poll while the meeting hasn't started; the successful join clears this.
   useEffect(() => {
