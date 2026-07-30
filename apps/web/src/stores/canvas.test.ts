@@ -117,4 +117,48 @@ describe("adoptCanvasRecord", () => {
     adoptCanvasRecord("ghost", { id: "ghost" })
     expect($canvasRecords.get().ghost).toBeUndefined()
   })
+
+  // The whiteboard schedules a scene rebuild off store notifications and
+  // re-adopts every element at the end of each rebuild. `setKey` compares by
+  // reference, so a no-op adopt that still writes notifies, schedules the
+  // next rebuild, and the board rebuilds every 30ms forever — cancelling
+  // every in-flight local gesture, which is why only the first person on a
+  // board could draw on it.
+  it("does not notify when the element is unchanged", () => {
+    const entry = agentRecord()
+    applyCanvasChanges([entry])
+    const scene = restoredElement(entry.record as Record<string, unknown>)
+    adoptCanvasRecord(entry.id, scene)
+
+    let notifications = 0
+    const unlisten = $canvasRecords.listen(() => {
+      notifications++
+    })
+    adoptCanvasRecord(entry.id, scene)
+    unlisten()
+
+    expect(notifications).toBe(0)
+  })
+
+  it("still notifies when the element really changed", () => {
+    const entry = agentRecord()
+    applyCanvasChanges([entry])
+    adoptCanvasRecord(
+      entry.id,
+      restoredElement(entry.record as Record<string, unknown>),
+    )
+
+    let notifications = 0
+    const unlisten = $canvasRecords.listen(() => {
+      notifications++
+    })
+    adoptCanvasRecord(entry.id, {
+      ...restoredElement(entry.record as Record<string, unknown>),
+      index: "a1",
+    })
+    unlisten()
+
+    expect(notifications).toBe(1)
+    expect($canvasRecords.get()[entry.id].record?.index).toBe("a1")
+  })
 })

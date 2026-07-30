@@ -168,6 +168,27 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
    */
   const mountedVersion = useRef(new Map<string, string>())
   const versionKey = (el: LooseElement) => `${el.version}:${el.versionNonce}`
+
+  /**
+   * Cache writes this client makes while projecting the cache into the
+   * editor are its own doing, not a peer's — and must not schedule another
+   * rebuild. `noteMounted` adopts restore's normalization back into the
+   * cache, and those records are authored by whoever drew them, so the
+   * listener's `by === identity` guard doesn't cover them: one remote record
+   * in the cache and the board rebuilds every 30ms forever, cancelling every
+   * local gesture before it can commit. Nothing but this synchronous block
+   * can be writing while the flag is up, so no real remote change is lost.
+   */
+  const projecting = useRef(false)
+  const project = (fn: () => void) => {
+    projecting.current = true
+    try {
+      fn()
+    } finally {
+      projecting.current = false
+    }
+  }
+
   const noteMounted = (api: ExcalidrawImperativeAPI) => {
     for (const element of api.getSceneElementsIncludingDeleted() as unknown as LooseElement[]) {
       mountedVersion.current.set(element.id as string, versionKey(element))
@@ -251,6 +272,7 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: onSceneChange reads only refs and stores; identity is the sole input that must resubscribe
   useEffect(() => {
     const unlisten = $canvasRecords.listen((records, _old, changedKey) => {
+      if (projecting.current) return
       if (records[changedKey]?.by === identity) return
       if (remoteFlushTimer.current) return
       remoteFlushTimer.current = setTimeout(() => {
@@ -263,20 +285,22 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
         // revert the edit; capturing it first re-authors it on top of the
         // just-merged remote clock, so it wins the LWW race instead.
         onSceneChange()
-        try {
-          api.updateScene({
-            // biome-ignore lint/suspicious/noExplicitAny: opaque element JSON
-            elements: sceneFromCache() as any,
-            captureUpdate: CaptureUpdateAction.NEVER,
-          })
-          // Remember exactly what was mounted (and adopt restore's
-          // normalization): elements still at these versions carry no
-          // local edit, so onSceneChange must never re-author them.
-          noteMounted(api)
-        } catch (err) {
-          // One bad element must not take the board down.
-          console.warn("whiteboard: scene update failed", err)
-        }
+        project(() => {
+          try {
+            api.updateScene({
+              // biome-ignore lint/suspicious/noExplicitAny: opaque element JSON
+              elements: sceneFromCache() as any,
+              captureUpdate: CaptureUpdateAction.NEVER,
+            })
+            // Remember exactly what was mounted (and adopt restore's
+            // normalization): elements still at these versions carry no
+            // local edit, so onSceneChange must never re-author them.
+            noteMounted(api)
+          } catch (err) {
+            // One bad element must not take the board down.
+            console.warn("whiteboard: scene update failed", err)
+          }
+        })
       }, 30)
     })
     return unlisten
@@ -385,7 +409,9 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
           apiRef.current = api
           // The initial mount counts too: restoreElements already ran on
           // initialData, and these versions are the no-local-edit baseline.
-          noteMounted(api)
+          // The scene already matches the cache here, so this adoption must
+          // not be mistaken for a peer's edit either.
+          project(() => noteMounted(api))
         }}
         initialData={{
           // biome-ignore lint/suspicious/noExplicitAny: opaque element JSON
