@@ -320,9 +320,14 @@ export function ControlBar({
             <MonitorUp className="size-5" />
           </button>
         </div>
-        {isScreenShareEnabled && pipSupported && (
+        {pipSupported && (
+          // Mounted whenever PiP is supported (a constant for the session),
+          // just hidden outside a screen share — never conditionally
+          // inserted/removed on isScreenShareEnabled, which used to shift
+          // the Hand/Leave buttons after it sideways every time sharing
+          // toggled and made a stray click land on the wrong one.
           <div
-            className="tooltip tooltip-bottom"
+            className={`tooltip tooltip-bottom ${isScreenShareEnabled ? "" : "hidden"}`}
             data-tip={
               pipWindow
                 ? "Close the participant pop-out"

@@ -7,7 +7,7 @@ import posthog from "posthog-js"
 type Events = {
   room_created: undefined
   room_joined: { role: "host" | "guest"; via_waiting_room: boolean }
-  room_left: { duration_seconds: number }
+  room_left: { duration_seconds: number; reason: string }
   agent_invited: { agent_type: string }
   agent_removed: { agent_type?: string }
   agent_control_used: { control: string }
