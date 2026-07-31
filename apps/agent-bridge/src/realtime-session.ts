@@ -60,6 +60,14 @@ export interface VoiceSession {
   say(text: string): void
   notifyChat(line: string): void
   /**
+   * Room speech as passive text context — never triggers a reply itself, so
+   * this is safe to call for every attributed utterance regardless of
+   * whether it was addressed to the agent. The model otherwise only hears
+   * one mixed, speaker-agnostic audio stream (every human mic summed
+   * together); this is the only place a spoken turn gets a name attached.
+   */
+  notifyHeard(line: string): void
+  /**
    * A chat message that addressed the agent by name: surface it AND elicit
    * a reply into the chat (send_chat_message), without speaking. Plain
    * notifyChat only adds context, so a realtime agent would otherwise stay
@@ -900,6 +908,16 @@ export class RealtimeSession implements VoiceSession {
         content: [{ type: "input_text", text: line }],
       },
     })
+  }
+
+  /**
+   * `conversation.item.create` alone never triggers a response here — only
+   * an explicit response.create (or real audio) does — so this is exactly
+   * as safe as notifyChat, just under its own name for callers that don't
+   * know which provider they're talking to.
+   */
+  notifyHeard(line: string) {
+    this.notifyChat(line)
   }
 
   /**

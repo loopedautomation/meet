@@ -896,6 +896,12 @@ export async function runRealtimeAgent(opts: {
     })()
   }
   opts.onUtterance?.((identity, name, text, final) => {
+    // The model hears one mixed, speaker-agnostic audio stream (see the
+    // inbound-audio pump below) — this is the only place any turn gets a
+    // name attached. Passive text context (never triggers a reply itself),
+    // so whichever turn the model's own VAD decides to answer, it has just
+    // seen who said what (issue #193).
+    if (final) session.notifyHeard(`[meeting audio] ${name}: ${text}`)
     if (!geminiSession || !manualTurns()) return
     geminiGate?.onUtterance(identity, name, text, final)
   })

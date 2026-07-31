@@ -67,6 +67,13 @@ export class SessionState {
 export type MeetingContext = {
   /** Current visible participants, re-read every turn. */
   roster: () => string
+  /**
+   * Identity of whoever most recently spoke (excluding agents), if known —
+   * lets the brain see who is actually addressing it. The pipeline's own STT
+   * merges every human into one unattributed stream (see llmNode), so this
+   * is the only source of per-turn speaker identity.
+   */
+  lastSpeaker?: () => string | null
 }
 
 const instructions = (entry: AgentEntry) =>
@@ -165,6 +172,13 @@ export class LoopedVoiceAgent extends voice.Agent {
     }
 
     let text = input
+    // The pipeline's own STT merges every human speaker into one
+    // unattributed stream (see latestUserInput below), so without this the
+    // brain has no way to know who is actually talking — it can end up
+    // addressing whoever it last named. Attached to every turn, not just
+    // the first, unlike the one-shot meeting-context injection.
+    const speaker = this.#meeting?.lastSpeaker?.()
+    if (speaker) text = `${speaker}: ${text}`
     if (calledOn) {
       text =
         "[You raised your hand and have now been called on — give the " +

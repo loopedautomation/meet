@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 import {
   type BridgeCallbacks,
   LoopedVoiceAgent,
+  type MeetingContext,
   SessionState,
 } from "./agent-session.js"
 import type { Brain } from "./looped-webhook.js"
@@ -145,5 +146,73 @@ describe("LoopedVoiceAgent.llmNode gating", () => {
       expect(await run(agentWith(brain), "Scout, hello?")).toBeNull()
     }
     expect(runTurn).not.toHaveBeenCalled()
+  })
+})
+
+// The pipeline's own STT merges every human speaker into one unattributed
+// stream — without a per-turn speaker tag the brain can end up addressing
+// whoever it last named instead of whoever is actually talking (issue #193).
+describe("LoopedVoiceAgent.llmNode speaker attribution", () => {
+  let state: SessionState
+  let callbacks: ReturnType<typeof fakeCallbacks>
+
+  beforeEach(() => {
+    state = new SessionState()
+    callbacks = fakeCallbacks()
+  })
+
+  const agentWith = (brain: Brain, meeting: MeetingContext | null) =>
+    new LoopedVoiceAgent(entry, brain, state, callbacks, null, meeting)
+
+  it("prefixes the turn with the last known speaker", async () => {
+    const { brain, runTurn } = fakeBrain()
+    const meeting: MeetingContext = {
+      roster: () => "",
+      lastSpeaker: () => "Amin",
+    }
+    await run(agentWith(brain, meeting), "what's the weather like?")
+    expect(runTurn).toHaveBeenCalledWith(
+      "Amin: what's the weather like?",
+      undefined,
+    )
+  })
+
+  it("leaves text unprefixed when no meeting context is given", async () => {
+    const { brain, runTurn } = fakeBrain()
+    await run(agentWith(brain, null), "what's the weather like?")
+    expect(runTurn).toHaveBeenCalledWith("what's the weather like?", undefined)
+  })
+
+  it("leaves text unprefixed when the last speaker is unknown", async () => {
+    const { brain, runTurn } = fakeBrain()
+    const meeting: MeetingContext = {
+      roster: () => "",
+      lastSpeaker: () => null,
+    }
+    await run(agentWith(brain, meeting), "what's the weather like?")
+    expect(runTurn).toHaveBeenCalledWith("what's the weather like?", undefined)
+  })
+
+  it("attributes to whoever spoke most recently, turn by turn", async () => {
+    const { brain, runTurn } = fakeBrain()
+    let speaker = "Amin"
+    const meeting: MeetingContext = {
+      roster: () => "",
+      lastSpeaker: () => speaker,
+    }
+    const agent = agentWith(brain, meeting)
+    await run(agent, "what's the weather like?")
+    speaker = "Happy"
+    await run(agent, "and what about tomorrow?")
+    expect(runTurn).toHaveBeenNthCalledWith(
+      1,
+      "Amin: what's the weather like?",
+      undefined,
+    )
+    expect(runTurn).toHaveBeenNthCalledWith(
+      2,
+      "Happy: and what about tomorrow?",
+      undefined,
+    )
   })
 })
