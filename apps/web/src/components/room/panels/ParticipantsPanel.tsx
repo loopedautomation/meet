@@ -52,7 +52,7 @@ export function ParticipantsPanel({ slug }: { slug: string }) {
   const decide = async (identity: string, action: "admit" | "deny") => {
     setBusy(identity)
     try {
-      await fetch(`/api/rooms/${slug}/admit`, {
+      const res = await fetch(`/api/rooms/${slug}/admit`, {
         method: "POST",
         // The server derives who's admitting from the verified token in the
         // Authorization header — a claimed identity would be spoofable.
@@ -62,6 +62,9 @@ export function ParticipantsPanel({ slug }: { slug: string }) {
         },
         body: JSON.stringify({ identity, action }),
       })
+      if (!res.ok) throw new Error(`could not ${action} participant`)
+    } catch (err) {
+      toast.error((err as Error).message)
     } finally {
       setBusy(null)
     }
