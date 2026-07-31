@@ -11,6 +11,7 @@ import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
 import { clearRoomContext, setRoomContext, track } from "@/lib/analytics"
+import { consumeExplicitLeave } from "@/lib/leaveIntent"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 import {
@@ -23,6 +24,15 @@ import {
 import { getRoomSnapshot, resetRoomSnapshot } from "@/stores/roomTelemetry"
 
 const queryClient = new QueryClient()
+
+// The stored rejoin proof is only trusted for a silent auto-join while the
+// token behind it can still be valid — tokens carry a 1h TTL (see the token
+// route). Past that, walking straight past the lobby would be pure bypass:
+// the server would refuse the stale proof and mint a fresh identity anyway.
+const REJOIN_MAX_AGE_MS = 60 * 60 * 1000
+// A non-terminal disconnect retries the join at most this many times before
+// giving up and landing back at the lobby.
+const MAX_AUTO_REJOIN_ATTEMPTS = 3
 
 /** User-facing message for a disconnect the user didn't confirm themselves. */
 function involuntaryLeaveMessage(reason?: DisconnectReason): string | null {
@@ -97,6 +107,12 @@ export function RoomClient({
   const joinedAtRef = useRef<number | null>(null)
   const roleRef = useRef<"host" | "guest">("guest")
   const waitingSinceRef = useRef<number | null>(null)
+  // Consecutive automatic rejoin attempts since the last successful join.
+  const autoRejoinAttemptsRef = useRef(0)
+  // The rejoin token this session last wrote to localStorage — terminal
+  // cleanup compares against it so it only ever removes its own proof,
+  // never one a newer tab (DUPLICATE_IDENTITY takeover) wrote after us.
+  const lastRejoinTokenRef = useRef<string | null>(null)
 
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
@@ -142,20 +158,33 @@ export function RoomClient({
         }
         roleRef.current = token.isHost ? "host" : "guest"
         try {
-          sessionStorage.setItem(
+          // localStorage (not sessionStorage) so the proof survives closing
+          // the tab, not just refreshing it.
+          localStorage.setItem(
             `rejoin:${slug}`,
-            // The token doubles as proof of admission on the next refresh.
-            JSON.stringify({ prefs, rejoinToken: token.token }),
+            // The token doubles as proof of admission on the next refresh;
+            // savedAt bounds how long it's trusted for a silent auto-join.
+            JSON.stringify({
+              prefs,
+              rejoinToken: token.token,
+              savedAt: Date.now(),
+            }),
           )
+          lastRejoinTokenRef.current = token.token
         } catch {}
-        // A refresh rejoin isn't a new join; waiting-room entries are counted
-        // on admission instead.
-        if (!rejoinToken && !token.waiting) {
+        autoRejoinAttemptsRef.current = 0
+        if (!token.waiting) {
+          // Re-anchor the duration clock on every successful join — a rejoin
+          // included, or the eventual real leave tracks no duration. Only a
+          // genuinely new join fires room_joined; waiting-room entries are
+          // counted on admission instead.
           joinedAtRef.current = Date.now()
-          track("room_joined", {
-            role: token.isHost ? "host" : "guest",
-            via_waiting_room: false,
-          })
+          if (!rejoinToken) {
+            track("room_joined", {
+              role: token.isHost ? "host" : "guest",
+              via_waiting_room: false,
+            })
+          }
         }
         // Knocking is its own funnel: the entry is paired with the
         // admission (or the abandonment) to show waiting-room drop-off.
@@ -175,9 +204,13 @@ export function RoomClient({
   // A refresh rejoins the meeting automatically; only an explicit leave (or a
   // server-side disconnect) drops back to the lobby.
   useEffect(() => {
-    let stored: { prefs: JoinPreferences; rejoinToken?: string } | null = null
+    let stored: {
+      prefs: JoinPreferences
+      rejoinToken?: string
+      savedAt?: number
+    } | null = null
     try {
-      const raw = sessionStorage.getItem(`rejoin:${slug}`)
+      const raw = localStorage.getItem(`rejoin:${slug}`)
       if (raw) {
         const parsed = JSON.parse(raw)
         // Older entries stored the preferences at the top level.
@@ -187,11 +220,31 @@ export function RoomClient({
       }
     } catch {}
     if (!stored?.prefs?.displayName) return
+    // Only a fresh proof auto-joins; a stale one (or an older entry without
+    // savedAt) falls through to the lobby like any first visit.
+    const savedAt = stored.savedAt
+    if (typeof savedAt !== "number" || Date.now() - savedAt > REJOIN_MAX_AGE_MS)
+      return
     setRejoining(true)
     handleJoin(stored.prefs, stored.rejoinToken).finally(() =>
       setRejoining(false),
     )
   }, [slug, handleJoin])
+
+  // Background token renewal (on admission and the periodic refresh below)
+  // used to swallow failures silently, leaving no signal before the stored
+  // proof expired mid-meeting. Warn once a couple of consecutive attempts
+  // have failed rather than on the first blip.
+  const refreshFailCountRef = useRef(0)
+  const noteRefreshFailure = useCallback(() => {
+    refreshFailCountRef.current += 1
+    if (refreshFailCountRef.current < 2) return
+    if (toast.isActive(`refresh-fail:${slug}`)) return
+    toast.error(
+      "Having trouble renewing your connection — you may be disconnected soon. Try reloading if this continues.",
+      { toastId: `refresh-fail:${slug}` },
+    )
+  }, [slug])
 
   // On admission, swap the stored waiting token for an admitted one while
   // the server can still see us connected as human — so a later refresh
@@ -208,7 +261,7 @@ export function RoomClient({
       waitingSinceRef.current = null
     }
     track("room_joined", { role: "guest", via_waiting_room: true })
-    const current = sessionStorage.getItem(`rejoin:${slug}`)
+    const current = localStorage.getItem(`rejoin:${slug}`)
     if (!current) return
     try {
       const stored = JSON.parse(current) as {
@@ -232,15 +285,23 @@ export function RoomClient({
         .then((res) => (res.ok ? res.json() : null))
         .then((fresh: TokenResponse | null) => {
           if (fresh && !fresh.waiting) {
-            sessionStorage.setItem(
+            localStorage.setItem(
               `rejoin:${slug}`,
-              JSON.stringify({ prefs: stored.prefs, rejoinToken: fresh.token }),
+              JSON.stringify({
+                prefs: stored.prefs,
+                rejoinToken: fresh.token,
+                savedAt: Date.now(),
+              }),
             )
+            lastRejoinTokenRef.current = fresh.token
+            refreshFailCountRef.current = 0
+          } else {
+            noteRefreshFailure()
           }
         })
-        .catch(() => undefined)
+        .catch(() => noteRefreshFailure())
     } catch {}
-  }, [slug])
+  }, [slug, noteRefreshFailure])
 
   // Tokens expire after an hour, and room-scoped API routes (agent invites,
   // admit, doc) authenticate with the stored one — so a meeting running past
@@ -252,7 +313,7 @@ export function RoomClient({
     const timer = setInterval(
       () => {
         try {
-          const raw = sessionStorage.getItem(`rejoin:${slug}`)
+          const raw = localStorage.getItem(`rejoin:${slug}`)
           if (!raw) return
           const stored = JSON.parse(raw) as {
             prefs: JoinPreferences
@@ -273,31 +334,44 @@ export function RoomClient({
               // Never downgrade a good token to a "waiting" one: a failed
               // refresh leaves the old proof in place until it expires.
               if (fresh && !fresh.waiting) {
-                sessionStorage.setItem(
+                localStorage.setItem(
                   `rejoin:${slug}`,
                   JSON.stringify({
                     prefs: stored.prefs,
                     rejoinToken: fresh.token,
+                    savedAt: Date.now(),
                   }),
                 )
+                lastRejoinTokenRef.current = fresh.token
+                refreshFailCountRef.current = 0
+              } else {
+                noteRefreshFailure()
               }
             })
-            .catch(() => undefined)
+            .catch(() => noteRefreshFailure())
         } catch {}
       },
       40 * 60 * 1000,
     )
     return () => clearInterval(timer)
-  }, [session, slug])
+  }, [session, slug, noteRefreshFailure])
 
-  // LiveKit reports why the connection ended. CLIENT_INITIATED is the one
-  // case that came from the user's own Leave-button click (via
-  // room.disconnect() in ControlBar); everything else — a dropped network,
-  // a failed reconnect, a moderation kick, the host ending the meeting — is
-  // involuntary and deserves a distinct message instead of silently
-  // dumping the user back at the lobby indistinguishably from a confirmed
-  // leave.
-  const handleLeave = useCallback(
+  // A disconnect fires for an explicit "Leave", a transient network drop, AND
+  // a page reload/tab close — LiveKit calls disconnect() on both
+  // beforeunload and pagehide, so those report the exact same
+  // DisconnectReason.CLIENT_INITIATED as clicking Leave. The reason alone
+  // can't tell a real leave from the browser tearing the page down, so
+  // CLIENT_INITIATED only counts as terminal when the Leave button marked
+  // its intent first (see lib/leaveIntent). Reasons the server itself
+  // decided (kicked, superseded, room gone) are always terminal.
+  const TERMINAL_DISCONNECT_REASONS = useRef(
+    new Set([
+      DisconnectReason.DUPLICATE_IDENTITY,
+      DisconnectReason.PARTICIPANT_REMOVED,
+      DisconnectReason.ROOM_DELETED,
+    ]),
+  ).current
+  const handleDisconnected = useCallback(
     (reason?: DisconnectReason) => {
       // Giving up while still knocking is the other half of the waiting-room
       // funnel — without it an abandoned knock looks like nothing happened.
@@ -340,14 +414,65 @@ export function RoomClient({
         joinedAtRef.current = null
       }
       resetRoomSnapshot()
-      try {
-        sessionStorage.removeItem(`rejoin:${slug}`)
-      } catch {}
-      const involuntaryMessage = involuntaryLeaveMessage(reason)
-      if (involuntaryMessage) toast.info(involuntaryMessage)
       setSession(null)
+      const isExplicitLeave =
+        reason === DisconnectReason.CLIENT_INITIATED && consumeExplicitLeave()
+      if (
+        isExplicitLeave ||
+        (reason !== undefined && TERMINAL_DISCONNECT_REASONS.has(reason))
+      ) {
+        // Clear the stored proof — but only if it's still the one this
+        // session wrote last. On DUPLICATE_IDENTITY another tab has taken
+        // over the identity and already saved its own fresher proof;
+        // deleting that here would log the live tab out on its next refresh.
+        try {
+          const raw = localStorage.getItem(`rejoin:${slug}`)
+          if (raw) {
+            const stored = JSON.parse(raw) as { rejoinToken?: string }
+            if (
+              !stored.rejoinToken ||
+              stored.rejoinToken === lastRejoinTokenRef.current
+            ) {
+              localStorage.removeItem(`rejoin:${slug}`)
+            }
+          }
+        } catch {}
+        const involuntaryMessage = involuntaryLeaveMessage(reason)
+        if (involuntaryMessage) toast.info(involuntaryMessage)
+        return
+      }
+      // Anything else (network drop, failed reconnect) auto-rejoins with the
+      // stored proof — but bounded: a persistent failure must land back at
+      // the lobby, not spin forever against a dead server. The counter
+      // resets on a join that actually succeeds (see handleJoin).
+      if (autoRejoinAttemptsRef.current >= MAX_AUTO_REJOIN_ATTEMPTS) {
+        const involuntaryMessage = involuntaryLeaveMessage(reason)
+        if (involuntaryMessage) toast.info(involuntaryMessage)
+        return
+      }
+      try {
+        const raw = localStorage.getItem(`rejoin:${slug}`)
+        if (!raw) return
+        const stored = JSON.parse(raw) as {
+          prefs: JoinPreferences
+          rejoinToken?: string
+        }
+        autoRejoinAttemptsRef.current += 1
+        // Show "Rejoining…" (not the lobby) while the automatic attempt is
+        // in flight, so a racing manual Join can't double-connect. Each
+        // retry backs off a little longer than the last.
+        setRejoining(true)
+        window.setTimeout(
+          () => {
+            void handleJoin(stored.prefs, stored.rejoinToken).finally(() =>
+              setRejoining(false),
+            )
+          },
+          (autoRejoinAttemptsRef.current - 1) * 2000,
+        )
+      } catch {}
     },
-    [slug],
+    [slug, handleJoin, TERMINAL_DISCONNECT_REASONS],
   )
 
   // Poll while the meeting hasn't started; the successful join clears this.
@@ -466,7 +591,7 @@ export function RoomClient({
           deviceId: session.prefs.videoDeviceId,
         }
       }
-      onDisconnected={handleLeave}
+      onDisconnected={handleDisconnected}
       onError={(err) => {
         toast.error(
           `Could not connect to the meeting server (${err.message}). ` +

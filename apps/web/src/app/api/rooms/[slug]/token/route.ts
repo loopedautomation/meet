@@ -102,8 +102,14 @@ export async function POST(request: Request, { params }: Params) {
   // Fails closed: an error here must not read as "empty room" — that would
   // turn a LiveKit hiccup into direct admission for whoever asked first.
   let participantCount: number
+  // Every identity currently known to the room (any kind) — consulted below
+  // to tell a reconnecting identity's departure-timeout race apart from a
+  // genuinely reconvened meeting.
+  let presentIdentities: Set<string>
   try {
-    participantCount = (await roomService().listParticipants(slug)).filter(
+    const present = await roomService().listParticipants(slug)
+    presentIdentities = new Set(present.map((p) => p.identity))
+    participantCount = present.filter(
       (p) => parseParticipantMeta(p.metadata)?.kind === "human",
     ).length
   } catch {
@@ -148,15 +154,17 @@ export async function POST(request: Request, { params }: Params) {
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()
 
-  // A refresh presents its previous token as proof of admission: accept it
+  // A rejoin presents its previous token as proof of admission: accept it
   // if it verifies for this room with admitted (human) metadata, or — for a
   // knocker upgrading their proof right after admission — if its identity is
   // currently connected with human metadata. Identities removed by
   // moderation are refused either way: a kick must end the session, not
-  // hand out a fresh identity.
-  // The proof's verified identity, kept for `refresh` renewals below.
+  // hand out a fresh identity. Checked whenever a rejoinToken is presented —
+  // not just while waiting or refreshing — so a host's plain rejoin (e.g. a
+  // reopened tab, never "waiting" since the host walks straight in) still
+  // gets identity continuity instead of always minting a fresh one.
   let rejoinIdentity: string | undefined
-  if ((waiting || body.data.refresh) && body.data.rejoinToken) {
+  if (body.data.rejoinToken) {
     try {
       const claims = await new TokenVerifier(apiKey, apiSecret).verify(
         body.data.rejoinToken,
@@ -185,20 +193,28 @@ export async function POST(request: Request, { params }: Params) {
   }
   // A fresh occurrence: the first human entering (not knocking) resets the
   // call timer — covers both a first start and a meeting reconvening in a
-  // room the GC hadn't swept yet.
-  if (!waiting && participantCount === 0) {
+  // room the GC hadn't swept yet. Skipped only when the verified rejoin
+  // identity is still present in the room's participant list — the true
+  // departureTimeout race, where the human count reads 0 while LiveKit still
+  // holds the departing identity. A rejoin into a genuinely empty room (say,
+  // reconvening with unexpired proof hours later) is a fresh start and gets
+  // a fresh clock like anyone else.
+  const departureRace =
+    rejoinIdentity !== undefined && presentIdentities.has(rejoinIdentity)
+  if (!waiting && participantCount === 0 && !departureRace) {
     roomMeta = { ...roomMeta, startedAt: Date.now() }
     await roomService()
       .updateRoomMetadata(slug, JSON.stringify(roomMeta))
       .catch(() => undefined)
   }
 
-  // A refresh renews the SAME participant: keeping the identity keeps
-  // API-auth (which derives identity from this token) consistent with the
-  // still-connected LiveKit participant. Only honored with verified,
-  // admitted proof — never from the request body alone.
-  const identity =
-    body.data.refresh && rejoinIdentity ? rejoinIdentity : `user-${nanoid(10)}`
+  // A rejoin (refresh or plain) renews the SAME participant: keeping the
+  // identity keeps API-auth (which derives identity from this token)
+  // consistent with the still-connected LiveKit participant, and preserves
+  // LiveKit-side per-identity state (raised hand, agent assignment). Only
+  // honored with verified, admitted proof — never from the request body
+  // alone; see the verification block above.
+  const identity = rejoinIdentity ?? `user-${nanoid(10)}`
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),

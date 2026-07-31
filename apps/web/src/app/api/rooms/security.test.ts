@@ -350,7 +350,7 @@ describe("admit route — a non-creator guest can admit after their own admissio
     expect(admit.status).toBe(200)
   })
 
-  it("omitting refresh:true (the regression) mints a ghost identity that can never admit anyone", async () => {
+  it("omitting refresh:true also reuses the identity — verified proof carries continuity on plain rejoins too (#184)", async () => {
     state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
     state.participants = [{ identity: "user-host", metadata: meta("human") }]
     const first = await tokenPost(tokenReq({ displayName: "Guest" }), params())
@@ -360,14 +360,16 @@ describe("admit route — a non-creator guest can admit after their own admissio
       identity: guestIdentity,
       metadata: meta("human"),
     })
-    // The buggy client behavior: swap without refresh.
+    // A swap without refresh: since #184 the route honors verified rejoin
+    // proof whenever it's presented (a host's plain reload is never
+    // "waiting" or "refresh"), so the identity is reused here too — the
+    // ghost-identity failure mode of #192 can no longer occur either way.
     const swapped = await tokenPost(
       tokenReq({ displayName: "Guest", rejoinToken: firstBody.token }),
       params(),
     )
     const swappedBody = await swapped.json()
-    // A brand-new identity, never actually connected to the room.
-    expect(swappedBody.identity).not.toBe(guestIdentity)
+    expect(swappedBody.identity).toBe(guestIdentity)
     state.participants.push({
       identity: "user-waiter",
       metadata: meta("waiting"),
@@ -379,7 +381,48 @@ describe("admit route — a non-creator guest can admit after their own admissio
       ),
       params(),
     )
-    expect(admit.status).toBe(403)
+    expect(admit.status).toBe(200)
+  })
+})
+
+describe("token route — reconvene vs departure-race clock reset", () => {
+  it("resets the meeting clock for a genuinely empty room even with unexpired rejoin proof", async () => {
+    state.rooms = [
+      {
+        name: SLUG,
+        metadata: JSON.stringify({ started: true, startedAt: 1000 }),
+      },
+    ]
+    state.participants = [] // identity long gone — a reconvened meeting
+    const proof = await joinToken({ identity: "user-a", kind: "human" })
+    const res = await tokenPost(
+      tokenReq({ displayName: "Returner", rejoinToken: proof }),
+      params(),
+    )
+    const body = await res.json()
+    expect(body.waiting).toBe(false)
+    expect(body.roomStartedAt).not.toBe(1000)
+  })
+
+  it("keeps the meeting clock when the rejoining identity is still listed (departureTimeout race)", async () => {
+    state.rooms = [
+      {
+        name: SLUG,
+        metadata: JSON.stringify({ started: true, startedAt: 1000 }),
+      },
+    ]
+    // The departing identity still occupies the room (not counted as an
+    // admitted human, so participantCount reads 0) — a reconnect, not a
+    // fresh start.
+    state.participants = [{ identity: "user-a", metadata: meta("waiting") }]
+    const proof = await joinToken({ identity: "user-a", kind: "human" })
+    const res = await tokenPost(
+      tokenReq({ displayName: "Returner", rejoinToken: proof }),
+      params(),
+    )
+    const body = await res.json()
+    expect(body.waiting).toBe(false)
+    expect(body.roomStartedAt).toBe(1000)
   })
 })
 
