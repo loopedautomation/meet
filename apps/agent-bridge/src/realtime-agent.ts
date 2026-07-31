@@ -901,8 +901,17 @@ export async function runRealtimeAgent(opts: {
     // name attached. Passive text context (never triggers a reply itself),
     // so whichever turn the model's own VAD decides to answer, it has just
     // seen who said what (issue #193).
-    if (final) session.notifyHeard(`[meeting audio] ${name}: ${text}`)
-    if (!geminiSession || !manualTurns()) return
+    //
+    // Other agents' speech is never attributed — the mixer skips agent
+    // tracks and the gemini gate drops agent utterances, and injecting
+    // them here would reopen the agent-to-agent feedback loop.
+    if (identity.startsWith("agent-")) return
+    const gated = geminiSession && manualTurns()
+    // On gated Gemini sessions the gate owns injection: its deliberate
+    // branch sends this exact line itself, so injecting here too would
+    // double it.
+    if (final && !gated) session.notifyHeard(`[meeting audio] ${name}: ${text}`)
+    if (!gated) return
     geminiGate?.onUtterance(identity, name, text, final)
   })
 
