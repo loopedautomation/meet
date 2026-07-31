@@ -119,6 +119,11 @@ export function RoomClient({
         const token = (await res.json()) as TokenResponse
         setAwaitingStart(null)
         $isHost.set(token.isHost)
+        if (token.hostKey) {
+          try {
+            localStorage.setItem(`hostKey:${slug}`, token.hostKey)
+          } catch {}
+        }
         try {
           sessionStorage.setItem(
             `rejoin:${slug}`,
