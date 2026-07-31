@@ -7,6 +7,8 @@ import { Bot, User } from "lucide-react"
 export type Mentionable = {
   name: string
   isAgent: boolean
+  /** The registry id behind an agent, for telemetry; absent for humans. */
+  agentId?: string
 }
 
 /** Everyone in the call who can be @-mentioned (excludes yourself). */
@@ -18,10 +20,15 @@ export function useMentionables(): Mentionable[] {
       const kind = parseParticipantMeta(p.metadata)?.kind
       return kind !== "service" && kind !== "waiting"
     })
-    .map((p) => ({
-      name: p.name || p.identity,
-      isAgent: parseParticipantMeta(p.metadata)?.kind === "agent",
-    }))
+    .map((p) => {
+      const meta = parseParticipantMeta(p.metadata)
+      return {
+        name: p.name || p.identity,
+        isAgent: meta?.kind === "agent",
+        agentId:
+          meta?.kind === "agent" ? (meta.agentId ?? "unknown") : undefined,
+      }
+    })
 }
 
 /**

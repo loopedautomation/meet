@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query"
 import { track } from "@/lib/analytics"
 import { readHostKey } from "@/lib/hostKey"
 import { roomAuthHeaders } from "@/lib/roomAuth"
+import { $isHost } from "@/stores/host"
 
 export type AgentMode =
   | "realtime"
@@ -44,11 +45,35 @@ export function useAgentInvite(slug: string) {
         },
         ...(overrides ? { body: JSON.stringify(overrides) } : {}),
       })
-      if (!res.ok) throw new Error(`agent ${action} failed`)
+      // The status travels in the message so the error handler can report a
+      // code without the caller having to care.
+      if (!res.ok) throw new Error(`http_${res.status}`)
     },
-    onSuccess: (_data, { agentId, action }) => {
-      if (action === "invite") track("agent_invited", { agent_type: agentId })
-      else track("agent_removed", { agent_type: agentId })
+    onSuccess: (_data, { agentId, action, mode }) => {
+      if (action === "invite") {
+        track("agent_added", {
+          agent_type: agentId,
+          added_by_role: $isHost.get() ? "host" : "guest",
+          // The panel resolves the registry default before inviting, so this
+          // is normally the real mode; "default" only shows up for invite
+          // paths that don't pick one (URL-invited agents).
+          mode: mode ?? "default",
+        })
+      } else {
+        track("agent_removed", { agent_type: agentId, reason: "user_removed" })
+      }
+    },
+    onError: (error, { agentId, action }) => {
+      const code = /^http_\d+$/.test(error.message) ? error.message : "network"
+      track("agent_error", {
+        agent_type: agentId,
+        error_code: `${action}_${code}`,
+      })
+      // A failed removal leaves the agent in the call — recorded as an error
+      // rather than a removal so the two don't cancel out in the funnel.
+      if (action === "remove") {
+        track("agent_removed", { agent_type: agentId, reason: "error" })
+      }
     },
   })
 }

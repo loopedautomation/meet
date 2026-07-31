@@ -119,6 +119,23 @@ export function ControlBar({
     if (!isScreenShareEnabled) closePip()
   }, [isScreenShareEnabled])
 
+  // Bracket the share from the published state rather than the button, so a
+  // share stopped from the browser's own banner still closes the pair.
+  const shareStartedAt = useRef<number | null>(null)
+  useEffect(() => {
+    if (isScreenShareEnabled) {
+      shareStartedAt.current = Date.now()
+      track("screenshare_started")
+    } else if (shareStartedAt.current) {
+      track("screenshare_stopped", {
+        duration_seconds: Math.round(
+          (Date.now() - shareStartedAt.current) / 1000,
+        ),
+      })
+      shareStartedAt.current = null
+    }
+  }, [isScreenShareEnabled])
+
   // Publish the camera orientation so every client renders this feed the
   // same way — the track itself is untouched, viewers apply CSS.
   const videoTransform = useStore($videoTransform)
@@ -176,18 +193,22 @@ export function ControlBar({
     })
   }
 
-  const toggleMic = () =>
-    toggle(
+  const toggleMic = () => {
+    track("microphone_toggled", { state: isMicrophoneEnabled ? "off" : "on" })
+    return toggle(
       () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled),
       "microphone",
       { key: "audioEnabled", value: !isMicrophoneEnabled },
     )
-  const toggleCamera = () =>
-    toggle(
+  }
+  const toggleCamera = () => {
+    track("camera_toggled", { state: isCameraEnabled ? "off" : "on" })
+    return toggle(
       () => localParticipant.setCameraEnabled(!isCameraEnabled),
       "camera",
       { key: "videoEnabled", value: !isCameraEnabled },
     )
+  }
 
   // Keyboard shortcuts (Meet's conventions): ⌘/Ctrl+D mic, ⌘/Ctrl+E camera.
   const shortcutRefs = useRef({ toggleMic, toggleCamera })
@@ -302,7 +323,6 @@ export function ControlBar({
             type="button"
             className={`btn btn-circle ${isScreenShareEnabled ? "btn-primary" : "btn-neutral"}`}
             onClick={() => {
-              if (!isScreenShareEnabled) track("screenshare_started")
               toggle(
                 () =>
                   localParticipant.setScreenShareEnabled(
@@ -616,6 +636,8 @@ function useRaiseHand(localParticipant: LocalParticipant) {
   const toggleHand = () => {
     const next = !handRaised
     setOptimisticHand(next)
+    // Only the raise is interesting; lowering is bookkeeping.
+    if (next) track("hand_raised")
     localParticipant
       .setAttributes({ [HAND_ATTRIBUTE]: next ? "1" : "" })
       .catch((err: unknown) => {
