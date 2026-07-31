@@ -36,10 +36,10 @@ import {
   Users,
   Video,
   VideoOff,
+  X,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import { Modal } from "@/components/ui/Modal"
 import { useCameraEffect } from "@/hooks/useCameraEffect"
 import { useIncomingVideo } from "@/hooks/useIncomingVideo"
 import { useMeetingSounds } from "@/hooks/useMeetingSounds"
@@ -81,7 +81,11 @@ export function ControlBar({
   const [copied, setCopied] = useState(false)
   // Guard the destructive leave action behind a confirm — a stray click on the
   // red button shouldn't drop you out of the call and back through the lobby.
+  // The confirm is inline (right beside the button) rather than a centered
+  // modal so the second click needs no pointer travel.
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const leaveRef = useRef<HTMLDivElement>(null)
+  const confirmLeaveRef = useRef<HTMLButtonElement>(null)
   const openPanel = useStore($openPanel)
   const whiteboardOpen = useStore($canvasOpen)
   const canvasUnseen = useStore($canvasUnseen)
@@ -106,6 +110,28 @@ export function ControlBar({
 
   // Keep the chosen mic/camera pinned against OS auto-switching on hot-plug.
   useStickyDevices()
+
+  // While the inline leave confirm is showing: focus it, and let Escape, a
+  // click anywhere else, or a few seconds of hesitation dismiss it.
+  useEffect(() => {
+    if (!confirmLeave) return
+    confirmLeaveRef.current?.focus()
+    const cancel = () => setConfirmLeave(false)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancel()
+    }
+    const onPointerDown = (e: PointerEvent) => {
+      if (!leaveRef.current?.contains(e.target as Node)) cancel()
+    }
+    const timer = window.setTimeout(cancel, 4000)
+    window.addEventListener("keydown", onKeyDown)
+    window.addEventListener("pointerdown", onPointerDown)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener("keydown", onKeyDown)
+      window.removeEventListener("pointerdown", onPointerDown)
+    }
+  }, [confirmLeave])
 
   // Document PiP is offered only while sharing (its whole point is seeing
   // the others on a single screen) and only where the API exists. Detected
@@ -362,45 +388,47 @@ export function ControlBar({
             <Hand className="size-5" />
           </button>
         </div>
-        <div className="tooltip tooltip-bottom" data-tip="Leave meeting">
-          <button
-            type="button"
-            className="btn btn-circle btn-error"
-            onClick={() => setConfirmLeave(true)}
-            aria-label="Leave meeting"
-          >
-            <LogOut className="size-5" />
-          </button>
+        <div ref={leaveRef} className="flex items-center gap-1">
+          {confirmLeave ? (
+            <>
+              <button
+                ref={confirmLeaveRef}
+                type="button"
+                className="btn btn-error btn-brutalist"
+                onClick={() => {
+                  setConfirmLeave(false)
+                  void room.disconnect()
+                }}
+                aria-label="Confirm leaving the meeting"
+              >
+                <LogOut className="size-4" />
+                Leave?
+              </button>
+              <div className="tooltip tooltip-bottom" data-tip="Stay">
+                <button
+                  type="button"
+                  className="btn btn-circle btn-ghost"
+                  onClick={() => setConfirmLeave(false)}
+                  aria-label="Stay in the meeting"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="tooltip tooltip-bottom" data-tip="Leave meeting">
+              <button
+                type="button"
+                className="btn btn-circle btn-error"
+                onClick={() => setConfirmLeave(true)}
+                aria-label="Leave meeting"
+              >
+                <LogOut className="size-5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
-
-      <Modal isOpen={confirmLeave} onClose={() => setConfirmLeave(false)}>
-        <h3 className="font-semibold text-lg">Leave this meeting?</h3>
-        <p className="py-2 text-base-content/70 text-sm">
-          You'll be disconnected from the call and will need to rejoin to come
-          back.
-        </p>
-        <div className="modal-action">
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => setConfirmLeave(false)}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-error btn-brutalist"
-            onClick={() => {
-              setConfirmLeave(false)
-              void room.disconnect()
-            }}
-          >
-            <LogOut className="size-4" />
-            Leave
-          </button>
-        </div>
-      </Modal>
 
       {/* Phones: twelve circular buttons don't fit one row — the panel
           icons collapse into a single dropdown (see below) so the header
