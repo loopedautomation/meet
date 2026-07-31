@@ -1,6 +1,10 @@
 "use client"
 
 import { useParticipants, useTranscriptions } from "@livekit/components-react"
+import {
+  parseParticipantMeta,
+  TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE,
+} from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { $localSegments } from "@/stores/localTranscript"
 
@@ -13,6 +17,18 @@ export function TranscriptPanel() {
     const p = participants.find((p) => p.identity === identity)
     return p?.name || identity
   }
+
+  // The transcriber service advertises this when its STT engine failed to
+  // load — with nothing else transcribing, an empty panel would otherwise
+  // look identical to "no one has spoken yet".
+  const unavailable = participants.some((p) => {
+    const meta = parseParticipantMeta(p.metadata)
+    return (
+      meta?.kind === "service" &&
+      meta.service === "transcriber" &&
+      p.attributes?.[TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE] === "true"
+    )
+  })
 
   // Interim updates arrive as separate text streams sharing a segment id;
   // keep only the latest text per segment so a growing utterance updates in
@@ -45,7 +61,9 @@ export function TranscriptPanel() {
   if (entries.length === 0) {
     return (
       <p className="p-4 text-base-content/50 text-sm">
-        The live transcript appears here as people speak.
+        {unavailable
+          ? "Live transcription isn't available for this meeting."
+          : "The live transcript appears here as people speak."}
       </p>
     )
   }
