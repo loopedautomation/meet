@@ -135,6 +135,11 @@ export function RoomClient({
         const token = (await res.json()) as TokenResponse
         setAwaitingStart(null)
         $isHost.set(token.isHost)
+        if (token.hostKey) {
+          try {
+            localStorage.setItem(`hostKey:${slug}`, token.hostKey)
+          } catch {}
+        }
         roleRef.current = token.isHost ? "host" : "guest"
         try {
           sessionStorage.setItem(
@@ -216,6 +221,12 @@ export function RoomClient({
         body: JSON.stringify({
           displayName: stored.prefs.displayName,
           rejoinToken: stored.rejoinToken,
+          // Without this the server can't tell this apart from a brand-new
+          // joiner and mints a fresh identity that was never connected —
+          // this participant's own admit/moderate calls would then 403
+          // against the still-live LiveKit participant under the old
+          // identity (issue #192).
+          refresh: true,
         }),
       })
         .then((res) => (res.ok ? res.json() : null))

@@ -245,5 +245,10 @@ export async function POST(request: Request, { params }: Params) {
     // (no management gate) the first human in acts as host, as before.
     isHost,
     roomStartedAt,
+    // Deterministic from the slug alone (same value claim-host would hand
+    // out) — safe to include whenever the server itself granted host status,
+    // so a legitimate open-deployment first-joiner-host can actually use
+    // host-gated routes instead of just seeing host UI that then 403s.
+    hostKey: isHost ? deriveHostKey(slug) : undefined,
   })
 }

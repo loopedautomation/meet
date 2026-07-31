@@ -112,6 +112,14 @@ export const SELF_TRANSCRIBE_ATTRIBUTE = "stt.local"
 export const SELF_TRANSCRIBE_ACTIVE = "active"
 
 /**
+ * Attribute the transcriber service sets on itself (value "true") when its
+ * STT engine failed to load and it joined only to advertise that fact — no
+ * server-side transcription is running for anyone in the room. Lets the
+ * transcript panel tell "nothing said yet" apart from "broken deployment".
+ */
+export const TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE = "stt.unavailable"
+
+/**
  * Streaming ASR models trained on GigaSpeech emit ALL-CAPS text with no
  * punctuation, while finalized utterances are properly cased — so captions
  * visibly "flip" at utterance end. Sentence-case shouty text so interims and
@@ -1195,6 +1203,12 @@ export const tokenResponseSchema = z.object({
   isHost: z.boolean().default(false),
   /** Epoch ms when the room was created — anchors the call duration timer. */
   roomStartedAt: z.number().default(0),
+  /**
+   * Present when the server granted host status this call — lets the client
+   * actually use host-gated routes (settings/moderate/agents) instead of
+   * showing host UI that then fails authorization.
+   */
+  hostKey: z.string().optional(),
 })
 export type TokenResponse = z.infer<typeof tokenResponseSchema>
 

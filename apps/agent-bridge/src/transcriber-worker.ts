@@ -16,6 +16,7 @@ import {
   SELF_TRANSCRIBE_ACTIVE,
   SELF_TRANSCRIBE_ATTRIBUTE,
   TRANSCRIPTION_TOPIC,
+  TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE,
   tidyShoutyTranscript,
 } from "@meet/shared"
 import { postDebugEvent, postTranscriptSegment } from "./meeting-context.js"
@@ -59,20 +60,6 @@ export default defineAgent({
       | SttEngine
       | { error: string }
       | undefined
-    if (!engine || "error" in engine) {
-      const reason = engine?.error ?? "no engine"
-      console.error(`transcriber disabled: ${reason}`)
-      if (ctx.job.room?.name) {
-        postDebugEvent(
-          ctx.job.room.name,
-          "transcriber",
-          "error",
-          `disabled: ${reason}`,
-        )
-      }
-      return
-    }
-
     const makeDenoiser = ctx.proc.userData.denoiser as
       | (() => Denoiser)
       | null
@@ -98,6 +85,26 @@ export default defineAgent({
     }
     const local = ctx.room.localParticipant
     if (!local) throw new Error("no local participant")
+
+    if (!engine || "error" in engine) {
+      // Still join (rather than skip the room entirely) so the client can
+      // tell "nobody's spoken yet" apart from "transcription is broken here"
+      // instead of an empty panel looking the same either way.
+      const reason = engine?.error ?? "no engine"
+      console.error(`transcriber disabled: ${reason}`)
+      void local
+        .setAttributes({ [TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE]: "true" })
+        .catch(() => {})
+      if (ctx.room.name) {
+        postDebugEvent(
+          ctx.room.name,
+          "transcriber",
+          "error",
+          `disabled: ${reason}`,
+        )
+      }
+      return
+    }
 
     // Load the heavyweight finalizer only once the room is connected. Its
     // construction is a blocking native call that stalls the event loop for
@@ -167,8 +174,10 @@ export default defineAgent({
           })
           await writer.write(text)
           await writer.close()
-        } catch {
-          // room is closing or stream failed; nothing to do
+        } catch (err) {
+          console.warn(
+            `transcript publish failed for ${participant.identity} (segment ${segmentId}): ${(err as Error).message}`,
+          )
         }
         // Finals also land in the control API's per-room transcript store,
         // where agents joining later fetch them for meeting context.
