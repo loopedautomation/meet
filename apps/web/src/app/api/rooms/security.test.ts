@@ -195,6 +195,39 @@ describe("token route — waiting-room bypass", () => {
   })
 })
 
+describe("token route — hostKey issuance", () => {
+  it("hands the derived host key to a legacy-room first joiner granted host status", async () => {
+    // Otherwise this participant's own $isHost-gated UI (settings/moderate/
+    // agents) would 403 every action — the server decided they're host but
+    // never gave them the key those routes independently re-check.
+    state.rooms = [{ name: SLUG, metadata: "" }]
+    const res = await tokenPost(tokenReq({ displayName: "First" }), params())
+    const body = await res.json()
+    expect(body.isHost).toBe(true)
+    expect(body.hostKey).toBe(deriveHostKey(SLUG))
+  })
+
+  it("hands the same derived host key to the real creator", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: false }) }]
+    const res = await tokenPost(
+      tokenReq({ displayName: "Host", hostKey: deriveHostKey(SLUG) }),
+      params(),
+    )
+    const body = await res.json()
+    expect(body.isHost).toBe(true)
+    expect(body.hostKey).toBe(deriveHostKey(SLUG))
+  })
+
+  it("never includes a host key for a non-host joiner", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
+    state.participants = [{ identity: "user-host", metadata: meta("human") }]
+    const res = await tokenPost(tokenReq({ displayName: "Guest" }), params())
+    const body = await res.json()
+    expect(body.isHost).toBe(false)
+    expect(body.hostKey).toBeUndefined()
+  })
+})
+
 describe("token route — no roomAdmin, ever", () => {
   it("never grants roomAdmin in the issued JWT", async () => {
     state.rooms = [{ name: SLUG, metadata: "" }]
