@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
+import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import { deriveHostKey, isValidRoomSlug } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ slug: string }> }
@@ -22,6 +23,17 @@ export async function POST(request: Request, { params }: Params) {
   const { slug } = await params
   if (!isValidRoomSlug(slug)) {
     return NextResponse.json({ error: "invalid room" }, { status: 400 })
+  }
+  // The password check below is constant-time but unlimited attempts still
+  // let a shared/weak password get brute-forced — cap the guess rate.
+  if (
+    rateLimited(`claim-host:${clientKey(request)}`, 10, 10 * 60 * 1000) ||
+    rateLimited("claim-host:global", 60, 10 * 60 * 1000)
+  ) {
+    return NextResponse.json(
+      { error: "too many requests, try again shortly" },
+      { status: 429 },
+    )
   }
   const required = process.env.MEET_MANAGEMENT_PASSWORD
   if (required) {

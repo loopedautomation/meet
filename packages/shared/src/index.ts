@@ -1195,6 +1195,12 @@ export const tokenResponseSchema = z.object({
   isHost: z.boolean().default(false),
   /** Epoch ms when the room was created — anchors the call duration timer. */
   roomStartedAt: z.number().default(0),
+  /**
+   * Present when the server granted host status this call — lets the client
+   * actually use host-gated routes (settings/moderate/agents) instead of
+   * showing host UI that then fails authorization.
+   */
+  hostKey: z.string().optional(),
 })
 export type TokenResponse = z.infer<typeof tokenResponseSchema>
 

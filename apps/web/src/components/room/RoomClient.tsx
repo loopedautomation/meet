@@ -135,6 +135,11 @@ export function RoomClient({
         const token = (await res.json()) as TokenResponse
         setAwaitingStart(null)
         $isHost.set(token.isHost)
+        if (token.hostKey) {
+          try {
+            localStorage.setItem(`hostKey:${slug}`, token.hostKey)
+          } catch {}
+        }
         roleRef.current = token.isHost ? "host" : "guest"
         try {
           sessionStorage.setItem(
