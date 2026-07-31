@@ -19,6 +19,7 @@ export function togglePanel(panel: Exclude<Panel, null>) {
   const opening = $openPanel.get() !== panel
   // The doc lives in one place at a time — opening the panel pulls it off
   // the stage rather than mounting a second editor.
+  if (opening) track("panel_opened", { panel })
   if (panel === "doc" && opening) {
     $docOnStage.set(false)
     track("doc_panel_opened")

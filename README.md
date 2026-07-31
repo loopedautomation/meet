@@ -116,9 +116,11 @@ The published images send anonymous usage events to PostHog so we can see
 which features matter — room joins, agent invites, panel opens, and the like.
 
 What's collected: event names with coarse properties (e.g. agent type, meeting
-duration in seconds) and a one-way-hashed instance id used to count distinct
-deployments. What's never collected: room codes, participant names, chat/doc/
-transcript content, or URLs containing any of those.
+duration in seconds, participant counts), a one-way-hashed instance id used to
+count distinct deployments, and a one-way-hashed room id so the events from a
+single meeting can be grouped. What's never collected: room codes, participant
+names, chat/doc/transcript content, message text (only its length), or URLs
+containing any of those.
 
 To opt out, set the environment variable and restart — no rebuild needed:
 

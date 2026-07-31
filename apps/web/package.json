@@ -31,6 +31,7 @@
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
     "react-toastify": "^11.1.0",
+    "remark-emoji": "^5.0.1",
     "remark-gfm": "^4.0.1",
     "zod": "catalog:"
   },

@@ -3,6 +3,7 @@
 import { useLocalParticipant } from "@livekit/components-react"
 import { useEffect, useRef } from "react"
 import { track } from "@/lib/analytics"
+import { getRoomSnapshot } from "@/stores/roomTelemetry"
 
 /**
  * Hold Space while muted to talk; release re-mutes. Only arms when the mic
@@ -37,6 +38,14 @@ export function usePushToTalk(enabled: boolean) {
       if (!tracked.current) {
         tracked.current = true
         track("push_to_talk_used")
+        // Talking into a room with an agent in it is talking to the agent.
+        const agentCount = getRoomSnapshot().agentTypes.length
+        if (agentCount > 0) {
+          track("agent_interaction", {
+            kind: "push_to_talk",
+            agent_count: agentCount,
+          })
+        }
       }
       void localParticipant.setMicrophoneEnabled(true).catch(() => {
         holding.current = false

@@ -195,6 +195,39 @@ describe("token route — waiting-room bypass", () => {
   })
 })
 
+describe("token route — hostKey issuance", () => {
+  it("hands the derived host key to a legacy-room first joiner granted host status", async () => {
+    // Otherwise this participant's own $isHost-gated UI (settings/moderate/
+    // agents) would 403 every action — the server decided they're host but
+    // never gave them the key those routes independently re-check.
+    state.rooms = [{ name: SLUG, metadata: "" }]
+    const res = await tokenPost(tokenReq({ displayName: "First" }), params())
+    const body = await res.json()
+    expect(body.isHost).toBe(true)
+    expect(body.hostKey).toBe(deriveHostKey(SLUG))
+  })
+
+  it("hands the same derived host key to the real creator", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: false }) }]
+    const res = await tokenPost(
+      tokenReq({ displayName: "Host", hostKey: deriveHostKey(SLUG) }),
+      params(),
+    )
+    const body = await res.json()
+    expect(body.isHost).toBe(true)
+    expect(body.hostKey).toBe(deriveHostKey(SLUG))
+  })
+
+  it("never includes a host key for a non-host joiner", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
+    state.participants = [{ identity: "user-host", metadata: meta("human") }]
+    const res = await tokenPost(tokenReq({ displayName: "Guest" }), params())
+    const body = await res.json()
+    expect(body.isHost).toBe(false)
+    expect(body.hostKey).toBeUndefined()
+  })
+})
+
 describe("token route — no roomAdmin, ever", () => {
   it("never grants roomAdmin in the issued JWT", async () => {
     state.rooms = [{ name: SLUG, metadata: "" }]
@@ -274,6 +307,122 @@ describe("admit route — spoofing & kick", () => {
       params(),
     )
     expect(res.status).toBe(502)
+  })
+})
+
+describe("admit route — a non-creator guest can admit after their own admission (#192)", () => {
+  it("refresh:true after admission reuses the same identity, so the guest can then admit someone else", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
+    state.participants = [{ identity: "user-host", metadata: meta("human") }]
+    // Guest knocks and lands in the waiting room.
+    const first = await tokenPost(tokenReq({ displayName: "Guest" }), params())
+    const firstBody = await first.json()
+    expect(firstBody.waiting).toBe(true)
+    const guestIdentity = firstBody.identity as string
+    // Someone admits them: the live participant record flips to human.
+    state.participants.push({
+      identity: guestIdentity,
+      metadata: meta("human"),
+    })
+    // The client's post-admission swap, with the fix (refresh: true).
+    const swapped = await tokenPost(
+      tokenReq({
+        displayName: "Guest",
+        rejoinToken: firstBody.token,
+        refresh: true,
+      }),
+      params(),
+    )
+    const swappedBody = await swapped.json()
+    expect(swappedBody.identity).toBe(guestIdentity)
+    // A third participant is waiting; the guest should now be able to admit them.
+    state.participants.push({
+      identity: "user-waiter",
+      metadata: meta("waiting"),
+    })
+    const admit = await admitPost(
+      authedReq(
+        { identity: "user-waiter", action: "admit" },
+        swappedBody.token,
+      ),
+      params(),
+    )
+    expect(admit.status).toBe(200)
+  })
+
+  it("omitting refresh:true also reuses the identity — verified proof carries continuity on plain rejoins too (#184)", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
+    state.participants = [{ identity: "user-host", metadata: meta("human") }]
+    const first = await tokenPost(tokenReq({ displayName: "Guest" }), params())
+    const firstBody = await first.json()
+    const guestIdentity = firstBody.identity as string
+    state.participants.push({
+      identity: guestIdentity,
+      metadata: meta("human"),
+    })
+    // A swap without refresh: since #184 the route honors verified rejoin
+    // proof whenever it's presented (a host's plain reload is never
+    // "waiting" or "refresh"), so the identity is reused here too — the
+    // ghost-identity failure mode of #192 can no longer occur either way.
+    const swapped = await tokenPost(
+      tokenReq({ displayName: "Guest", rejoinToken: firstBody.token }),
+      params(),
+    )
+    const swappedBody = await swapped.json()
+    expect(swappedBody.identity).toBe(guestIdentity)
+    state.participants.push({
+      identity: "user-waiter",
+      metadata: meta("waiting"),
+    })
+    const admit = await admitPost(
+      authedReq(
+        { identity: "user-waiter", action: "admit" },
+        swappedBody.token,
+      ),
+      params(),
+    )
+    expect(admit.status).toBe(200)
+  })
+})
+
+describe("token route — reconvene vs departure-race clock reset", () => {
+  it("resets the meeting clock for a genuinely empty room even with unexpired rejoin proof", async () => {
+    state.rooms = [
+      {
+        name: SLUG,
+        metadata: JSON.stringify({ started: true, startedAt: 1000 }),
+      },
+    ]
+    state.participants = [] // identity long gone — a reconvened meeting
+    const proof = await joinToken({ identity: "user-a", kind: "human" })
+    const res = await tokenPost(
+      tokenReq({ displayName: "Returner", rejoinToken: proof }),
+      params(),
+    )
+    const body = await res.json()
+    expect(body.waiting).toBe(false)
+    expect(body.roomStartedAt).not.toBe(1000)
+  })
+
+  it("keeps the meeting clock when the rejoining identity is still listed (departureTimeout race)", async () => {
+    state.rooms = [
+      {
+        name: SLUG,
+        metadata: JSON.stringify({ started: true, startedAt: 1000 }),
+      },
+    ]
+    // The departing identity still occupies the room (not counted as an
+    // admitted human, so participantCount reads 0) — a reconnect, not a
+    // fresh start.
+    state.participants = [{ identity: "user-a", metadata: meta("waiting") }]
+    const proof = await joinToken({ identity: "user-a", kind: "human" })
+    const res = await tokenPost(
+      tokenReq({ displayName: "Returner", rejoinToken: proof }),
+      params(),
+    )
+    const body = await res.json()
+    expect(body.waiting).toBe(false)
+    expect(body.roomStartedAt).toBe(1000)
   })
 })
 

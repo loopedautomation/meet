@@ -10,7 +10,7 @@ import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
-import { track } from "@/lib/analytics"
+import { clearRoomContext, setRoomContext, track } from "@/lib/analytics"
 import { consumeExplicitLeave } from "@/lib/leaveIntent"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
@@ -21,8 +21,35 @@ import {
   SEND_QUALITY_RESOLUTION,
   type SendQuality,
 } from "@/stores/preferences"
+import { getRoomSnapshot, resetRoomSnapshot } from "@/stores/roomTelemetry"
 
 const queryClient = new QueryClient()
+
+// The stored rejoin proof is only trusted for a silent auto-join while the
+// token behind it can still be valid — tokens carry a 1h TTL (see the token
+// route). Past that, walking straight past the lobby would be pure bypass:
+// the server would refuse the stale proof and mint a fresh identity anyway.
+const REJOIN_MAX_AGE_MS = 60 * 60 * 1000
+// A non-terminal disconnect retries the join at most this many times before
+// giving up and landing back at the lobby.
+const MAX_AUTO_REJOIN_ATTEMPTS = 3
+
+/** User-facing message for a disconnect the user didn't confirm themselves. */
+function involuntaryLeaveMessage(reason?: DisconnectReason): string | null {
+  if (reason === undefined || reason === DisconnectReason.CLIENT_INITIATED) {
+    return null
+  }
+  if (reason === DisconnectReason.PARTICIPANT_REMOVED) {
+    return "You were removed from the meeting."
+  }
+  if (
+    reason === DisconnectReason.ROOM_DELETED ||
+    reason === DisconnectReason.ROOM_CLOSED
+  ) {
+    return "The meeting has ended."
+  }
+  return "You were disconnected from the meeting."
+}
 
 export type JoinPreferences = {
   displayName: string
@@ -69,7 +96,23 @@ export function RoomClient({
     } catch {}
   }, [slug])
 
+  // Groups every event from this meeting under one opaque id; the slug
+  // itself never leaves the browser.
+  useEffect(() => {
+    setRoomContext(slug)
+    resetRoomSnapshot()
+    return () => clearRoomContext()
+  }, [slug])
+
   const joinedAtRef = useRef<number | null>(null)
+  const roleRef = useRef<"host" | "guest">("guest")
+  const waitingSinceRef = useRef<number | null>(null)
+  // Consecutive automatic rejoin attempts since the last successful join.
+  const autoRejoinAttemptsRef = useRef(0)
+  // The rejoin token this session last wrote to localStorage — terminal
+  // cleanup compares against it so it only ever removes its own proof,
+  // never one a newer tab (DUPLICATE_IDENTITY takeover) wrote after us.
+  const lastRejoinTokenRef = useRef<string | null>(null)
 
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
@@ -89,6 +132,7 @@ export function RoomClient({
           }),
         })
         if (res.status === 404) {
+          track("room_join_failed", { reason: "not_found" })
           toast.error(
             "This meeting doesn't exist or has already ended. Ask for a fresh link.",
           )
@@ -99,30 +143,58 @@ export function RoomClient({
           setAwaitingStart(prefs)
           return
         }
-        if (!res.ok) throw new Error(`token request failed (${res.status})`)
+        if (!res.ok) {
+          track("room_join_failed", { reason: "server" })
+          toast.error("Could not join the meeting. Please try again.")
+          return
+        }
         const token = (await res.json()) as TokenResponse
         setAwaitingStart(null)
         $isHost.set(token.isHost)
+        if (token.hostKey) {
+          try {
+            localStorage.setItem(`hostKey:${slug}`, token.hostKey)
+          } catch {}
+        }
+        roleRef.current = token.isHost ? "host" : "guest"
         try {
           // localStorage (not sessionStorage) so the proof survives closing
           // the tab, not just refreshing it.
           localStorage.setItem(
             `rejoin:${slug}`,
-            // The token doubles as proof of admission on the next refresh.
-            JSON.stringify({ prefs, rejoinToken: token.token }),
+            // The token doubles as proof of admission on the next refresh;
+            // savedAt bounds how long it's trusted for a silent auto-join.
+            JSON.stringify({
+              prefs,
+              rejoinToken: token.token,
+              savedAt: Date.now(),
+            }),
           )
+          lastRejoinTokenRef.current = token.token
         } catch {}
-        // A refresh rejoin isn't a new join; waiting-room entries are counted
-        // on admission instead.
-        if (!rejoinToken && !token.waiting) {
+        autoRejoinAttemptsRef.current = 0
+        if (!token.waiting) {
+          // Re-anchor the duration clock on every successful join — a rejoin
+          // included, or the eventual real leave tracks no duration. Only a
+          // genuinely new join fires room_joined; waiting-room entries are
+          // counted on admission instead.
           joinedAtRef.current = Date.now()
-          track("room_joined", {
-            role: token.isHost ? "host" : "guest",
-            via_waiting_room: false,
-          })
+          if (!rejoinToken) {
+            track("room_joined", {
+              role: token.isHost ? "host" : "guest",
+              via_waiting_room: false,
+            })
+          }
+        }
+        // Knocking is its own funnel: the entry is paired with the
+        // admission (or the abandonment) to show waiting-room drop-off.
+        if (token.waiting && !waitingSinceRef.current) {
+          waitingSinceRef.current = Date.now()
+          track("waiting_room_entered")
         }
         setSession({ token, prefs })
       } catch {
+        track("room_join_failed", { reason: "network" })
         toast.error("Could not join the meeting. Please try again.")
       }
     },
@@ -132,7 +204,11 @@ export function RoomClient({
   // A refresh rejoins the meeting automatically; only an explicit leave (or a
   // server-side disconnect) drops back to the lobby.
   useEffect(() => {
-    let stored: { prefs: JoinPreferences; rejoinToken?: string } | null = null
+    let stored: {
+      prefs: JoinPreferences
+      rejoinToken?: string
+      savedAt?: number
+    } | null = null
     try {
       const raw = localStorage.getItem(`rejoin:${slug}`)
       if (raw) {
@@ -144,6 +220,11 @@ export function RoomClient({
       }
     } catch {}
     if (!stored?.prefs?.displayName) return
+    // Only a fresh proof auto-joins; a stale one (or an older entry without
+    // savedAt) falls through to the lobby like any first visit.
+    const savedAt = stored.savedAt
+    if (typeof savedAt !== "number" || Date.now() - savedAt > REJOIN_MAX_AGE_MS)
+      return
     setRejoining(true)
     handleJoin(stored.prefs, stored.rejoinToken).finally(() =>
       setRejoining(false),
@@ -171,6 +252,14 @@ export function RoomClient({
   const handleAdmitted = useCallback(() => {
     setAdmitted(true)
     joinedAtRef.current = Date.now()
+    if (waitingSinceRef.current) {
+      track("waiting_room_admitted", {
+        waited_seconds: Math.round(
+          (Date.now() - waitingSinceRef.current) / 1000,
+        ),
+      })
+      waitingSinceRef.current = null
+    }
     track("room_joined", { role: "guest", via_waiting_room: true })
     const current = localStorage.getItem(`rejoin:${slug}`)
     if (!current) return
@@ -185,6 +274,12 @@ export function RoomClient({
         body: JSON.stringify({
           displayName: stored.prefs.displayName,
           rejoinToken: stored.rejoinToken,
+          // Without this the server can't tell this apart from a brand-new
+          // joiner and mints a fresh identity that was never connected —
+          // this participant's own admit/moderate calls would then 403
+          // against the still-live LiveKit participant under the old
+          // identity (issue #192).
+          refresh: true,
         }),
       })
         .then((res) => (res.ok ? res.json() : null))
@@ -192,8 +287,13 @@ export function RoomClient({
           if (fresh && !fresh.waiting) {
             localStorage.setItem(
               `rejoin:${slug}`,
-              JSON.stringify({ prefs: stored.prefs, rejoinToken: fresh.token }),
+              JSON.stringify({
+                prefs: stored.prefs,
+                rejoinToken: fresh.token,
+                savedAt: Date.now(),
+              }),
             )
+            lastRejoinTokenRef.current = fresh.token
             refreshFailCountRef.current = 0
           } else {
             noteRefreshFailure()
@@ -239,8 +339,10 @@ export function RoomClient({
                   JSON.stringify({
                     prefs: stored.prefs,
                     rejoinToken: fresh.token,
+                    savedAt: Date.now(),
                   }),
                 )
+                lastRejoinTokenRef.current = fresh.token
                 refreshFailCountRef.current = 0
               } else {
                 noteRefreshFailure()
@@ -271,14 +373,47 @@ export function RoomClient({
   ).current
   const handleDisconnected = useCallback(
     (reason?: DisconnectReason) => {
-      if (joinedAtRef.current) {
-        track("room_left", {
-          duration_seconds: Math.round(
-            (Date.now() - joinedAtRef.current) / 1000,
+      // Giving up while still knocking is the other half of the waiting-room
+      // funnel — without it an abandoned knock looks like nothing happened.
+      if (waitingSinceRef.current) {
+        track("waiting_room_abandoned", {
+          waited_seconds: Math.round(
+            (Date.now() - waitingSinceRef.current) / 1000,
           ),
         })
+        waitingSinceRef.current = null
+      }
+      if (joinedAtRef.current) {
+        const duration = Math.round((Date.now() - joinedAtRef.current) / 1000)
+        const stats = getRoomSnapshot()
+        track("room_left", {
+          duration_seconds: duration,
+          participant_count: stats.participantCount,
+          had_ai_agent: stats.hadAgent,
+          role: roleRef.current,
+        })
+        // The room closing is one event, not one per participant: the host
+        // reports it, and only when nobody is left behind. (A room the server
+        // reaps after everyone's browser is gone produces nothing — that needs
+        // a LiveKit webhook, which this deployment doesn't have yet.)
+        if (roleRef.current === "host" && stats.participantCount <= 1) {
+          track("room_ended", {
+            participant_count: stats.participantCount,
+            peak_participant_count: stats.peakParticipantCount,
+            duration_seconds: duration,
+            had_ai_agent: stats.hadAgent,
+            agent_count: stats.agentTypes.length,
+          })
+          for (const agentType of stats.agentTypes) {
+            track("agent_removed", {
+              agent_type: agentType,
+              reason: "call_ended",
+            })
+          }
+        }
         joinedAtRef.current = null
       }
+      resetRoomSnapshot()
       setSession(null)
       const isExplicitLeave =
         reason === DisconnectReason.CLIENT_INITIATED && consumeExplicitLeave()
@@ -286,9 +421,33 @@ export function RoomClient({
         isExplicitLeave ||
         (reason !== undefined && TERMINAL_DISCONNECT_REASONS.has(reason))
       ) {
+        // Clear the stored proof — but only if it's still the one this
+        // session wrote last. On DUPLICATE_IDENTITY another tab has taken
+        // over the identity and already saved its own fresher proof;
+        // deleting that here would log the live tab out on its next refresh.
         try {
-          localStorage.removeItem(`rejoin:${slug}`)
+          const raw = localStorage.getItem(`rejoin:${slug}`)
+          if (raw) {
+            const stored = JSON.parse(raw) as { rejoinToken?: string }
+            if (
+              !stored.rejoinToken ||
+              stored.rejoinToken === lastRejoinTokenRef.current
+            ) {
+              localStorage.removeItem(`rejoin:${slug}`)
+            }
+          }
         } catch {}
+        const involuntaryMessage = involuntaryLeaveMessage(reason)
+        if (involuntaryMessage) toast.info(involuntaryMessage)
+        return
+      }
+      // Anything else (network drop, failed reconnect) auto-rejoins with the
+      // stored proof — but bounded: a persistent failure must land back at
+      // the lobby, not spin forever against a dead server. The counter
+      // resets on a join that actually succeeds (see handleJoin).
+      if (autoRejoinAttemptsRef.current >= MAX_AUTO_REJOIN_ATTEMPTS) {
+        const involuntaryMessage = involuntaryLeaveMessage(reason)
+        if (involuntaryMessage) toast.info(involuntaryMessage)
         return
       }
       try {
@@ -298,7 +457,19 @@ export function RoomClient({
           prefs: JoinPreferences
           rejoinToken?: string
         }
-        void handleJoin(stored.prefs, stored.rejoinToken)
+        autoRejoinAttemptsRef.current += 1
+        // Show "Rejoining…" (not the lobby) while the automatic attempt is
+        // in flight, so a racing manual Join can't double-connect. Each
+        // retry backs off a little longer than the last.
+        setRejoining(true)
+        window.setTimeout(
+          () => {
+            void handleJoin(stored.prefs, stored.rejoinToken).finally(() =>
+              setRejoining(false),
+            )
+          },
+          (autoRejoinAttemptsRef.current - 1) * 2000,
+        )
       } catch {}
     },
     [slug, handleJoin, TERMINAL_DISCONNECT_REASONS],

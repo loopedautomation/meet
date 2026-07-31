@@ -102,8 +102,14 @@ export async function POST(request: Request, { params }: Params) {
   // Fails closed: an error here must not read as "empty room" — that would
   // turn a LiveKit hiccup into direct admission for whoever asked first.
   let participantCount: number
+  // Every identity currently known to the room (any kind) — consulted below
+  // to tell a reconnecting identity's departure-timeout race apart from a
+  // genuinely reconvened meeting.
+  let presentIdentities: Set<string>
   try {
-    participantCount = (await roomService().listParticipants(slug)).filter(
+    const present = await roomService().listParticipants(slug)
+    presentIdentities = new Set(present.map((p) => p.identity))
+    participantCount = present.filter(
       (p) => parseParticipantMeta(p.metadata)?.kind === "human",
     ).length
   } catch {
@@ -187,10 +193,15 @@ export async function POST(request: Request, { params }: Params) {
   }
   // A fresh occurrence: the first human entering (not knocking) resets the
   // call timer — covers both a first start and a meeting reconvening in a
-  // room the GC hadn't swept yet. Skipped when verified rejoin proof is
-  // present: a participantCount of 0 there is a departureTimeout race for a
-  // reconnecting identity, not a genuine fresh start.
-  if (!waiting && participantCount === 0 && !rejoinIdentity) {
+  // room the GC hadn't swept yet. Skipped only when the verified rejoin
+  // identity is still present in the room's participant list — the true
+  // departureTimeout race, where the human count reads 0 while LiveKit still
+  // holds the departing identity. A rejoin into a genuinely empty room (say,
+  // reconvening with unexpired proof hours later) is a fresh start and gets
+  // a fresh clock like anyone else.
+  const departureRace =
+    rejoinIdentity !== undefined && presentIdentities.has(rejoinIdentity)
+  if (!waiting && participantCount === 0 && !departureRace) {
     roomMeta = { ...roomMeta, startedAt: Date.now() }
     await roomService()
       .updateRoomMetadata(slug, JSON.stringify(roomMeta))
@@ -250,5 +261,10 @@ export async function POST(request: Request, { params }: Params) {
     // (no management gate) the first human in acts as host, as before.
     isHost,
     roomStartedAt,
+    // Deterministic from the slug alone (same value claim-host would hand
+    // out) — safe to include whenever the server itself granted host status,
+    // so a legitimate open-deployment first-joiner-host can actually use
+    // host-gated routes instead of just seeing host UI that then 403s.
+    hostKey: isHost ? deriveHostKey(slug) : undefined,
   })
 }

@@ -1,14 +1,14 @@
 "use client"
 
-import { useLocalParticipant } from "@livekit/components-react"
+import { useLocalParticipant, useRoomContext } from "@livekit/components-react"
 import {
   SELF_TRANSCRIBE_ACTIVE,
   SELF_TRANSCRIBE_ATTRIBUTE,
   TRANSCRIPTION_TOPIC,
   tidyShoutyTranscript,
 } from "@meet/shared"
-import { Track } from "livekit-client"
-import { useEffect } from "react"
+import { RoomEvent, Track } from "livekit-client"
+import { useEffect, useState } from "react"
 import { track } from "@/lib/analytics"
 import { upsertLocalSegment } from "@/stores/localTranscript"
 
@@ -48,7 +48,21 @@ const WATCHDOG_MS = 5_000
  */
 export function useLocalTranscription(enabled: boolean) {
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant()
+  const room = useRoomContext()
+  // Bumped on every LiveKit reconnect so the effect below tears down and
+  // rebuilds its audio pipeline against the (possibly renewed) mic
+  // publication, rather than leaving a stale AudioContext/track wired up.
+  const [reconnectNonce, setReconnectNonce] = useState(0)
 
+  useEffect(() => {
+    const onReconnected = () => setReconnectNonce((n) => n + 1)
+    room.on(RoomEvent.Reconnected, onReconnected)
+    return () => {
+      room.off(RoomEvent.Reconnected, onReconnected)
+    }
+  }, [room])
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reconnectNonce isn't read, it only forces this effect to re-run and rebuild the pipeline after a reconnect
   useEffect(() => {
     if (typeof window === "undefined") return
     if (!enabled || !isMicrophoneEnabled) return
@@ -103,8 +117,10 @@ export function useLocalTranscription(enabled: boolean) {
         })
         await writer.write(text)
         await writer.close()
-      } catch {
-        // room closing or stream failure; the segment is simply lost
+      } catch (err) {
+        console.warn(
+          `local transcript publish failed (segment ${segmentId}): ${err}`,
+        )
       }
     }
 
@@ -243,5 +259,5 @@ export function useLocalTranscription(enabled: boolean) {
       cancelled = true
       teardown()
     }
-  }, [enabled, isMicrophoneEnabled, localParticipant])
+  }, [enabled, isMicrophoneEnabled, localParticipant, reconnectNonce])
 }
