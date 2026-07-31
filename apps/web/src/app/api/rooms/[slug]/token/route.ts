@@ -185,20 +185,23 @@ export async function POST(request: Request, { params }: Params) {
   }
   // A fresh occurrence: the first human entering (not knocking) resets the
   // call timer — covers both a first start and a meeting reconvening in a
-  // room the GC hadn't swept yet.
-  if (!waiting && participantCount === 0) {
+  // room the GC hadn't swept yet. Skipped when verified rejoin proof is
+  // present: a participantCount of 0 there is a departureTimeout race for a
+  // reconnecting identity, not a genuine fresh start.
+  if (!waiting && participantCount === 0 && !rejoinIdentity) {
     roomMeta = { ...roomMeta, startedAt: Date.now() }
     await roomService()
       .updateRoomMetadata(slug, JSON.stringify(roomMeta))
       .catch(() => undefined)
   }
 
-  // A refresh renews the SAME participant: keeping the identity keeps
-  // API-auth (which derives identity from this token) consistent with the
-  // still-connected LiveKit participant. Only honored with verified,
-  // admitted proof — never from the request body alone.
-  const identity =
-    body.data.refresh && rejoinIdentity ? rejoinIdentity : `user-${nanoid(10)}`
+  // A rejoin (refresh or plain) renews the SAME participant: keeping the
+  // identity keeps API-auth (which derives identity from this token)
+  // consistent with the still-connected LiveKit participant, and preserves
+  // LiveKit-side per-identity state (raised hand, agent assignment). Only
+  // honored with verified, admitted proof — never from the request body
+  // alone; see the verification block above.
+  const identity = rejoinIdentity ?? `user-${nanoid(10)}`
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),
