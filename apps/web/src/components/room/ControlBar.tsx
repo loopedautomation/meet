@@ -48,6 +48,7 @@ import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
 import { track } from "@/lib/analytics"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
+import { markExplicitLeave } from "@/lib/leaveIntent"
 import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
@@ -393,6 +394,7 @@ export function ControlBar({
             className="btn btn-error btn-brutalist"
             onClick={() => {
               setConfirmLeave(false)
+              markExplicitLeave()
               void room.disconnect()
             }}
           >

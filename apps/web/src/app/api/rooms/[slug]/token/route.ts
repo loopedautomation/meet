@@ -148,15 +148,17 @@ export async function POST(request: Request, { params }: Params) {
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()
 
-  // A refresh presents its previous token as proof of admission: accept it
+  // A rejoin presents its previous token as proof of admission: accept it
   // if it verifies for this room with admitted (human) metadata, or — for a
   // knocker upgrading their proof right after admission — if its identity is
   // currently connected with human metadata. Identities removed by
   // moderation are refused either way: a kick must end the session, not
-  // hand out a fresh identity.
-  // The proof's verified identity, kept for `refresh` renewals below.
+  // hand out a fresh identity. Checked whenever a rejoinToken is presented —
+  // not just while waiting or refreshing — so a host's plain rejoin (e.g. a
+  // reopened tab, never "waiting" since the host walks straight in) still
+  // gets identity continuity instead of always minting a fresh one.
   let rejoinIdentity: string | undefined
-  if ((waiting || body.data.refresh) && body.data.rejoinToken) {
+  if (body.data.rejoinToken) {
     try {
       const claims = await new TokenVerifier(apiKey, apiSecret).verify(
         body.data.rejoinToken,

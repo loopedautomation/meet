@@ -11,6 +11,7 @@ import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
 import { track } from "@/lib/analytics"
+import { consumeExplicitLeave } from "@/lib/leaveIntent"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 import {
@@ -253,14 +254,16 @@ export function RoomClient({
     return () => clearInterval(timer)
   }, [session, slug, noteRefreshFailure])
 
-  // A disconnect fires for both an explicit "Leave" and a transient network
-  // drop — treating them identically wiped the rejoin proof on a blip, so a
-  // dropped connection couldn't rejoin as the same participant. Only clear
-  // it for reasons that mean this session is over for good; anything else
-  // retries the same join with the still-stored proof.
+  // A disconnect fires for an explicit "Leave", a transient network drop, AND
+  // a page reload/tab close — LiveKit calls disconnect() on both
+  // beforeunload and pagehide, so those report the exact same
+  // DisconnectReason.CLIENT_INITIATED as clicking Leave. The reason alone
+  // can't tell a real leave from the browser tearing the page down, so
+  // CLIENT_INITIATED only counts as terminal when the Leave button marked
+  // its intent first (see lib/leaveIntent). Reasons the server itself
+  // decided (kicked, superseded, room gone) are always terminal.
   const TERMINAL_DISCONNECT_REASONS = useRef(
     new Set([
-      DisconnectReason.CLIENT_INITIATED,
       DisconnectReason.DUPLICATE_IDENTITY,
       DisconnectReason.PARTICIPANT_REMOVED,
       DisconnectReason.ROOM_DELETED,
@@ -277,7 +280,12 @@ export function RoomClient({
         joinedAtRef.current = null
       }
       setSession(null)
-      if (reason === undefined || TERMINAL_DISCONNECT_REASONS.has(reason)) {
+      const isExplicitLeave =
+        reason === DisconnectReason.CLIENT_INITIATED && consumeExplicitLeave()
+      if (
+        isExplicitLeave ||
+        (reason !== undefined && TERMINAL_DISCONNECT_REASONS.has(reason))
+      ) {
         try {
           localStorage.removeItem(`rejoin:${slug}`)
         } catch {}
