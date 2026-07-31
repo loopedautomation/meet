@@ -310,6 +310,79 @@ describe("admit route — spoofing & kick", () => {
   })
 })
 
+describe("admit route — a non-creator guest can admit after their own admission (#192)", () => {
+  it("refresh:true after admission reuses the same identity, so the guest can then admit someone else", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
+    state.participants = [{ identity: "user-host", metadata: meta("human") }]
+    // Guest knocks and lands in the waiting room.
+    const first = await tokenPost(tokenReq({ displayName: "Guest" }), params())
+    const firstBody = await first.json()
+    expect(firstBody.waiting).toBe(true)
+    const guestIdentity = firstBody.identity as string
+    // Someone admits them: the live participant record flips to human.
+    state.participants.push({
+      identity: guestIdentity,
+      metadata: meta("human"),
+    })
+    // The client's post-admission swap, with the fix (refresh: true).
+    const swapped = await tokenPost(
+      tokenReq({
+        displayName: "Guest",
+        rejoinToken: firstBody.token,
+        refresh: true,
+      }),
+      params(),
+    )
+    const swappedBody = await swapped.json()
+    expect(swappedBody.identity).toBe(guestIdentity)
+    // A third participant is waiting; the guest should now be able to admit them.
+    state.participants.push({
+      identity: "user-waiter",
+      metadata: meta("waiting"),
+    })
+    const admit = await admitPost(
+      authedReq(
+        { identity: "user-waiter", action: "admit" },
+        swappedBody.token,
+      ),
+      params(),
+    )
+    expect(admit.status).toBe(200)
+  })
+
+  it("omitting refresh:true (the regression) mints a ghost identity that can never admit anyone", async () => {
+    state.rooms = [{ name: SLUG, metadata: JSON.stringify({ started: true }) }]
+    state.participants = [{ identity: "user-host", metadata: meta("human") }]
+    const first = await tokenPost(tokenReq({ displayName: "Guest" }), params())
+    const firstBody = await first.json()
+    const guestIdentity = firstBody.identity as string
+    state.participants.push({
+      identity: guestIdentity,
+      metadata: meta("human"),
+    })
+    // The buggy client behavior: swap without refresh.
+    const swapped = await tokenPost(
+      tokenReq({ displayName: "Guest", rejoinToken: firstBody.token }),
+      params(),
+    )
+    const swappedBody = await swapped.json()
+    // A brand-new identity, never actually connected to the room.
+    expect(swappedBody.identity).not.toBe(guestIdentity)
+    state.participants.push({
+      identity: "user-waiter",
+      metadata: meta("waiting"),
+    })
+    const admit = await admitPost(
+      authedReq(
+        { identity: "user-waiter", action: "admit" },
+        swappedBody.token,
+      ),
+      params(),
+    )
+    expect(admit.status).toBe(403)
+  })
+})
+
 describe("doc route — membership required", () => {
   it("rejects an unauthenticated GET", async () => {
     const res = await docGet(new Request("http://x"), params())

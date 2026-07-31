@@ -10,7 +10,7 @@ import { Lobby } from "@/components/room/Lobby"
 import { MeetingView } from "@/components/room/MeetingView"
 import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
-import { track } from "@/lib/analytics"
+import { clearRoomContext, setRoomContext, track } from "@/lib/analytics"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 import {
@@ -20,6 +20,7 @@ import {
   SEND_QUALITY_RESOLUTION,
   type SendQuality,
 } from "@/stores/preferences"
+import { getRoomSnapshot, resetRoomSnapshot } from "@/stores/roomTelemetry"
 
 const queryClient = new QueryClient()
 
@@ -85,7 +86,17 @@ export function RoomClient({
     } catch {}
   }, [slug])
 
+  // Groups every event from this meeting under one opaque id; the slug
+  // itself never leaves the browser.
+  useEffect(() => {
+    setRoomContext(slug)
+    resetRoomSnapshot()
+    return () => clearRoomContext()
+  }, [slug])
+
   const joinedAtRef = useRef<number | null>(null)
+  const roleRef = useRef<"host" | "guest">("guest")
+  const waitingSinceRef = useRef<number | null>(null)
 
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
@@ -105,6 +116,7 @@ export function RoomClient({
           }),
         })
         if (res.status === 404) {
+          track("room_join_failed", { reason: "not_found" })
           toast.error(
             "This meeting doesn't exist or has already ended. Ask for a fresh link.",
           )
@@ -115,7 +127,11 @@ export function RoomClient({
           setAwaitingStart(prefs)
           return
         }
-        if (!res.ok) throw new Error(`token request failed (${res.status})`)
+        if (!res.ok) {
+          track("room_join_failed", { reason: "server" })
+          toast.error("Could not join the meeting. Please try again.")
+          return
+        }
         const token = (await res.json()) as TokenResponse
         setAwaitingStart(null)
         $isHost.set(token.isHost)
@@ -124,6 +140,7 @@ export function RoomClient({
             localStorage.setItem(`hostKey:${slug}`, token.hostKey)
           } catch {}
         }
+        roleRef.current = token.isHost ? "host" : "guest"
         try {
           sessionStorage.setItem(
             `rejoin:${slug}`,
@@ -140,8 +157,15 @@ export function RoomClient({
             via_waiting_room: false,
           })
         }
+        // Knocking is its own funnel: the entry is paired with the
+        // admission (or the abandonment) to show waiting-room drop-off.
+        if (token.waiting && !waitingSinceRef.current) {
+          waitingSinceRef.current = Date.now()
+          track("waiting_room_entered")
+        }
         setSession({ token, prefs })
       } catch {
+        track("room_join_failed", { reason: "network" })
         toast.error("Could not join the meeting. Please try again.")
       }
     },
@@ -175,6 +199,14 @@ export function RoomClient({
   const handleAdmitted = useCallback(() => {
     setAdmitted(true)
     joinedAtRef.current = Date.now()
+    if (waitingSinceRef.current) {
+      track("waiting_room_admitted", {
+        waited_seconds: Math.round(
+          (Date.now() - waitingSinceRef.current) / 1000,
+        ),
+      })
+      waitingSinceRef.current = null
+    }
     track("room_joined", { role: "guest", via_waiting_room: true })
     const current = sessionStorage.getItem(`rejoin:${slug}`)
     if (!current) return
@@ -189,6 +221,12 @@ export function RoomClient({
         body: JSON.stringify({
           displayName: stored.prefs.displayName,
           rejoinToken: stored.rejoinToken,
+          // Without this the server can't tell this apart from a brand-new
+          // joiner and mints a fresh identity that was never connected —
+          // this participant's own admit/moderate calls would then 403
+          // against the still-live LiveKit participant under the old
+          // identity (issue #192).
+          refresh: true,
         }),
       })
         .then((res) => (res.ok ? res.json() : null))
@@ -261,15 +299,47 @@ export function RoomClient({
   // leave.
   const handleLeave = useCallback(
     (reason?: DisconnectReason) => {
-      if (joinedAtRef.current) {
-        track("room_left", {
-          duration_seconds: Math.round(
-            (Date.now() - joinedAtRef.current) / 1000,
+      // Giving up while still knocking is the other half of the waiting-room
+      // funnel — without it an abandoned knock looks like nothing happened.
+      if (waitingSinceRef.current) {
+        track("waiting_room_abandoned", {
+          waited_seconds: Math.round(
+            (Date.now() - waitingSinceRef.current) / 1000,
           ),
-          reason: reason !== undefined ? DisconnectReason[reason] : "unknown",
         })
+        waitingSinceRef.current = null
+      }
+      if (joinedAtRef.current) {
+        const duration = Math.round((Date.now() - joinedAtRef.current) / 1000)
+        const stats = getRoomSnapshot()
+        track("room_left", {
+          duration_seconds: duration,
+          participant_count: stats.participantCount,
+          had_ai_agent: stats.hadAgent,
+          role: roleRef.current,
+        })
+        // The room closing is one event, not one per participant: the host
+        // reports it, and only when nobody is left behind. (A room the server
+        // reaps after everyone's browser is gone produces nothing — that needs
+        // a LiveKit webhook, which this deployment doesn't have yet.)
+        if (roleRef.current === "host" && stats.participantCount <= 1) {
+          track("room_ended", {
+            participant_count: stats.participantCount,
+            peak_participant_count: stats.peakParticipantCount,
+            duration_seconds: duration,
+            had_ai_agent: stats.hadAgent,
+            agent_count: stats.agentTypes.length,
+          })
+          for (const agentType of stats.agentTypes) {
+            track("agent_removed", {
+              agent_type: agentType,
+              reason: "call_ended",
+            })
+          }
+        }
         joinedAtRef.current = null
       }
+      resetRoomSnapshot()
       try {
         sessionStorage.removeItem(`rejoin:${slug}`)
       } catch {}

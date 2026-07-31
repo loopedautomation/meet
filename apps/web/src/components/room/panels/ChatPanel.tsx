@@ -28,6 +28,7 @@ import {
   removeChatMessage,
   updateChatMessage,
 } from "@/stores/roomData"
+import { noteAgentAsked } from "@/stores/roomTelemetry"
 
 /** "Ada is typing…", "Ada and Ben are typing…", "3 people are typing…". */
 function typingLabel(names: string[]): string {
@@ -286,7 +287,19 @@ export function ChatPanel() {
     setDraft("")
     if (typingSentAt.current) sendTyping(false)
     addChatMessage(message)
-    track("chat_message_sent")
+    // An @-mentioned agent makes this a question to that agent, not just
+    // room chatter — and starts the clock on its reply.
+    const addressed = mentionables.filter(
+      (m) => m.isAgent && text.includes(`@${m.name}`),
+    )
+    track("chat_message_sent", { is_to_agent: addressed.length > 0 })
+    for (const agent of addressed) {
+      track("agent_message_sent", {
+        agent_type: agent.agentId ?? "unknown",
+        message_length: text.length,
+      })
+    }
+    if (addressed.length > 0) noteAgentAsked(addressed[0].agentId ?? "unknown")
     await send(new TextEncoder().encode(JSON.stringify(message)), {
       topic: DataTopic.Chat,
       reliable: true,

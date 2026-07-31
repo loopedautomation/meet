@@ -5,6 +5,7 @@ import { type AgentControl, DataTopic } from "@meet/shared"
 import { useCallback } from "react"
 import { announceAgentControl } from "@/hooks/useAgentControlToasts"
 import { track } from "@/lib/analytics"
+import { getRoomSnapshot } from "@/stores/roomTelemetry"
 
 /**
  * Publishes an agent control, stamped with who pressed the button, and shows
@@ -31,7 +32,17 @@ export function useSendAgentControl(): (
         reliable: true,
       })
       announceAgentControl(stamped, agentName)
-      track("agent_control_used", { control: control.type })
+      // Each setting control carries its new value in a different field;
+      // whichever is present is the one this control changed.
+      const value =
+        control.policy ??
+        control.chattiness ??
+        (control.bargeIn === undefined ? undefined : String(control.bargeIn))
+      track("agent_control_used", { control: control.type, value })
+      track("agent_interaction", {
+        kind: "control",
+        agent_count: getRoomSnapshot().agentTypes.length,
+      })
     },
     [localParticipant, send],
   )
