@@ -216,6 +216,12 @@ export function RoomClient({
         body: JSON.stringify({
           displayName: stored.prefs.displayName,
           rejoinToken: stored.rejoinToken,
+          // Without this the server can't tell this apart from a brand-new
+          // joiner and mints a fresh identity that was never connected —
+          // this participant's own admit/moderate calls would then 403
+          // against the still-live LiveKit participant under the old
+          // identity (issue #192).
+          refresh: true,
         }),
       })
         .then((res) => (res.ok ? res.json() : null))
