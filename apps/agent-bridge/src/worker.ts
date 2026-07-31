@@ -742,6 +742,22 @@ export default defineAgent({
       )
     }
 
+    // Who most recently spoke (excluding agents) — the pipeline path's own
+    // MeetingContext.lastSpeaker below uses this to attribute every live
+    // turn, since its STT merges every human into one unattributed stream.
+    // LiveKit's own active-speaker detection, not a transcription pipeline:
+    // carries no text, so it can't duplicate anything the pipeline's STT
+    // already captures.
+    let lastSpeakerName: string | null = null
+    ctx.room.on("activeSpeakersChanged", (speakers) => {
+      const human = speakers.find(
+        (p) =>
+          p.identity !== ctx.room.localParticipant?.identity &&
+          !p.identity.startsWith("agent-"),
+      )
+      if (human) lastSpeakerName = human.name || human.identity
+    })
+
     // Meeting context: what was said before the agent joined (from the
     // control API's transcript store) plus who's in the room. Wrapping the
     // brain injects it into the first turn on every path — voice, chat
@@ -1185,7 +1201,10 @@ export default defineAgent({
         leave: () => void leaveMeeting(),
       },
       screen,
-      { roster: () => describeRoster(ctx.room) },
+      {
+        roster: () => describeRoster(ctx.room),
+        lastSpeaker: () => lastSpeakerName,
+      },
     )
 
     const session = new voice.AgentSession({
