@@ -33,6 +33,7 @@ import {
   upsertDocPresence,
 } from "@/stores/docPresence"
 import { $isHost } from "@/stores/host"
+import { openWhiteboard } from "@/stores/panels"
 import {
   addAgentActivity,
   addChatMessage,
@@ -273,10 +274,7 @@ export function RoomDataListener({ slug }: { slug: string }) {
         if (fromAgent) {
           toast.info(`${senderName} is drawing on the whiteboard`, {
             toastId: "canvas-agent-drawing",
-            onClick: () => {
-              $canvasOpen.set(true)
-              $canvasUnseen.set(false)
-            },
+            onClick: () => openWhiteboard(),
           })
         }
       }

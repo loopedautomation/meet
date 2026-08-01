@@ -20,9 +20,9 @@ import {
   Bot,
   Check,
   ChevronDown,
+  EllipsisVertical,
   FileText,
   Hand,
-  LayoutGrid,
   Link as LinkIcon,
   LogOut,
   MessageSquare,
@@ -53,7 +53,7 @@ import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
-import { $docOnStage, $openPanel, togglePanel } from "@/stores/panels"
+import { $openPanel, togglePanel, toggleWhiteboard } from "@/stores/panels"
 import { $pipWindow, closePip, openPip } from "@/stores/pip"
 import {
   $autoDataSaver,
@@ -305,7 +305,7 @@ export function ControlBar({
           >
             <button
               type="button"
-              className="btn btn-circle join-item btn-neutral"
+              className="btn btn-circle join-item btn-neutral max-sm:rounded-full"
               onClick={toggleMic}
               aria-label="Toggle microphone"
             >
@@ -317,8 +317,9 @@ export function ControlBar({
             </button>
           </div>
           {/* Noise removal and blur live in Settings — these menus are for
-              picking devices only. */}
-          <DeviceMenu kind="audioinput" />
+              picking devices only. On phones the chevrons are dropped to
+              keep the header clean; Settings still switches devices. */}
+          <DeviceMenu kind="audioinput" className="max-sm:hidden" />
         </div>
         <div className="join">
           <div
@@ -329,7 +330,7 @@ export function ControlBar({
           >
             <button
               type="button"
-              className="btn btn-circle join-item btn-neutral"
+              className="btn btn-circle join-item btn-neutral max-sm:rounded-full"
               onClick={toggleCamera}
               aria-label="Toggle camera"
             >
@@ -340,7 +341,7 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="videoinput" />
+          <DeviceMenu kind="videoinput" className="max-sm:hidden" />
         </div>
         <div
           className="tooltip tooltip-bottom"
@@ -528,16 +529,7 @@ export function ControlBar({
           <button
             type="button"
             className={`btn btn-circle indicator ${whiteboardOpen ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => {
-              const opening = !$canvasOpen.get()
-              $canvasOpen.set(opening)
-              if (opening) {
-                $canvasUnseen.set(false)
-                // The stage holds one takeover at a time.
-                $docOnStage.set(false)
-                track("whiteboard_opened")
-              }
-            }}
+            onClick={toggleWhiteboard}
             aria-label={
               agentDrawing && !whiteboardOpen
                 ? `Whiteboard — ${agentDrawing.name} is drawing`
@@ -585,9 +577,20 @@ export function ControlBar({
           {(waitingCount > 0 || canvasUnseen || agentDrawing) && (
             <span className="badge indicator-item badge-primary badge-xs" />
           )}
-          <LayoutGrid className="size-5" />
+          <EllipsisVertical className="size-5" />
         </button>
         <ul className="menu dropdown-content z-30 mt-1 w-52 rounded-box bg-base-100 p-2 shadow-lg ring-1 ring-base-300">
+          <li className="mb-1 border-base-300 border-b pb-1">
+            {/* Kept open on tap so the "Copied" confirmation is seen. */}
+            <button type="button" onClick={() => void copyLink()}>
+              {copied ? (
+                <Check className="size-4 text-success" />
+              ) : (
+                <LinkIcon className="size-4" />
+              )}
+              {copied ? "Copied" : "Copy meeting link"}
+            </button>
+          </li>
           {(
             [
               ["agents", "Agents", Bot],
@@ -622,13 +625,7 @@ export function ControlBar({
               type="button"
               className={whiteboardOpen ? "active" : ""}
               onClick={() => {
-                const opening = !$canvasOpen.get()
-                $canvasOpen.set(opening)
-                if (opening) {
-                  $canvasUnseen.set(false)
-                  $docOnStage.set(false)
-                  track("whiteboard_opened")
-                }
+                toggleWhiteboard()
                 ;(document.activeElement as HTMLElement | null)?.blur()
               }}
             >
@@ -706,9 +703,11 @@ function CallTimer({ startedAt }: { startedAt: number }) {
  */
 function DeviceMenu({
   kind,
+  className = "",
   children,
 }: {
   kind: DeviceKind
+  className?: string
   children?: React.ReactNode
 }) {
   const { devices, activeDeviceId, setActiveMediaDevice } =
@@ -721,7 +720,7 @@ function DeviceMenu({
 
   return (
     <div
-      className="dropdown dropdown-bottom"
+      className={`dropdown dropdown-bottom ${className}`}
       onFocusCapture={() => setOpen(true)}
       onBlurCapture={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
