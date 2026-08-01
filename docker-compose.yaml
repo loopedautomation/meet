@@ -67,6 +67,24 @@ services:
       retries: 5
     restart: unless-stopped
 
+  postgres:
+    image: postgres:17-alpine
+    <<: *local-env
+    environment:
+      POSTGRES_USER: meet
+      POSTGRES_DB: meet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meet-dev-only}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    # Compose-network only — no host port. The debug override publishes
+    # 127.0.0.1:5432 for the host-run web dev server.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meet -d meet"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   web:
     image: ghcr.io/loopedautomation/meet-web:${IMAGE_TAG:-latest}
     pull_policy: always
@@ -75,12 +93,17 @@ services:
     <<: *local-env
     # All app config and secrets come from Infisical in production, or from
     # the root .env locally — never set them here, or they'd shadow the
-    # injected values.
+    # injected values. DATABASE_URL is the one exception: like LIVEKIT_CONFIG
+    # it's stack topology, and its default points at the stack's own postgres.
+    # Override via the host env / .env only to use an external database.
     environment:
       <<: *infisical
       INFISICAL_SECRETS_PATH: "/apps/web /shared"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://meet:${POSTGRES_PASSWORD:-meet-dev-only}@postgres:5432/meet}
     depends_on:
       livekit:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test:
@@ -145,3 +168,4 @@ services:
 
 volumes:
   demo-agent-data:
+  pg-data:
