@@ -1,4 +1,4 @@
-import { and, asc, eq, getDb, isNull, schema, sql } from "@meet/db"
+import { and, asc, eq, getDb, inArray, isNull, schema } from "@meet/db"
 import { customAlphabet } from "nanoid"
 
 // Lowercase alphanumeric so the LiveKit room name ch-<publicId> passes
@@ -86,7 +86,16 @@ export async function createChannel(opts: {
   return channel
 }
 
-export type ChannelWithPresence = Channel & { occupants: number }
+export type Occupant = {
+  identity: string
+  name: string | null
+  kind: string | null
+}
+
+export type ChannelWithPresence = Channel & {
+  occupants: number
+  occupantList: Occupant[]
+}
 
 /** Channels this member can see, with live occupancy from room_presence
  * (fed by the LiveKit webhook — humans and agents count, services don't). */
@@ -97,11 +106,6 @@ export async function listChannelsForUser(
   const rows = await db
     .select({
       channel: schema.channels,
-      occupants: sql<number>`(
-        select count(*)::int from room_presence rp
-        where rp.room_name = ${sql.raw(`'${CHANNEL_ROOM_PREFIX}'`)} || ${schema.channels.publicId}
-          and rp.kind is distinct from 'service'
-      )`,
       memberRow: schema.channelMembers.userId,
     })
     .from(schema.channels)
@@ -114,7 +118,27 @@ export async function listChannelsForUser(
     )
     .where(isNull(schema.channels.archivedAt))
     .orderBy(asc(schema.channels.position), asc(schema.channels.createdAt))
-  return rows
-    .filter((r) => !r.channel.isPrivate || r.memberRow !== null)
-    .map((r) => ({ ...r.channel, occupants: r.occupants }))
+  const visible = rows.filter(
+    (r) => !r.channel.isPrivate || r.memberRow !== null,
+  )
+  if (visible.length === 0) return []
+
+  // One presence fetch for every visible channel's room; services stay
+  // invisible here just like everywhere else in the product.
+  const roomNames = visible.map((r) => channelRoomName(r.channel))
+  const presence = await db
+    .select()
+    .from(schema.roomPresence)
+    .where(inArray(schema.roomPresence.roomName, roomNames))
+  const byRoom = new Map<string, Occupant[]>()
+  for (const p of presence) {
+    if (p.kind === "service") continue
+    const list = byRoom.get(p.roomName) ?? []
+    list.push({ identity: p.identity, name: p.displayName, kind: p.kind })
+    byRoom.set(p.roomName, list)
+  }
+  return visible.map((r) => {
+    const occupantList = byRoom.get(channelRoomName(r.channel)) ?? []
+    return { ...r.channel, occupants: occupantList.length, occupantList }
+  })
 }

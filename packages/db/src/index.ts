@@ -60,6 +60,14 @@ export function pgErrorCode(err: unknown): string | undefined {
   return undefined
 }
 
+/** A dedicated raw connection (LISTEN/NOTIFY, advisory locks) — callers own
+ * its lifecycle; never use for regular queries, the pool handles those. */
+export function createPgClient(): pg.Client {
+  const url = process.env.DATABASE_URL
+  if (!url) throw new Error("DATABASE_URL is not set")
+  return new pg.Client({ connectionString: url })
+}
+
 export async function closeDb(): Promise<void> {
   await pool?.end()
   pool = null

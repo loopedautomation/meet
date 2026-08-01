@@ -35,6 +35,7 @@ export async function GET() {
       isPrivate: c.isPrivate,
       room: channelRoomName(c),
       occupants: c.occupants,
+      occupantList: c.occupantList,
     })),
   })
 }

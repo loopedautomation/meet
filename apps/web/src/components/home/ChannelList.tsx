@@ -1,9 +1,15 @@
 "use client"
 
-import { Hash, Plus, Users, Volume2 } from "lucide-react"
+import { Bot, Hash, Plus, Volume2 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+
+type Occupant = {
+  identity: string
+  name: string | null
+  kind: string | null
+}
 
 type ChannelRow = {
   slug: string
@@ -13,18 +19,20 @@ type ChannelRow = {
   isPrivate: boolean
   room: string
   occupants: number
+  occupantList: Occupant[]
 }
 
 /**
- * The Phase 0 channel list: deliberately plain — the Phase 1 sidebar with
- * live presence subscriptions replaces it. Occupancy refreshes on a slow
- * poll of the channel list (room_presence-backed).
+ * The channel sidebar: live occupancy via the presence SSE stream ("3
+ * people + Scout in #standup"), with a slow poll as fallback when the
+ * stream can't hold. One click joins.
  */
 export function ChannelList({ canCreate }: { canCreate: boolean }) {
   const router = useRouter()
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [creating, setCreating] = useState(false)
   const [newSlug, setNewSlug] = useState("")
+  const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -36,9 +44,33 @@ export function ChannelList({ canCreate }: { canCreate: boolean }) {
   }, [])
 
   useEffect(() => {
-    void load()
-    const timer = setInterval(() => void load(), 15_000)
-    return () => clearInterval(timer)
+    let source: EventSource | null = null
+    const startPolling = () => {
+      if (pollTimer.current) return
+      void load()
+      pollTimer.current = setInterval(() => void load(), 15_000)
+    }
+    try {
+      source = new EventSource("/api/presence/stream")
+      source.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data) as { channels: ChannelRow[] }
+          setChannels(data.channels)
+        } catch {}
+      }
+      source.onerror = () => {
+        // The browser retries SSE on its own; polling covers the gap and
+        // stops mattering once events flow again.
+        startPolling()
+      }
+    } catch {
+      startPolling()
+    }
+    return () => {
+      source?.close()
+      if (pollTimer.current) clearInterval(pollTimer.current)
+      pollTimer.current = null
+    }
   }, [load])
 
   const create = async (e: React.FormEvent) => {
@@ -80,21 +112,32 @@ export function ChannelList({ canCreate }: { canCreate: boolean }) {
           <li key={c.slug}>
             <button
               type="button"
-              className="flex items-center justify-between"
+              className="flex flex-col items-stretch gap-1"
               onClick={() => router.push(`/c/${c.slug}`)}
             >
-              <span className="flex items-center gap-2">
-                {c.kind === "voice" ? (
-                  <Volume2 className="size-4 text-base-content/60" />
-                ) : (
-                  <Hash className="size-4 text-base-content/60" />
+              <span className="flex items-center justify-between">
+                <span className="flex items-center gap-2 font-medium">
+                  {c.kind === "voice" ? (
+                    <Volume2 className="size-4 text-base-content/60" />
+                  ) : (
+                    <Hash className="size-4 text-base-content/60" />
+                  )}
+                  {c.slug}
+                </span>
+                {c.occupants > 0 && (
+                  <span className="badge badge-soft badge-primary badge-sm">
+                    {c.occupants}
+                  </span>
                 )}
-                {c.slug}
               </span>
-              {c.occupants > 0 && (
-                <span className="badge badge-soft badge-primary badge-sm gap-1">
-                  <Users className="size-3" />
-                  {c.occupants}
+              {c.occupantList.length > 0 && (
+                <span className="flex flex-wrap gap-x-2 gap-y-0.5 pl-6 text-base-content/60 text-xs">
+                  {c.occupantList.map((o) => (
+                    <span key={o.identity} className="flex items-center gap-1">
+                      {o.kind === "agent" && <Bot className="size-3" />}
+                      {o.name ?? "someone"}
+                    </span>
+                  ))}
                 </span>
               )}
             </button>
