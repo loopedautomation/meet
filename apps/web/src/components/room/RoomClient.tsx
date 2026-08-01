@@ -12,6 +12,7 @@ import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
 import { clearRoomContext, setRoomContext, track } from "@/lib/analytics"
 import { consumeExplicitLeave } from "@/lib/leaveIntent"
+import { $channelRoom } from "@/stores/channelContext"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 import {
@@ -109,6 +110,13 @@ export function RoomClient({
     resetRoomSnapshot()
     return () => clearRoomContext()
   }, [slug])
+
+  // Channel sessions expose their room to the chat panel, which hydrates
+  // and persists the channel's text sidecar.
+  useEffect(() => {
+    $channelRoom.set(mode === "channel" ? slug : null)
+    return () => $channelRoom.set(null)
+  }, [mode, slug])
 
   const joinedAtRef = useRef<number | null>(null)
   const roleRef = useRef<"host" | "guest">("guest")
