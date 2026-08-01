@@ -17,6 +17,14 @@ export type AgentInteractionKind = "control" | "push_to_talk"
 type Events = {
   room_created: undefined
   room_joined: { role: "host" | "guest"; via_waiting_room: boolean }
+  /**
+   * One active period of a room, bounded by the host: fired when the host
+   * arrives in a room that wasn't already running. `room_session_id` is a
+   * random id shared with the matching room_ended, so a room that is rejoined
+   * later produces a second started→ended pair instead of an invisible
+   * second meeting.
+   */
+  meeting_started: { room_session_id: string }
   room_join_failed: { reason: "not_found" | "network" | "server" }
   room_left: {
     duration_seconds: number
@@ -25,6 +33,8 @@ type Events = {
     role: "host" | "guest"
   }
   room_ended: {
+    /** Pairs this end with the meeting_started of the same active period. */
+    room_session_id: string
     participant_count: number
     peak_participant_count: number
     duration_seconds: number
