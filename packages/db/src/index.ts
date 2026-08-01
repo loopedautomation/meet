@@ -4,6 +4,10 @@ import * as schema from "./schema"
 
 export * as schema from "./schema"
 
+// Query helpers re-exported so consumers never depend on drizzle directly —
+// the ORM stays an implementation detail of this package.
+export { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm"
+
 export type Db = NodePgDatabase<typeof schema>
 
 let pool: pg.Pool | null = null

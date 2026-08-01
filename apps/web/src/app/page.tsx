@@ -1,7 +1,9 @@
-import { Bot, MessagesSquare, Wrench } from "lucide-react"
+import { Bot, LogIn, MessagesSquare, Wrench } from "lucide-react"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import { HomeActions } from "@/components/home/HomeActions"
+import { authMode } from "@/lib/server/authMode"
+import { getSessionUser } from "@/lib/server/session"
 
 const features = [
   {
@@ -21,12 +23,52 @@ const features = [
   },
 ]
 
-export default function HomePage() {
+export default async function HomePage() {
+  const withAccounts = authMode() === "auth0"
+  const user = withAccounts ? await getSessionUser() : null
   return (
     <main className="mx-auto flex min-h-dvh max-w-5xl flex-col px-6">
       <header className="flex items-center justify-between py-6">
         <Wordmark />
-        <ThemeToggle />
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          {withAccounts &&
+            (user ? (
+              <div className="dropdown dropdown-end">
+                <button
+                  type="button"
+                  tabIndex={0}
+                  className="btn btn-ghost btn-sm gap-2"
+                >
+                  {user.image ? (
+                    <img
+                      src={user.image}
+                      alt=""
+                      className="size-6 rounded-full"
+                    />
+                  ) : null}
+                  <span className="max-w-32 truncate">
+                    {user.name ?? user.email ?? "Account"}
+                  </span>
+                </button>
+                <ul className="dropdown-content menu z-10 mt-2 w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow">
+                  {!user.role && (
+                    <li className="menu-title text-xs">
+                      Not a member yet — ask for an invite
+                    </li>
+                  )}
+                  <li>
+                    <a href="/auth/logout">Sign out</a>
+                  </li>
+                </ul>
+              </div>
+            ) : (
+              <a href="/auth/login" className="btn btn-ghost btn-sm">
+                <LogIn className="size-4" />
+                Sign in
+              </a>
+            ))}
+        </div>
       </header>
 
       <section className="flex flex-1 flex-col items-center justify-center gap-8 py-16 text-center">

@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@auth0/nextjs-auth0": "^4.26.0",
     "@excalidraw/excalidraw": "0.18.1",
     "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
     "@livekit/components-react": "catalog:",
