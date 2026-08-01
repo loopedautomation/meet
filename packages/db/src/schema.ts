@@ -111,6 +111,26 @@ export const channelMembers = pgTable(
   (t) => [primaryKey({ columns: [t.channelId, t.userId] })],
 )
 
+// Agents assigned to a channel: auto-dispatched when the first human joins,
+// parked when the room empties (end-when-empty tears the room down and the
+// agent with it). agent_id references the bridge's registry, not a table.
+export const channelAgents = pgTable(
+  "channel_agents",
+  {
+    channelId: uuid("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    addedBy: uuid("added_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    addedAt: timestamp("added_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.channelId, t.agentId] })],
+)
+
 // Designed now, written from Phase 2 (text channels) and the Phase 1 text
 // sidecar. Ids are supplied by the app as UUIDv7 so pagination follows time.
 export const messages = pgTable(

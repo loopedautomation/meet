@@ -1,8 +1,10 @@
+import { eq, getDb, schema } from "@meet/db"
 import type { ParticipantMeta, RoomMetadata } from "@meet/shared"
 import { parseParticipantMeta, tokenRequestSchema } from "@meet/shared"
 import { AccessToken } from "livekit-server-sdk"
 import { NextResponse } from "next/server"
 import { authMode } from "@/lib/server/authMode"
+import { bridgeFetch } from "@/lib/server/bridge"
 import {
   canAccessChannel,
   channelRoomName,
@@ -13,6 +15,30 @@ import { getMemberUser } from "@/lib/server/session"
 import { deriveHostKey } from "@/lib/server/slug"
 
 type Params = { params: Promise<{ room: string }> }
+
+/** Fire-and-forget: never blocks the join. A failed dispatch means the
+ * agent misses this occupancy window; the next first-join retries. */
+async function dispatchAssignedAgents(
+  channelId: string,
+  roomName: string,
+): Promise<void> {
+  try {
+    const assigned = await getDb()
+      .select({ agentId: schema.channelAgents.agentId })
+      .from(schema.channelAgents)
+      .where(eq(schema.channelAgents.channelId, channelId))
+    await Promise.allSettled(
+      assigned.map(({ agentId }) =>
+        bridgeFetch(`/rooms/${roomName}/agents/${agentId}`, {
+          method: "POST",
+          signal: AbortSignal.timeout(10_000),
+        }),
+      ),
+    )
+  } catch (err) {
+    console.error("channel agent dispatch failed", err)
+  }
+}
 
 /**
  * The channel join path. Deliberately not the meeting token route: a channel
@@ -93,12 +119,15 @@ export async function POST(request: Request, { params }: Params) {
 
   // First human in re-anchors the channel's call timer, matching meeting
   // semantics — a channel occupied all day keeps one clock; an empty channel
-  // joined fresh starts from 0:00.
+  // joined fresh starts from 0:00. It also wakes the channel's assigned
+  // agents: they're members, present whenever anyone is, parked when the
+  // empty room is torn down.
   if (participantCount === 0) {
     roomMeta = { ...roomMeta, startedAt: Date.now() }
     await roomService()
       .updateRoomMetadata(roomName, JSON.stringify(roomMeta))
       .catch(() => undefined)
+    void dispatchAssignedAgents(channel.id, roomName)
   }
 
   // Channel moderation is role-based: owners/admins get host powers (and the
