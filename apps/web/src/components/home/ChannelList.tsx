@@ -119,6 +119,7 @@ export function ChannelList({ canCreate }: { canCreate: boolean }) {
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [creating, setCreating] = useState(false)
   const [newSlug, setNewSlug] = useState("")
+  const [newKind, setNewKind] = useState<"voice" | "text">("voice")
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async () => {
@@ -169,7 +170,7 @@ export function ChannelList({ canCreate }: { canCreate: boolean }) {
       const res = await fetch("/api/channels", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ slug }),
+        body: JSON.stringify({ slug, kind: newKind }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -236,6 +237,14 @@ export function ChannelList({ canCreate }: { canCreate: boolean }) {
       </ul>
       {canCreate && (
         <form onSubmit={create} className="mt-3 flex items-center gap-2">
+          <select
+            className="select select-sm w-24"
+            value={newKind}
+            onChange={(e) => setNewKind(e.target.value as "voice" | "text")}
+          >
+            <option value="voice">Voice</option>
+            <option value="text">Text</option>
+          </select>
           <input
             className="input input-sm flex-1"
             placeholder="new-channel-name"

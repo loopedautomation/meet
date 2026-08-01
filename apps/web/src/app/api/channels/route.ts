@@ -14,6 +14,7 @@ import { getMemberUser } from "@/lib/server/session"
 const createChannelSchema = z.object({
   slug: z.string(),
   name: z.string().min(1).max(80).optional(),
+  kind: z.enum(["voice", "text"]).optional(),
   topic: z.string().max(500).optional(),
   isPrivate: z.boolean().optional(),
 })
@@ -72,6 +73,7 @@ export async function POST(request: Request) {
     const channel = await createChannel({
       slug: body.data.slug,
       name: body.data.name ?? `#${body.data.slug}`,
+      kind: body.data.kind,
       topic: body.data.topic,
       isPrivate: body.data.isPrivate,
       createdBy: user.id,
