@@ -364,6 +364,15 @@ export const roomMetadataSchema = z.object({
    */
   hostIdentity: z.string().optional(),
   settings: roomSettingsSchema.optional(),
+  /**
+   * Channel-backed rooms: kind "channel" marks a LiveKit room that belongs
+   * to a persistent channel (room name ch-<publicId>). The room is
+   * disposable — recreated on join, GC'd when empty — while the channel row
+   * in Postgres is the durable thing. Absent kind = a meeting room (legacy
+   * and current meetings alike).
+   */
+  kind: z.enum(["meeting", "channel"]).optional(),
+  channelId: z.string().optional(),
 })
 export type RoomMetadata = z.infer<typeof roomMetadataSchema>
 

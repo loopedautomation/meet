@@ -1,6 +1,7 @@
 import { Bot, LogIn, MessagesSquare, Wrench } from "lucide-react"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
+import { ChannelList } from "@/components/home/ChannelList"
 import { HomeActions } from "@/components/home/HomeActions"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
@@ -70,6 +71,16 @@ export default async function HomePage() {
             ))}
         </div>
       </header>
+
+      {user?.role && (
+        <section className="flex flex-col items-center gap-3 pt-10">
+          <h2 className="font-semibold text-lg">Channels</h2>
+          <ChannelList canCreate={user.role !== "member"} />
+          <div className="divider mx-auto w-full max-w-md text-base-content/40 text-xs">
+            or start an ad-hoc meeting
+          </div>
+        </section>
+      )}
 
       <section className="flex flex-1 flex-col items-center justify-center gap-8 py-16 text-center">
         <span className="badge badge-soft badge-primary">

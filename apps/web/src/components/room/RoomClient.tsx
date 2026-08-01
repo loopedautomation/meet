@@ -62,9 +62,15 @@ export type JoinPreferences = {
 export function RoomClient({
   slug,
   shareBase,
+  mode = "meeting",
 }: {
   slug: string
   shareBase?: string
+  // Channel mode: same room UI, different join contract — the channel token
+  // route never 425s and never returns waiting, so the start-gate and
+  // waiting-room branches below simply never activate. Membership required:
+  // a 401 sends the visitor through login instead of the guest lobby flow.
+  mode?: "meeting" | "channel"
 }) {
   // Surface connection diagnostics in the console; full debug via env flag.
   useEffect(() => {
@@ -114,6 +120,13 @@ export function RoomClient({
   // never one a newer tab (DUPLICATE_IDENTITY takeover) wrote after us.
   const lastRejoinTokenRef = useRef<string | null>(null)
 
+  // Channel rooms mint tokens from the channel route (membership-gated, no
+  // start gate); meetings keep theirs. Everything else in here is shared.
+  const tokenEndpoint =
+    mode === "channel"
+      ? `/api/channels/${slug}/token`
+      : `/api/rooms/${slug}/token`
+
   const handleJoin = useCallback(
     async (prefs: JoinPreferences, rejoinToken?: string) => {
       setAdmitted(false)
@@ -122,7 +135,7 @@ export function RoomClient({
         hostKey = localStorage.getItem(`hostKey:${slug}`) ?? undefined
       } catch {}
       try {
-        const res = await fetch(`/api/rooms/${slug}/token`, {
+        const res = await fetch(tokenEndpoint, {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -131,10 +144,19 @@ export function RoomClient({
             hostKey,
           }),
         })
+        if (res.status === 401 && mode === "channel") {
+          // Channels are members-only: route through login and back.
+          window.location.href = `/auth/login?returnTo=${encodeURIComponent(
+            window.location.pathname,
+          )}`
+          return
+        }
         if (res.status === 404) {
           track("room_join_failed", { reason: "not_found" })
           toast.error(
-            "This meeting doesn't exist or has already ended. Ask for a fresh link.",
+            mode === "channel"
+              ? "This channel doesn't exist (or you don't have access to it)."
+              : "This meeting doesn't exist or has already ended. Ask for a fresh link.",
           )
           return
         }
@@ -198,7 +220,7 @@ export function RoomClient({
         toast.error("Could not join the meeting. Please try again.")
       }
     },
-    [slug],
+    [slug, mode, tokenEndpoint],
   )
 
   // A refresh rejoins the meeting automatically; only an explicit leave (or a
@@ -320,7 +342,7 @@ export function RoomClient({
             rejoinToken?: string
           }
           if (!stored.rejoinToken) return
-          void fetch(`/api/rooms/${slug}/token`, {
+          void fetch(tokenEndpoint, {
             method: "POST",
             headers: { "content-type": "application/json" },
             body: JSON.stringify({
@@ -354,7 +376,7 @@ export function RoomClient({
       40 * 60 * 1000,
     )
     return () => clearInterval(timer)
-  }, [session, slug, noteRefreshFailure])
+  }, [session, slug, tokenEndpoint, noteRefreshFailure])
 
   // A disconnect fires for an explicit "Leave", a transient network drop, AND
   // a page reload/tab close — LiveKit calls disconnect() on both
