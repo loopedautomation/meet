@@ -1,0 +1,15 @@
+{
+  "name": "@meet/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "looped meet desktop — connect to your team server (self-hosted or hosted)",
+  "main": "src/main.js",
+  "scripts": {
+    "dev": "electron .",
+    "package": "electron-builder --config electron-builder.yml"
+  },
+  "devDependencies": {
+    "electron": "^38.2.0",
+    "electron-builder": "^26.0.12"
+  }
+}
