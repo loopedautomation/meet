@@ -3,6 +3,7 @@ import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import { ChannelList } from "@/components/home/ChannelList"
 import { HomeActions } from "@/components/home/HomeActions"
+import { StatusEditor } from "@/components/home/StatusEditor"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
 
@@ -52,10 +53,16 @@ export default async function HomePage() {
                     {user.name ?? user.email ?? "Account"}
                   </span>
                 </button>
-                <ul className="dropdown-content menu z-10 mt-2 w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow">
+                <ul className="dropdown-content menu z-10 mt-2 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow">
                   {!user.role && (
                     <li className="menu-title text-xs">
                       Not a member yet — ask for an invite
+                    </li>
+                  )}
+                  {user.role && <StatusEditor />}
+                  {(user.role === "owner" || user.role === "admin") && (
+                    <li>
+                      <a href="/admin">Server admin</a>
                     </li>
                   )}
                   <li>

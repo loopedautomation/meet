@@ -1,4 +1,4 @@
-import { and, asc, eq, getDb, isNull, schema, uuidv7 } from "@meet/db"
+import { and, asc, eq, getDb, inArray, isNull, schema, uuidv7 } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -8,7 +8,10 @@ import { getMemberUser } from "@/lib/server/session"
 
 type Params = { params: Promise<{ room: string }> }
 
-const sendSchema = z.object({ text: z.string().min(1).max(8000) })
+const sendSchema = z.object({
+  text: z.string().min(1).max(8000),
+  replyToId: z.string().uuid().optional(),
+})
 
 // The channel's text sidecar, v1: append-only history so the chat survives
 // the room emptying. Live delivery stays on the LiveKit data channel;
@@ -28,12 +31,15 @@ export async function GET(_request: Request, { params }: Params) {
   if (!channel || !(await canAccessChannel(channel, user.id))) {
     return NextResponse.json({ error: "channel not found" }, { status: 404 })
   }
-  const rows = await getDb()
+  const db = getDb()
+  const rows = await db
     .select({
       id: schema.messages.id,
       authorUserId: schema.messages.authorUserId,
       authorAgentId: schema.messages.authorAgentId,
       content: schema.messages.content,
+      replyToId: schema.messages.replyToId,
+      pinnedAt: schema.messages.pinnedAt,
       createdAt: schema.messages.createdAt,
       editedAt: schema.messages.editedAt,
       authorName: schema.users.name,
@@ -48,6 +54,30 @@ export async function GET(_request: Request, { params }: Params) {
     )
     .orderBy(asc(schema.messages.createdAt))
     .limit(100)
+  const reactionRows = rows.length
+    ? await db
+        .select()
+        .from(schema.messageReactions)
+        .where(
+          inArray(
+            schema.messageReactions.messageId,
+            rows.map((r) => r.id),
+          ),
+        )
+    : []
+  // emoji → count per message, plus which the viewer set.
+  const reactionsFor = new Map<
+    string,
+    Record<string, { count: number; mine: boolean }>
+  >()
+  for (const r of reactionRows) {
+    const byEmoji = reactionsFor.get(r.messageId) ?? {}
+    const entry = byEmoji[r.emoji] ?? { count: 0, mine: false }
+    entry.count += 1
+    if (r.userId === user.id) entry.mine = true
+    byEmoji[r.emoji] = entry
+    reactionsFor.set(r.messageId, byEmoji)
+  }
   return NextResponse.json({
     messages: rows.map((r) => ({
       id: r.id,
@@ -58,6 +88,10 @@ export async function GET(_request: Request, { params }: Params) {
       text: r.content,
       at: r.createdAt.getTime(),
       ...(r.editedAt ? { editedAt: r.editedAt.getTime() } : {}),
+      ...(r.replyToId ? { replyToId: r.replyToId } : {}),
+      ...(r.pinnedAt ? { pinned: true } : {}),
+      reactions: reactionsFor.get(r.id) ?? {},
+      own: r.authorUserId === user.id,
     })),
   })
 }
@@ -81,12 +115,15 @@ export async function POST(request: Request, { params }: Params) {
   if (!body.success)
     return NextResponse.json({ error: "text required" }, { status: 400 })
   const id = uuidv7()
-  await getDb().insert(schema.messages).values({
-    id,
-    channelId: channel.id,
-    authorUserId: user.id,
-    authorKind: "user",
-    content: body.data.text,
-  })
+  await getDb()
+    .insert(schema.messages)
+    .values({
+      id,
+      channelId: channel.id,
+      authorUserId: user.id,
+      authorKind: "user",
+      content: body.data.text,
+      replyToId: body.data.replyToId ?? null,
+    })
   return NextResponse.json({ ok: true, id })
 }

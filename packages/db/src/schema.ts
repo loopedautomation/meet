@@ -22,6 +22,8 @@ export const users = pgTable("users", {
   email: text("email"),
   name: text("name"),
   image: text("image"),
+  // Custom status ("in deep work", "back at 3") shown next to the name.
+  statusText: text("status_text"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -81,6 +83,10 @@ export const channels = pgTable(
     kind: text("kind").notNull().default("voice"),
     topic: text("topic"),
     isPrivate: boolean("is_private").notNull().default(false),
+    // DMs are private text channels between a fixed set of members, with a
+    // deterministic slug (dm-<hash of member ids>) so the same people always
+    // land in the same conversation.
+    isDm: boolean("is_dm").notNull().default(false),
     position: integer("position").notNull().default(0),
     createdBy: uuid("created_by").references(() => users.id, {
       onDelete: "set null",
@@ -147,6 +153,7 @@ export const messages = pgTable(
     authorAgentId: text("author_agent_id"),
     content: text("content").notNull(),
     replyToId: uuid("reply_to_id"),
+    pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -155,11 +162,50 @@ export const messages = pgTable(
   },
   (t) => [
     index("messages_channel_created_idx").on(t.channelId, t.createdAt.desc()),
+    // Search v1: instance-wide full-text over message content.
+    index("messages_content_fts_idx").using(
+      "gin",
+      sql`to_tsvector('english', ${t.content})`,
+    ),
     check(
       "messages_author_kind_check",
       sql`${t.authorKind} in ('user', 'agent', 'system')`,
     ),
   ],
+)
+
+export const messageReactions = pgTable(
+  "message_reactions",
+  {
+    messageId: uuid("message_id")
+      .notNull()
+      .references(() => messages.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    emoji: text("emoji").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.messageId, t.userId, t.emoji] })],
+)
+
+// Unread markers: where each member last caught up in each channel.
+export const channelReads = pgTable(
+  "channel_reads",
+  {
+    channelId: uuid("channel_id")
+      .notNull()
+      .references(() => channels.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    lastReadAt: timestamp("last_read_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.channelId, t.userId] })],
 )
 
 // Written solely by the LiveKit webhook handler; the sidebar reads it.
@@ -191,6 +237,8 @@ export const instanceSettings = pgTable(
     name: text("name"),
     iconUrl: text("icon_url"),
     registration: text("registration").notNull().default("invite"),
+    // Message retention in days; null keeps everything forever.
+    retentionDays: integer("retention_days"),
   },
   (t) => [
     check("instance_settings_singleton", sql`${t.id} = 1`),

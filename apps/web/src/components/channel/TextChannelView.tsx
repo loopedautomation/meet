@@ -1,34 +1,66 @@
 "use client"
 
-import type { ChatMessage } from "@meet/shared"
-import { ArrowLeft, Hash, PhoneCall, SendHorizontal } from "lucide-react"
+import {
+  ArrowLeft,
+  Hash,
+  Pencil,
+  PhoneCall,
+  Pin,
+  Reply,
+  SendHorizontal,
+  Trash2,
+  Users,
+  X,
+} from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { Markdown } from "@/components/Markdown"
 
+const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
+
+type ChannelMessage = {
+  id: string
+  from: string
+  fromName: string
+  text: string
+  at: number
+  editedAt?: number
+  replyToId?: string
+  pinned?: boolean
+  reactions: Record<string, { count: number; mine: boolean }>
+  own: boolean
+}
+
 /**
- * A text channel: the persistent conversation is the room. History and
- * sends go through the channel messages API (Postgres); a light poll keeps
- * the view fresh — the realtime upgrade (SSE/data-channel fan-out) comes
- * with the full Phase 2 message model. "Start a huddle" flips into the
- * channel's own voice room: every text channel already has one, the
- * Slack-huddle escalation is just opening it.
+ * A text channel or DM: the persistent conversation is the room. History,
+ * sends, edits, deletes, reactions and pins all go through the channel
+ * messages API (Postgres); a light poll keeps the view fresh. "Start a
+ * huddle" flips into the channel's own voice room — every text channel and
+ * DM owns one, so the Slack-huddle escalation is just opening it.
  */
 export function TextChannelView({
   room,
   slug,
+  label,
+  canModerate,
 }: {
   room: string
   slug: string
+  /** Display label — #slug for channels, peer names for DMs. */
+  label: string
+  canModerate: boolean
 }) {
   const router = useRouter()
-  const [messages, setMessages] = useState<ChatMessage[] | null>(null)
+  const [messages, setMessages] = useState<ChannelMessage[] | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
+  const [editing, setEditing] = useState<ChannelMessage | null>(null)
+  const [replyTo, setReplyTo] = useState<ChannelMessage | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
+  const markedRead = useRef(false)
 
   const load = useCallback(async () => {
     try {
@@ -40,8 +72,14 @@ export function TextChannelView({
         return
       }
       if (!res.ok) return
-      const data = (await res.json()) as { messages: ChatMessage[] }
+      const data = (await res.json()) as { messages: ChannelMessage[] }
       setMessages(data.messages)
+      if (!markedRead.current) {
+        markedRead.current = true
+        void fetch(`/api/channels/${room}/read`, { method: "POST" }).catch(
+          () => {},
+        )
+      }
     } catch {}
   }, [room])
 
@@ -62,21 +100,62 @@ export function TextChannelView({
     if (!text || sending) return
     setSending(true)
     try {
-      const res = await fetch(`/api/channels/${room}/messages`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text }),
-      })
+      const res = editing
+        ? await fetch(`/api/channels/${room}/messages/${editing.id}`, {
+            method: "PATCH",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text }),
+          })
+        : await fetch(`/api/channels/${room}/messages`, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ text, replyToId: replyTo?.id }),
+          })
       if (!res.ok) {
         toast.error("Could not send the message.")
         return
       }
       setDraft("")
+      setEditing(null)
+      setReplyTo(null)
+      // Mark caught-up on your own send.
+      void fetch(`/api/channels/${room}/read`, { method: "POST" }).catch(
+        () => {},
+      )
       await load()
     } finally {
       setSending(false)
     }
   }
+
+  const react = async (m: ChannelMessage, emoji: string) => {
+    await fetch(`/api/channels/${room}/messages/${m.id}/reactions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ emoji }),
+    }).catch(() => {})
+    await load()
+  }
+
+  const remove = async (m: ChannelMessage) => {
+    const res = await fetch(`/api/channels/${room}/messages/${m.id}`, {
+      method: "DELETE",
+    }).catch(() => null)
+    if (!res?.ok) toast.error("Could not delete the message.")
+    await load()
+  }
+
+  const togglePin = async (m: ChannelMessage) => {
+    await fetch(`/api/channels/${room}/messages/${m.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: !m.pinned }),
+    }).catch(() => {})
+    await load()
+  }
+
+  const byId = new Map((messages ?? []).map((m) => [m.id, m]))
+  const pinned = (messages ?? []).filter((m) => m.pinned)
 
   return (
     <main className="mx-auto flex h-dvh max-w-3xl flex-col px-4">
@@ -91,8 +170,12 @@ export function TextChannelView({
             <ArrowLeft className="size-4" />
           </button>
           <span className="flex items-center gap-1 font-semibold">
-            <Hash className="size-4 text-base-content/60" />
-            {slug}
+            {label.startsWith("#") ? (
+              <Hash className="size-4 text-base-content/60" />
+            ) : (
+              <Users className="size-4 text-base-content/60" />
+            )}
+            {label.replace(/^#/, "")}
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -109,6 +192,13 @@ export function TextChannelView({
           </span>
         </div>
       </header>
+
+      {pinned.length > 0 && (
+        <div className="border-base-300 border-b bg-base-200/30 px-2 py-1.5 text-xs">
+          <Pin className="mr-1 inline size-3" />
+          {pinned[pinned.length - 1].text.slice(0, 120)}
+        </div>
+      )}
 
       <ul
         className="flex-1 overflow-y-auto py-4"
@@ -128,9 +218,17 @@ export function TextChannelView({
           </li>
         ) : (
           messages.map((m, i) => {
-            const grouped = i > 0 && messages[i - 1].from === m.from
+            const grouped =
+              i > 0 && messages[i - 1].from === m.from && !m.replyToId
+            const parent = m.replyToId ? byId.get(m.replyToId) : undefined
             return (
-              <li key={m.id} className={grouped ? "mt-0.5" : "mt-3"}>
+              <li key={m.id} className={`group ${grouped ? "mt-0.5" : "mt-3"}`}>
+                {parent && (
+                  <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
+                    <span className="font-medium">{parent.fromName}</span>:{" "}
+                    {parent.text.slice(0, 80)}
+                  </div>
+                )}
                 {!grouped && (
                   <div className="text-xs">
                     <span className="font-medium">{m.fromName}</span>
@@ -140,9 +238,90 @@ export function TextChannelView({
                         minute: "2-digit",
                       })}
                     </span>
+                    {m.editedAt && (
+                      <span className="ml-1 text-base-content/40">
+                        (edited)
+                      </span>
+                    )}
+                    {m.pinned && (
+                      <Pin className="ml-1 inline size-3 text-primary" />
+                    )}
                   </div>
                 )}
-                <Markdown text={m.text} className="text-sm" />
+                <div className="flex items-start justify-between gap-2">
+                  <Markdown text={m.text} className="min-w-0 text-sm" />
+                  <span className="invisible flex shrink-0 items-center group-hover:visible">
+                    {QUICK_EMOJI.slice(0, 3).map((e) => (
+                      <button
+                        key={e}
+                        type="button"
+                        className="btn btn-ghost btn-xs px-1"
+                        onClick={() => void react(m, e)}
+                      >
+                        {e}
+                      </button>
+                    ))}
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-xs px-1"
+                      title="Reply"
+                      onClick={() => {
+                        setReplyTo(m)
+                        setEditing(null)
+                      }}
+                    >
+                      <Reply className="size-3.5" />
+                    </button>
+                    {m.own && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs px-1"
+                        title="Edit"
+                        onClick={() => {
+                          setEditing(m)
+                          setReplyTo(null)
+                          setDraft(m.text)
+                        }}
+                      >
+                        <Pencil className="size-3.5" />
+                      </button>
+                    )}
+                    {canModerate && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs px-1"
+                        title={m.pinned ? "Unpin" : "Pin"}
+                        onClick={() => void togglePin(m)}
+                      >
+                        <Pin className="size-3.5" />
+                      </button>
+                    )}
+                    {(m.own || canModerate) && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs px-1"
+                        title="Delete"
+                        onClick={() => void remove(m)}
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    )}
+                  </span>
+                </div>
+                {Object.keys(m.reactions).length > 0 && (
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {Object.entries(m.reactions).map(([emoji, r]) => (
+                      <button
+                        key={emoji}
+                        type="button"
+                        className={`badge badge-sm cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
+                        onClick={() => void react(m, emoji)}
+                      >
+                        {emoji} {r.count}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </li>
             )
           })
@@ -150,13 +329,33 @@ export function TextChannelView({
         <div ref={bottomRef} />
       </ul>
 
+      {(replyTo || editing) && (
+        <div className="flex items-center justify-between rounded-t-box bg-base-200/60 px-3 py-1 text-xs">
+          <span className="truncate">
+            {editing
+              ? "Editing message"
+              : `Replying to ${replyTo?.fromName}: ${replyTo?.text.slice(0, 60)}`}
+          </span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-xs btn-square"
+            onClick={() => {
+              setReplyTo(null)
+              setEditing(null)
+              setDraft("")
+            }}
+          >
+            <X className="size-3.5" />
+          </button>
+        </div>
+      )}
       <form
         onSubmit={send}
         className="flex items-center gap-2 border-base-300 border-t py-3"
       >
         <input
           className="input w-full"
-          placeholder={`Message #${slug}`}
+          placeholder={`Message ${label}`}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
         />

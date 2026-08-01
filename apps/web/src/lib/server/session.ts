@@ -54,6 +54,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     where: eq(schema.memberships.userId, user.id),
   })
   if (!membership) membership = await claimOwnerIfFirst(user.id)
+  if (!membership) membership = await joinIfPublic(user.id)
 
   return {
     id: user.id,
@@ -79,6 +80,22 @@ async function claimOwnerIfFirst(userId: string) {
     returning user_id, role, created_at
   `)
   if (inserted.rows.length === 0) return undefined
+  return await db.query.memberships.findFirst({
+    where: eq(schema.memberships.userId, userId),
+  })
+}
+
+/** Public-server mode (Phase 3): when the instance's registration is
+ * "open", signing in IS joining — still the member's own action, no invite
+ * needed. Private (invite) instances never reach this. */
+async function joinIfPublic(userId: string) {
+  const db = getDb()
+  const settings = await db.query.instanceSettings.findFirst()
+  if (settings?.registration !== "open") return undefined
+  await db
+    .insert(schema.memberships)
+    .values({ userId, role: "member" })
+    .onConflictDoNothing()
   return await db.query.memberships.findFirst({
     where: eq(schema.memberships.userId, userId),
   })

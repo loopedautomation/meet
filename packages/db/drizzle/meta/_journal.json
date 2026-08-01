@@ -15,6 +15,13 @@
       "when": 1785614745334,
       "tag": "0001_dark_xorn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785619355266,
+      "tag": "0002_blushing_salo",
+      "breakpoints": true
     }
   ]
 }

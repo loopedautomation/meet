@@ -57,4 +57,28 @@ export async function registerNode(): Promise<void> {
   const { runMigrations } = await import("@meet/db/migrate")
   await runMigrations(migrationsFolder)
   console.log("db: migrations up to date")
+  startRetentionSweeper()
+}
+
+// Data lifecycle: when the instance sets a retention window, expired
+// messages are hard-deleted (reactions cascade). Runs at boot and daily —
+// coarse on purpose; retention is a policy, not a stopwatch.
+function startRetentionSweeper(): void {
+  const sweep = async () => {
+    try {
+      const { getDb, schema, lt } = await import("@meet/db")
+      const db = getDb()
+      const settings = await db.query.instanceSettings.findFirst()
+      const days = settings?.retentionDays
+      if (!days) return
+      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+      await db
+        .delete(schema.messages)
+        .where(lt(schema.messages.createdAt, cutoff))
+    } catch (err) {
+      console.error("retention sweep failed", err)
+    }
+  }
+  void sweep()
+  setInterval(() => void sweep(), 24 * 60 * 60 * 1000).unref?.()
 }

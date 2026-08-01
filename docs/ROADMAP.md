@@ -213,3 +213,20 @@ The biggest gap vs Slack: persistent text.
    per-team instance on our infra, free at launch — how automated does
    that need to be on day one (manual/scripted is fine early)? Billing
    (per instance) is deferred until there's something worth charging for.
+3. **Guests in channels**: cal.com bookings can't point at channels until
+   external attendees can enter one — channels are members-only today, and
+   booking invitees are guests by definition. Needs a guest-access design
+   (time-boxed voice-only invite links?) before the cal.com integration
+   moves off per-booking rooms.
+
+## Deliberately not built yet (needs a decision or external work)
+
+- **Attachments** — wants an S3-compatible storage choice per instance.
+- **Web push** — wants VAPID keys and a notification-scope decision;
+  desktop-shell notifications cover the near-term need.
+- **Agent workflows in text channels & channel-scoped agent memory** —
+  brain/bridge work in the agent-framework repo, not this one.
+- **Stage mode, breakout channels, noise gate defaults** — voice niceties,
+  deferred.
+- **Cross-instance shared channels / control plane** — only if real demand
+  shows up.

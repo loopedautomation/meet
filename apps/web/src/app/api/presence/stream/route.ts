@@ -2,6 +2,7 @@ import { createPgClient } from "@meet/db"
 import { NextResponse } from "next/server"
 import { authMode } from "@/lib/server/authMode"
 import { channelRoomName, listChannelsForUser } from "@/lib/server/channels"
+import { onlineConnect, onlineDisconnect } from "@/lib/server/onlineRegistry"
 import { PRESENCE_NOTIFY_CHANNEL } from "@/lib/server/presence"
 import { getMemberUser } from "@/lib/server/session"
 
@@ -55,6 +56,7 @@ export async function GET() {
         }
       }
 
+      onlineConnect(user.id)
       try {
         await listener.connect()
         listener.on("notification", () => {
@@ -80,6 +82,7 @@ export async function GET() {
     },
     cancel() {
       closed = true
+      onlineDisconnect(user.id)
       if (heartbeat) clearInterval(heartbeat)
       if (debounce) clearTimeout(debounce)
       void listener.end().catch(() => {})
