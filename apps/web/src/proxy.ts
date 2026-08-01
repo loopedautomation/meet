@@ -15,7 +15,8 @@ export async function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     // Skip static assets entirely; API routes and pages resolve sessions
-    // themselves via the session seam.
-    "/((?!_next/static|_next/image|favicon.ico|icon.png|stt/|ingest/).*)",
+    // themselves via the session seam. The LiveKit webhook is server-to-
+    // server (JWT-signed body, no cookies) — never route it through auth.
+    "/((?!_next/static|_next/image|favicon.ico|icon.png|stt/|ingest/|api/livekit/webhook).*)",
   ],
 }

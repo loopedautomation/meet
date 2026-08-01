@@ -2,11 +2,22 @@ import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres"
 import pg from "pg"
 import * as schema from "./schema"
 
-export * as schema from "./schema"
-
 // Query helpers re-exported so consumers never depend on drizzle directly —
 // the ORM stays an implementation detail of this package.
-export { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from "drizzle-orm"
+export {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm"
+export * as schema from "./schema"
 
 export type Db = NodePgDatabase<typeof schema>
 
@@ -33,6 +44,20 @@ export function getDb(): Db {
     db = drizzle(pool, { schema })
   }
   return db
+}
+
+/** The Postgres error code (e.g. 23505 unique_violation, 23503 foreign_key_
+ * violation) from an error thrown by a query — drizzle wraps the driver
+ * error, so walk the cause chain. */
+export function pgErrorCode(err: unknown): string | undefined {
+  let e = err
+  for (let depth = 0; depth < 5 && e && typeof e === "object"; depth++) {
+    if ("code" in e && typeof e.code === "string" && /^\d{5}$/.test(e.code)) {
+      return e.code
+    }
+    e = (e as { cause?: unknown }).cause
+  }
+  return undefined
 }
 
 export async function closeDb(): Promise<void> {

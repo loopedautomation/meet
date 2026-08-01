@@ -1,3 +1,4 @@
+import { pgErrorCode } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -81,12 +82,7 @@ export async function POST(request: Request) {
     })
   } catch (err) {
     // Unique violation on the slug — the only expected conflict.
-    if (
-      err &&
-      typeof err === "object" &&
-      "code" in err &&
-      err.code === "23505"
-    ) {
+    if (pgErrorCode(err) === "23505") {
       return NextResponse.json(
         { error: "a channel with that slug exists" },
         { status: 409 },
