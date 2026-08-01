@@ -7,6 +7,7 @@ import { NextResponse } from "next/server"
 import { isKicked } from "@/lib/server/kicked"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
+import { getMemberUser } from "@/lib/server/session"
 import {
   deriveHostKey,
   isRecreatableRoomSlug,
@@ -43,6 +44,11 @@ export async function POST(request: Request, { params }: Params) {
   if (!body.success) {
     return NextResponse.json({ error: "displayName required" }, { status: 400 })
   }
+
+  // Signed-in members carry their account into the room; guests (or
+  // MEET_AUTH_MODE=none deployments) resolve to null and take the exact
+  // pre-accounts path everywhere below.
+  const member = await getMemberUser().catch(() => null)
 
   // Meeting codes are durable: LiveKit garbage-collects empty rooms after a
   // few minutes, so a link recreates its room on demand — in the not-started
@@ -94,7 +100,12 @@ export async function POST(request: Request, { params }: Params) {
   } catch {}
   // Against the derived key, never a metadata copy — metadata is public to
   // the room, so a key read from it would authorise the people it gates.
-  const isCreator = keyMatches(body.data.hostKey, deriveHostKey(slug))
+  // Instance owners/admins count as creator for any meeting room: they can
+  // start and host meetings without hunting for the derived key.
+  const isCreator =
+    keyMatches(body.data.hostKey, deriveHostKey(slug)) ||
+    member?.role === "owner" ||
+    member?.role === "admin"
 
   // Count humans already inside — a lingering transcriber or agent must never
   // count, so joining "alone with the transcriber" still reads as an empty
@@ -214,10 +225,18 @@ export async function POST(request: Request, { params }: Params) {
   // LiveKit-side per-identity state (raised hand, agent assignment). Only
   // honored with verified, admitted proof — never from the request body
   // alone; see the verification block above.
-  const identity = rejoinIdentity ?? `user-${nanoid(10)}`
+  // Members get a stable identity derived from their account — presence
+  // resolves to a real person, and rejoining any room continues the same
+  // participant. LiveKit preempts an older connection with the same identity
+  // in the same room, so a member opening a second tab into one room bumps
+  // the first (one active connection per member per room — intended).
+  // Guests keep the ephemeral form; the prefixes can't collide.
+  const identity =
+    rejoinIdentity ?? (member ? `u_${member.id}` : `user-${nanoid(10)}`)
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),
+    ...(member ? { userId: member.id, role: member.role ?? undefined } : {}),
   }
   const token = new AccessToken(apiKey, apiSecret, {
     identity,

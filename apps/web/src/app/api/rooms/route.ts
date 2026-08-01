@@ -2,25 +2,30 @@ import { timingSafeEqual } from "node:crypto"
 import { NextResponse } from "next/server"
 import { roomService } from "@/lib/server/livekit"
 import { roomShareUrl } from "@/lib/server/roomUrl"
+import { getMemberUser } from "@/lib/server/session"
 import { deriveHostKey, generateRoomSlug } from "@/lib/server/slug"
 
 /**
  * Meeting creation is gated by a management password when
  * MEET_MANAGEMENT_PASSWORD is set: only people who have it can create rooms;
  * anyone with a room link can still join freely. Leave it unset for a fully
- * open deployment.
+ * open deployment. A signed-in instance member is always authorized — the
+ * password stays for headless flows (cal.com, scripts) and accountless
+ * deployments.
  */
-function authorized(request: Request): boolean {
+async function authorized(request: Request): Promise<boolean> {
   const required = process.env.MEET_MANAGEMENT_PASSWORD
   if (!required) return true
   const given = request.headers.get("x-management-password") ?? ""
   const a = Buffer.from(given)
   const b = Buffer.from(required)
-  return a.length === b.length && timingSafeEqual(a, b)
+  if (a.length === b.length && timingSafeEqual(a, b)) return true
+  const member = await getMemberUser().catch(() => null)
+  return member !== null
 }
 
 export async function POST(request: Request) {
-  if (!authorized(request)) {
+  if (!(await authorized(request))) {
     return NextResponse.json(
       { error: "management password required" },
       { status: 401 },
