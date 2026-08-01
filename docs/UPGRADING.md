@@ -20,8 +20,9 @@ compatibility below.
 ### Upgrade steps
 
 1. `git pull` (or `docker compose pull` on prebuilt images)
-2. Production only: set `POSTGRES_PASSWORD` to a real secret (the
-   `meet-dev-only` default is refused in production).
+2. Production: set `POSTGRES_PASSWORD` to a real secret. The default is
+   tolerated (postgres is never published to the host) but warned about on
+   every boot; a weak `AUTH0_SECRET` is refused outright in production.
 3. `docker compose up -d`
 
 That's it for the accountless product: no login UI appears, `/r/<slug>`
