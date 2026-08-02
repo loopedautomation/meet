@@ -2,13 +2,14 @@ import { eq, getDb, inArray, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
-import { findOrCreateDm } from "@/lib/server/channels"
+import { findOrCreateAgentDm, findOrCreateDm } from "@/lib/server/channels"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import { getMemberUser } from "@/lib/server/session"
 
-const createDmSchema = z.object({
-  userIds: z.array(z.string().uuid()).min(1).max(9),
-})
+const createDmSchema = z.union([
+  z.object({ userIds: z.array(z.string().uuid()).min(1).max(9) }),
+  z.object({ agentId: z.string().regex(/^[a-z0-9-]+$/) }),
+])
 
 /** Open (or create) the DM between you and the given members — always the
  * same conversation for the same people. */
@@ -23,7 +24,24 @@ export async function POST(request: Request) {
   }
   const body = createDmSchema.safeParse(await request.json().catch(() => null))
   if (!body.success)
-    return NextResponse.json({ error: "userIds required" }, { status: 400 })
+    return NextResponse.json(
+      { error: "userIds or agentId required" },
+      { status: 400 },
+    )
+  // DM an agent: it must be invited to the server first.
+  if ("agentId" in body.data) {
+    const invited = await getDb().query.serverAgents.findFirst({
+      where: eq(schema.serverAgents.agentId, body.data.agentId),
+    })
+    if (!invited) {
+      return NextResponse.json(
+        { error: "agent not on this server" },
+        { status: 404 },
+      )
+    }
+    const dm = await findOrCreateAgentDm(user.id, body.data.agentId)
+    return NextResponse.json({ slug: dm.slug })
+  }
   const others = body.data.userIds.filter((id) => id !== user.id)
   if (others.length === 0) {
     return NextResponse.json(

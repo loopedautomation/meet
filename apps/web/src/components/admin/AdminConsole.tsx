@@ -47,17 +47,36 @@ export function AdminConsole({
   const [settings, setSettings] = useState<Settings | null>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
+  const [roster, setRoster] = useState<{ id: string; name?: string }[]>([])
+  const [serverAgents, setServerAgents] = useState<string[]>([])
 
   const load = useCallback(async () => {
-    const [s, m, i] = await Promise.all([
+    const [s, m, i, r, sa] = await Promise.all([
       fetch("/api/admin/settings").then((r) => (r.ok ? r.json() : null)),
       fetch("/api/members").then((r) => (r.ok ? r.json() : { members: [] })),
       fetch("/api/invites").then((r) => (r.ok ? r.json() : { invites: [] })),
+      fetch("/api/agents").then((r) => (r.ok ? r.json() : { agents: [] })),
+      fetch("/api/agents/server").then((r) =>
+        r.ok ? r.json() : { agents: [] },
+      ),
     ])
     if (s) setSettings(s)
     setMembers(m.members ?? [])
     setInvites(i.invites ?? [])
+    setRoster(r.agents ?? [])
+    setServerAgents((sa.agents ?? []).map((a: { id: string }) => a.id))
   }, [])
+
+  const toggleAgent = async (agentId: string) => {
+    const invited = serverAgents.includes(agentId)
+    const res = await fetch("/api/agents/server", {
+      method: invited ? "DELETE" : "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ agentId }),
+    })
+    if (!res.ok) toast.error("Could not update the server's agents.")
+    await load()
+  }
 
   useEffect(() => {
     void load()
@@ -282,6 +301,38 @@ export function AdminConsole({
               </li>
             ))}
           </ul>
+        </div>
+      </section>
+
+      <section className="card card-border bg-base-200/20">
+        <div className="card-body gap-2">
+          <h2 className="card-title text-base">Agents</h2>
+          <p className="text-base-content/60 text-xs">
+            Invited agents are DMable and can join group chats and channels.
+            Every registry agent is already offered inside meetings.
+          </p>
+          {roster.length === 0 ? (
+            <p className="text-base-content/50 text-sm">
+              No agents registered on the bridge.
+            </p>
+          ) : (
+            <ul className="divide-y divide-base-300">
+              {roster.map((a) => (
+                <li
+                  key={a.id}
+                  className="flex items-center justify-between py-2 text-sm"
+                >
+                  <span>{a.name ?? a.id}</span>
+                  <input
+                    type="checkbox"
+                    className="toggle toggle-sm"
+                    checked={serverAgents.includes(a.id)}
+                    onChange={() => void toggleAgent(a.id)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </section>
 

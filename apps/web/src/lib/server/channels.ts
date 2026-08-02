@@ -130,6 +130,50 @@ export async function findOrCreateDm(memberIds: string[]): Promise<Channel> {
   })
 }
 
+/** A DM with an agent: you're the only human member; the agent is attached
+ * via channel_agents and answers every message. Deterministic like any DM. */
+export async function findOrCreateAgentDm(
+  userId: string,
+  agentId: string,
+): Promise<Channel> {
+  const slug = `dm-${createHash("sha256").update(`u:${userId}:a:${agentId}`).digest("hex").slice(0, 16)}`
+  const db = getDb()
+  const existing = await db.query.channels.findFirst({
+    where: eq(schema.channels.slug, slug),
+  })
+  if (existing) return existing
+  return await db.transaction(async (tx) => {
+    const [channel] = await tx
+      .insert(schema.channels)
+      .values({
+        publicId: publicId(),
+        slug,
+        name: "Direct message",
+        kind: "text",
+        isPrivate: true,
+        isDm: true,
+      })
+      .onConflictDoNothing({ target: schema.channels.slug })
+      .returning()
+    if (!channel) {
+      const winner = await tx.query.channels.findFirst({
+        where: eq(schema.channels.slug, slug),
+      })
+      if (!winner) throw new Error("agent dm creation raced and lost")
+      return winner
+    }
+    await tx
+      .insert(schema.channelMembers)
+      .values({ channelId: channel.id, userId })
+      .onConflictDoNothing()
+    await tx
+      .insert(schema.channelAgents)
+      .values({ channelId: channel.id, agentId, addedBy: userId })
+      .onConflictDoNothing()
+    return channel
+  })
+}
+
 export type Occupant = {
   identity: string
   name: string | null
@@ -175,7 +219,7 @@ export async function listChannelsForUser(
   // invisible here just like everywhere else in the product.
   const roomNames = visible.map((r) => channelRoomName(r.channel))
   const channelIds = visible.map((r) => r.channel.id)
-  const [presence, dmPeerRows, activity, reads] = await Promise.all([
+  const [presence, dmPeerRows, activity, reads, agentRows] = await Promise.all([
     db
       .select()
       .from(schema.roomPresence)
@@ -212,6 +256,19 @@ export async function listChannelsForUser(
           eq(schema.channelReads.userId, userId),
         ),
       ),
+    // Agents attached to DMs label the conversation ("Scout").
+    db
+      .select({
+        channelId: schema.channelAgents.channelId,
+        agentId: schema.channelAgents.agentId,
+        agentName: schema.serverAgents.name,
+      })
+      .from(schema.channelAgents)
+      .leftJoin(
+        schema.serverAgents,
+        eq(schema.serverAgents.agentId, schema.channelAgents.agentId),
+      )
+      .where(inArray(schema.channelAgents.channelId, channelIds)),
   ])
   const byRoom = new Map<string, Occupant[]>()
   for (const p of presence) {
@@ -225,6 +282,11 @@ export async function listChannelsForUser(
     if (row.userId === userId) continue
     const list = peersByChannel.get(row.channelId) ?? []
     list.push(row.name ?? row.email ?? "someone")
+    peersByChannel.set(row.channelId, list)
+  }
+  for (const row of agentRows) {
+    const list = peersByChannel.get(row.channelId) ?? []
+    list.push(row.agentName ?? row.agentId)
     peersByChannel.set(row.channelId, list)
   }
   const lastActivity = new Map(

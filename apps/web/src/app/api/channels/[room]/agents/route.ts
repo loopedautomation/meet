@@ -2,7 +2,7 @@ import { and, eq, getDb, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
-import { getChannelByRoomName } from "@/lib/server/channels"
+import { canAccessChannel, getChannelByRoomName } from "@/lib/server/channels"
 import { getMemberUser } from "@/lib/server/session"
 
 type Params = { params: Promise<{ room: string }> }
@@ -28,20 +28,25 @@ export async function GET(_request: Request, { params }: Params) {
 }
 
 /** Assign an agent to the channel — it becomes a member: dispatched when
- * the first human joins, parked when the channel empties. Admin+. */
+ * the first human joins (voice), answering messages (text). Admin+ for
+ * shared channels; in a DM or group chat, its members decide who's in the
+ * conversation — including agents. */
 export async function POST(request: Request, { params }: Params) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
   if (!user)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
-  if (user.role === "member") {
-    return NextResponse.json({ error: "admin required" }, { status: 403 })
-  }
   const { room } = await params
   const channel = await getChannelByRoomName(room)
   if (!channel)
     return NextResponse.json({ error: "channel not found" }, { status: 404 })
+  const allowed = channel.isDm
+    ? await canAccessChannel(channel, user.id)
+    : user.role !== "member"
+  if (!allowed) {
+    return NextResponse.json({ error: "not authorized" }, { status: 403 })
+  }
   const body = agentIdSchema.safeParse(await request.json().catch(() => null))
   if (!body.success)
     return NextResponse.json({ error: "agentId required" }, { status: 400 })
@@ -56,20 +61,23 @@ export async function POST(request: Request, { params }: Params) {
   return NextResponse.json({ ok: true })
 }
 
-/** Unassign. Admin+. */
+/** Unassign — same rule as assigning. */
 export async function DELETE(request: Request, { params }: Params) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
   if (!user)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
-  if (user.role === "member") {
-    return NextResponse.json({ error: "admin required" }, { status: 403 })
-  }
   const { room } = await params
   const channel = await getChannelByRoomName(room)
   if (!channel)
     return NextResponse.json({ error: "channel not found" }, { status: 404 })
+  const allowed = channel.isDm
+    ? await canAccessChannel(channel, user.id)
+    : user.role !== "member"
+  if (!allowed) {
+    return NextResponse.json({ error: "not authorized" }, { status: 403 })
+  }
   const body = agentIdSchema.safeParse(await request.json().catch(() => null))
   if (!body.success)
     return NextResponse.json({ error: "agentId required" }, { status: 400 })

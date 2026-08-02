@@ -4,6 +4,7 @@ import {
   check,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   text,
@@ -117,6 +118,21 @@ export const channelMembers = pgTable(
   (t) => [primaryKey({ columns: [t.channelId, t.userId] })],
 )
 
+// Agents invited to the server: DMable, addable to group chats, listed in
+// the directory. agent_id references the bridge's registry. Meeting rooms
+// keep offering the full registry roster regardless — this table gates the
+// text surfaces.
+export const serverAgents = pgTable("server_agents", {
+  agentId: text("agent_id").primaryKey(),
+  // Snapshot of the registry name at invite time — labels (DM lists) read
+  // it without a bridge roundtrip.
+  name: text("name"),
+  addedBy: uuid("added_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
+})
+
 // Agents assigned to a channel: auto-dispatched when the first human joins,
 // parked when the room empties (end-when-empty tears the room down and the
 // agent with it). agent_id references the bridge's registry, not a table.
@@ -153,6 +169,10 @@ export const messages = pgTable(
     authorAgentId: text("author_agent_id"),
     content: text("content").notNull(),
     replyToId: uuid("reply_to_id"),
+    // [{ key, name, type, size }] — objects live in S3-compatible storage
+    // (R2 for the hosted offering); the key is served through the
+    // membership-checked attachments route, never directly.
+    attachments: jsonb("attachments"),
     pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

@@ -1,6 +1,7 @@
 import { and, asc, eq, getDb, inArray, isNull, schema, uuidv7 } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
+import { respondAsAgents } from "@/lib/server/agentChat"
 import { authMode } from "@/lib/server/authMode"
 import { canAccessChannel, getChannelByRoomName } from "@/lib/server/channels"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
@@ -125,5 +126,12 @@ export async function POST(request: Request, { params }: Params) {
       content: body.data.text,
       replyToId: body.data.replyToId ?? null,
     })
+  // Agents that belong to this channel get their turn (DMs always;
+  // shared channels on @mention). Never blocks the send.
+  void respondAsAgents(
+    channel,
+    body.data.text,
+    user.name ?? user.email ?? "someone",
+  )
   return NextResponse.json({ ok: true, id })
 }

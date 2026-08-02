@@ -22,6 +22,20 @@
       "when": 1785619355266,
       "tag": "0002_blushing_salo",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785658954188,
+      "tag": "0003_rich_mephisto",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785658987278,
+      "tag": "0004_bizarre_speed_demon",
+      "breakpoints": true
     }
   ]
 }
