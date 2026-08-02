@@ -210,15 +210,19 @@ export function TextChannelView({
           )}
           {label.replace(/^#/, "")}
         </span>
-        <button
-          type="button"
-          className="btn btn-primary btn-sm"
-          // The huddle opens in its own tab so the conversation stays put.
-          onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
-        >
-          <PhoneCall className="size-4" />
-          Start a huddle
-        </button>
+        {/* Huddles are a DM escalation only — text channels stay text;
+            voice belongs in voice channels. */}
+        {!label.startsWith("#") && (
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            // The huddle opens in its own tab so the conversation stays put.
+            onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+          >
+            <PhoneCall className="size-4" />
+            Start a huddle
+          </button>
+        )}
       </header>
 
       {pinned.length > 0 && (

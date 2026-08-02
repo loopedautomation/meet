@@ -14,6 +14,7 @@ import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { AgentAssign } from "./AgentAssign"
+import { CreateChannelModal } from "./CreateChannelModal"
 import { DmStart } from "./DmStart"
 import { type Presence, ProfileCard } from "./ProfileCard"
 import { SearchBox } from "./SearchBox"
@@ -63,10 +64,7 @@ export function AppSidebar({
   const pathname = usePathname()
   const canCreate = user.role !== "member"
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
-  const [creating, setCreating] = useState(false)
   const [showCreate, setShowCreate] = useState(false)
-  const [newSlug, setNewSlug] = useState("")
-  const [newKind, setNewKind] = useState<"voice" | "text">("text")
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async () => {
@@ -108,31 +106,6 @@ export function AppSidebar({
     }
   }, [load])
 
-  const create = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const slug = newSlug.trim().toLowerCase()
-    if (!slug) return
-    setCreating(true)
-    try {
-      const res = await fetch("/api/channels", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ slug, kind: newKind }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) {
-        toast.error(data.error ?? "Could not create the channel.")
-        return
-      }
-      setNewSlug("")
-      setShowCreate(false)
-      await load()
-      router.push(`/c/${slug}`)
-    } finally {
-      setCreating(false)
-    }
-  }
-
   const mintInvite = async () => {
     const res = await fetch("/api/invites", {
       method: "POST",
@@ -166,6 +139,37 @@ export function AppSidebar({
   const panel = railChoice ?? (activeDmRoute ? "dms" : "server")
   const dmUnread = dms.some((c) => c.unread)
   const serverUnread = regular.some((c) => c.unread)
+
+  // Resizable inner panel — clamped, remembered across sessions.
+  const MIN_PANEL = 200
+  const MAX_PANEL = 420
+  const [panelWidth, setPanelWidth] = useState(240)
+  useEffect(() => {
+    try {
+      const w = Number(localStorage.getItem("sidebarWidth"))
+      if (w >= MIN_PANEL && w <= MAX_PANEL) setPanelWidth(w)
+    } catch {}
+  }, [])
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const startX = e.clientX
+    const startW = panelWidth
+    const clamp = (w: number) => Math.min(MAX_PANEL, Math.max(MIN_PANEL, w))
+    const move = (ev: PointerEvent) =>
+      setPanelWidth(clamp(startW + ev.clientX - startX))
+    const up = (ev: PointerEvent) => {
+      window.removeEventListener("pointermove", move)
+      window.removeEventListener("pointerup", up)
+      try {
+        localStorage.setItem(
+          "sidebarWidth",
+          String(clamp(startW + ev.clientX - startX)),
+        )
+      } catch {}
+    }
+    window.addEventListener("pointermove", move)
+    window.addEventListener("pointerup", up)
+  }
 
   const railButton = (active: boolean) =>
     `relative flex size-11 items-center justify-center rounded-2xl transition-all ${
@@ -206,7 +210,10 @@ export function AppSidebar({
       </div>
 
       {/* Swappable panel + shared footer */}
-      <div className="flex h-full w-60 flex-col border-base-300 border-r bg-base-200/40">
+      <div
+        className="relative flex h-full flex-col border-base-300 border-r bg-base-200/40"
+        style={{ width: panelWidth }}
+      >
         {panel === "server" ? (
           <>
             {/* Server header — the server-level menu (admin, invites) */}
@@ -272,42 +279,6 @@ export function AppSidebar({
                   </button>
                 )}
               </div>
-              {showCreate && (
-                <form
-                  onSubmit={create}
-                  className="mb-2 flex flex-col gap-2 px-1"
-                >
-                  <div className="flex gap-2">
-                    <select
-                      className="select select-xs w-20"
-                      value={newKind}
-                      onChange={(e) =>
-                        setNewKind(e.target.value as "voice" | "text")
-                      }
-                    >
-                      <option value="text">Text</option>
-                      <option value="voice">Voice</option>
-                    </select>
-                    <input
-                      className="input input-xs flex-1"
-                      placeholder="new-channel"
-                      value={newSlug}
-                      onChange={(e) => setNewSlug(e.target.value)}
-                    />
-                  </div>
-                  <button
-                    type="submit"
-                    className="btn btn-xs btn-primary"
-                    disabled={creating || !newSlug.trim()}
-                  >
-                    {creating ? (
-                      <span className="loading loading-spinner loading-xs" />
-                    ) : (
-                      "Create"
-                    )}
-                  </button>
-                </form>
-              )}
               {channels === null ? (
                 <span className="loading loading-spinner loading-sm mx-2" />
               ) : (
@@ -429,7 +400,23 @@ export function AppSidebar({
             }}
           />
         </div>
+
+        {/* Drag handle — resize the panel within [MIN_PANEL, MAX_PANEL] */}
+        {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only resize affordance; keyboard users can't need it — width is cosmetic */}
+        <div
+          className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40"
+          onPointerDown={startResize}
+        />
       </div>
+
+      <CreateChannelModal
+        isOpen={showCreate}
+        onClose={() => setShowCreate(false)}
+        onCreated={(slug) => {
+          void load()
+          router.push(`/c/${slug}`)
+        }}
+      />
     </aside>
   )
 }
