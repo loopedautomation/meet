@@ -27,21 +27,48 @@
     </style>
   </head>
   <body>
-    <h1>Connect to your team server</h1>
-    <p>
-      Enter the address of a looped meet instance — self-hosted on your own
-      box, or a hosted team server.
-    </p>
-    <form id="form">
-      <input id="url" type="text" placeholder="https://meet.yourteam.com" autofocus />
-      <button id="go" type="submit">Connect</button>
-    </form>
+    <div id="step-connect">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+        <h1>Connect to your team server</h1>
+        <p>
+          Enter the address of a looped meet instance — self-hosted on your own
+          box, or a hosted team server.
+        </p>
+        <form id="form">
+          <input id="url" type="text" placeholder="https://meet.yourteam.com" autofocus />
+          <button id="go" type="submit">Connect</button>
+        </form>
+      </div>
+    </div>
+    <div id="step-signin" hidden>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+        <h1>Sign in</h1>
+        <p>
+          Sign in with your browser — it already knows you. You'll be sent
+          right back here.
+        </p>
+        <button id="browser-signin" type="button">Sign in with browser</button>
+        <p>Got a code from the browser instead? Paste it here.</p>
+        <form id="code-form">
+          <input id="code" type="text" placeholder="paste code" autocomplete="off" />
+          <button id="code-go" type="submit">Continue</button>
+        </form>
+      </div>
+    </div>
     <div id="error"></div>
     <script>
       const form = document.getElementById("form")
       const input = document.getElementById("url")
       const go = document.getElementById("go")
       const error = document.getElementById("error")
+      const stepConnect = document.getElementById("step-connect")
+      const stepSignin = document.getElementById("step-signin")
+      // The main process opens this window straight at the sign-in step
+      // when a server is saved but the shell is signed out.
+      if (new URLSearchParams(location.search).get("step") === "signin") {
+        stepConnect.hidden = true
+        stepSignin.hidden = false
+      }
       form.addEventListener("submit", async (e) => {
         e.preventDefault()
         let value = input.value.trim()
@@ -53,7 +80,30 @@
         if (!result.ok) {
           error.textContent = result.error
           go.disabled = false
+          return
         }
+        if (result.needsSignIn) {
+          stepConnect.hidden = true
+          stepSignin.hidden = false
+          go.disabled = false
+        }
+        // Otherwise the main process has already opened the workspace.
+      })
+
+      document.getElementById("browser-signin").addEventListener("click", async () => {
+        error.textContent = ""
+        const result = await window.meetShell.signInWithBrowser()
+        if (!result.ok) error.textContent = result.error
+      })
+
+      document.getElementById("code-form").addEventListener("submit", async (e) => {
+        e.preventDefault()
+        const code = document.getElementById("code").value.trim()
+        if (!code) return
+        error.textContent = ""
+        const result = await window.meetShell.submitAuthCode(code)
+        if (!result.ok) error.textContent = result.error
+        // On success the main process closes this window.
       })
     </script>
   </body>

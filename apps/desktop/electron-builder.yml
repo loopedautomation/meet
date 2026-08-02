@@ -9,3 +9,6 @@ files:
   - package.json
 mac:
   category: public.app-category.productivity
+protocols:
+  - name: looped meet
+    schemes: [looped-meet]

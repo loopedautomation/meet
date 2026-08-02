@@ -7,6 +7,7 @@
   "packageManager": "pnpm@10.12.1",
   "scripts": {
     "dev": "./scripts/dev-env.sh && docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml up -d --build --force-recreate --remove-orphans livekit agent-bridge demo-agent postgres && (docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml stop web >/dev/null 2>&1 || true) && DATABASE_URL=\"${DATABASE_URL:-postgresql://meet:meet-dev-only@127.0.0.1:55432/meet}\" infisical run --projectId=396f8208-593a-4966-8943-97621affc25a --env=dev --path=/apps/web --path=/shared -- pnpm --filter @meet/web dev",
+    "dev:desktop": "pnpm --filter @meet/desktop dev",
     "dev:stack": "./scripts/dev-env.sh && docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml up --build",
     "dev:up": "./scripts/dev-env.sh && docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml up -d --build && echo \"\\n  \u279c http://localhost:3000  (management password: dev)\\n\"",
     "dev:logs": "docker compose -f docker-compose.yaml -f docker-compose.build.yaml -f docker-compose.debug.yaml logs -f agent-bridge web",
