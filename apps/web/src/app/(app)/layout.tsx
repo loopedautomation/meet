@@ -31,6 +31,7 @@ export default async function AppLayout({
           name: user.name,
           email: user.email,
           image: user.image,
+          presence: (user.presence as "active" | "away" | "dnd") ?? "active",
           role: user.role,
         }}
         serverName={settings?.name ?? "looped meet"}

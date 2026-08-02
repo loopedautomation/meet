@@ -7,9 +7,12 @@ import { storageConfigured } from "@/lib/server/storage"
 
 export const dynamic = "force-dynamic"
 
-const patchSchema = z.object({ statusText: z.string().max(80).nullable() })
+const patchSchema = z.object({
+  statusText: z.string().max(80).nullable().optional(),
+  presence: z.enum(["active", "away", "dnd"]).optional(),
+})
 
-/** Set your custom status ("in deep work", "back at 3"). */
+/** Set your presence indicator (active/away/dnd) or custom status text. */
 export async function PATCH(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
@@ -17,11 +20,16 @@ export async function PATCH(request: Request) {
   if (!user)
     return NextResponse.json({ error: "sign in first" }, { status: 401 })
   const body = patchSchema.safeParse(await request.json().catch(() => null))
-  if (!body.success)
+  if (!body.success || Object.keys(body.data).length === 0)
     return NextResponse.json({ error: "invalid status" }, { status: 400 })
   await getDb()
     .update(schema.users)
-    .set({ statusText: body.data.statusText })
+    .set({
+      ...(body.data.statusText !== undefined
+        ? { statusText: body.data.statusText }
+        : {}),
+      ...(body.data.presence ? { presence: body.data.presence } : {}),
+    })
     .where(eq(schema.users.id, user.id))
   return NextResponse.json({ ok: true })
 }
@@ -41,6 +49,7 @@ export async function GET() {
           name: user.name,
           image: user.image,
           role: user.role,
+          presence: user.presence,
         }
       : null,
   })

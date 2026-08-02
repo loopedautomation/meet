@@ -1,8 +1,6 @@
 "use client"
 
 import { LogOut, ShieldCheck } from "lucide-react"
-import { useState } from "react"
-import { toast } from "react-toastify"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 
 type SettingsUser = {
@@ -13,20 +11,6 @@ type SettingsUser = {
 }
 
 export function SettingsView({ user }: { user: SettingsUser }) {
-  const [status, setStatus] = useState("")
-
-  const saveStatus = async (e: React.FormEvent) => {
-    e.preventDefault()
-    const res = await fetch("/api/me", {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ statusText: status.trim() || null }),
-    }).catch(() => null)
-    if (res?.ok)
-      toast.success(status.trim() ? "Status set." : "Status cleared.")
-    else toast.error("Could not save your status.")
-  }
-
   return (
     <main className="mx-auto flex h-full max-w-3xl flex-col gap-6 overflow-y-auto px-6 pb-16">
       <header className="py-6">
@@ -55,26 +39,6 @@ export function SettingsView({ user }: { user: SettingsUser }) {
           <p className="text-base-content/50 text-xs">
             Name, email and picture come from your identity provider — change
             them there and they follow on your next sign-in.
-          </p>
-        </div>
-      </section>
-
-      <section className="card card-border bg-base-200/20">
-        <div className="card-body gap-3">
-          <h2 className="card-title text-base">Status</h2>
-          <form onSubmit={saveStatus} className="flex max-w-sm gap-2">
-            <input
-              className="input input-sm flex-1"
-              placeholder="In deep work, back at 3…"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
-            />
-            <button type="submit" className="btn btn-sm btn-primary">
-              Save
-            </button>
-          </form>
-          <p className="text-base-content/50 text-xs">
-            Shown next to your name across the server. Leave empty to clear.
           </p>
         </div>
       </section>

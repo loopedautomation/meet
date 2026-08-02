@@ -18,6 +18,8 @@ export type SessionUser = {
   email: string | null
   name: string | null
   image: string | null
+  /** Presence indicator the member picked (active | away | dnd). */
+  presence: string
   /** null = authenticated but not a member (no invite accepted yet). */
   role: "owner" | "admin" | "member" | null
 }
@@ -46,6 +48,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
         email: user.email,
         name: user.name,
         image: user.image,
+        presence: user.presence,
         role: (membership?.role as SessionUser["role"]) ?? null,
       }
     }
@@ -83,6 +86,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     email: user.email,
     name: user.name,
     image: user.image,
+    presence: user.presence,
     role: (membership?.role as SessionUser["role"]) ?? null,
   }
 }

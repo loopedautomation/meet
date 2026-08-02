@@ -25,6 +25,9 @@ export const users = pgTable("users", {
   image: text("image"),
   // Custom status ("in deep work", "back at 3") shown next to the name.
   statusText: text("status_text"),
+  // Presence indicator the member picks: active | away | dnd. The effective
+  // dot combines this with the live online registry (offline beats all).
+  presence: text("presence").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),

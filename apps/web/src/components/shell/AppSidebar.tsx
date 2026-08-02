@@ -2,20 +2,20 @@
 
 import {
   Bot,
+  ChevronDown,
   Hash,
-  LogOut,
   MessageCircle,
   Plus,
-  Settings,
   Shield,
+  UserPlus,
   Volume2,
 } from "lucide-react"
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import { StatusEditor } from "@/components/home/StatusEditor"
 import { AgentAssign } from "./AgentAssign"
 import { DmStart } from "./DmStart"
+import { type Presence, ProfileCard } from "./ProfileCard"
 import { SearchBox } from "./SearchBox"
 
 type Occupant = {
@@ -42,6 +42,7 @@ export type SidebarUser = {
   name: string | null
   email: string | null
   image: string | null
+  presence: Presence
   role: "owner" | "admin" | "member"
 }
 
@@ -132,6 +133,21 @@ export function AppSidebar({
     }
   }
 
+  const mintInvite = async () => {
+    const res = await fetch("/api/invites", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ role: "member" }),
+    }).catch(() => null)
+    const data = await res?.json().catch(() => null)
+    if (!res?.ok || !data?.url) {
+      toast.error(data?.error ?? "Could not mint the invite.")
+      return
+    }
+    await navigator.clipboard.writeText(data.url).catch(() => {})
+    toast.success("Invite link copied to your clipboard.")
+  }
+
   const regular = channels?.filter((c) => !c.isDm) ?? []
   const dms = channels?.filter((c) => c.isDm) ?? []
 
@@ -142,16 +158,69 @@ export function AppSidebar({
         : "text-base-content/80 hover:bg-base-200"
     }`
 
+  // Inside the Electron shell the window chrome is hidden — the server
+  // header doubles as the drag region, padded clear of the traffic lights.
+  const inElectron =
+    typeof navigator !== "undefined" && navigator.userAgent.includes("Electron")
+
   return (
     <aside className="hidden h-full w-64 shrink-0 flex-col border-base-300 border-r bg-base-200/40 md:flex">
-      {/* Server header */}
-      <button
-        type="button"
-        className="flex items-center justify-between border-base-300 border-b px-4 py-3 text-left hover:bg-base-200"
-        onClick={() => router.push("/home")}
+      {/* Server header — the server-level menu (admin, invites) */}
+      <div
+        className={`border-base-300 border-b ${inElectron ? "pt-7" : ""}`}
+        style={
+          inElectron
+            ? ({ WebkitAppRegion: "drag" } as React.CSSProperties)
+            : undefined
+        }
       >
-        <span className="truncate font-semibold">{serverName}</span>
-      </button>
+        <div
+          className="dropdown w-full"
+          style={
+            inElectron
+              ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties)
+              : undefined
+          }
+        >
+          <button
+            type="button"
+            tabIndex={0}
+            className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-base-200"
+          >
+            <span className="truncate font-semibold">{serverName}</span>
+            <ChevronDown className="size-4 shrink-0 text-base-content/50" />
+          </button>
+          <div className="dropdown-content z-20 mx-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
+              onClick={() => router.push("/home")}
+            >
+              Server home
+            </button>
+            {canCreate && (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
+                onClick={() => void mintInvite()}
+              >
+                <UserPlus className="size-4" />
+                Invite people
+              </button>
+            )}
+            {canCreate && (
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
+                onClick={() => router.push("/admin")}
+              >
+                <Shield className="size-4" />
+                Server admin
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div className="px-3 pt-3">
         <SearchBox />
@@ -221,13 +290,9 @@ export function AppSidebar({
                   <button
                     type="button"
                     className={itemClass(active)}
-                    // Voice channels are meetings — they open in their own
-                    // tab so the workspace stays where it is.
-                    onClick={() =>
-                      c.kind === "voice"
-                        ? window.open(`/c/${c.slug}`, "_blank")
-                        : router.push(`/c/${c.slug}`)
-                    }
+                    // Clicking a voice channel IS joining the call —
+                    // RoomClient auto-joins channel rooms, Discord-style.
+                    onClick={() => router.push(`/c/${c.slug}`)}
                   >
                     {c.kind === "voice" ? (
                       <Volume2 className="size-4 shrink-0 text-base-content/50" />
@@ -308,50 +373,16 @@ export function AppSidebar({
         </ul>
       </nav>
 
-      {/* User footer */}
-      <div className="border-base-300 border-t bg-base-200/60 px-3 py-2">
-        <div className="flex items-center gap-2">
-          {user.image ? (
-            <img src={user.image} alt="" className="size-8 rounded-full" />
-          ) : (
-            <span className="flex size-8 items-center justify-center rounded-full bg-base-300 font-medium text-sm">
-              {(user.name ?? user.email ?? "?").slice(0, 1).toUpperCase()}
-            </span>
-          )}
-          <div className="min-w-0 flex-1">
-            <p className="truncate font-medium text-sm">
-              {user.name ?? user.email ?? "Member"}
-            </p>
-            <ul className="m-0 list-none p-0">
-              <StatusEditor />
-            </ul>
-          </div>
-          <div className="flex shrink-0 items-center">
-            {(user.role === "owner" || user.role === "admin") && (
-              <a
-                href="/admin"
-                className="btn btn-ghost btn-xs"
-                title="Server admin"
-              >
-                <Shield className="size-4" />
-              </a>
-            )}
-            <a
-              href="/settings"
-              className="btn btn-ghost btn-xs"
-              title="Settings"
-            >
-              <Settings className="size-4" />
-            </a>
-            <a
-              href="/auth/logout"
-              className="btn btn-ghost btn-xs"
-              title="Sign out"
-            >
-              <LogOut className="size-4" />
-            </a>
-          </div>
-        </div>
+      {/* User footer — profile card with presence + call defaults */}
+      <div className="border-base-300 border-t bg-base-200/60 px-2 py-2">
+        <ProfileCard
+          user={{
+            name: user.name,
+            email: user.email,
+            image: user.image,
+            presence: user.presence,
+          }}
+        />
       </div>
     </aside>
   )

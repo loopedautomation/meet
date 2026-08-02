@@ -10,6 +10,19 @@ type Member = {
   name: string | null
   email: string | null
   online: boolean
+  presence?: "active" | "away" | "dnd"
+}
+
+/** Effective presence dot: offline beats everything, then the member's
+ * chosen indicator (away/dnd) tints the online dot. */
+export function presenceDotClass(m: {
+  online: boolean
+  presence?: string
+}): string {
+  if (!m.online) return "bg-base-content/20"
+  if (m.presence === "away") return "bg-warning"
+  if (m.presence === "dnd") return "bg-error"
+  return "bg-success"
 }
 
 /** Start (or reopen) a DM — pick a teammate, land in the conversation. */
@@ -81,7 +94,7 @@ export function DmStart() {
                 onClick={() => void start({ userIds: [m.id] })}
               >
                 <span
-                  className={`size-2 rounded-full ${m.online ? "bg-success" : "bg-base-content/20"}`}
+                  className={`size-2 rounded-full ${presenceDotClass(m)}`}
                 />
                 {m.name ?? m.email ?? "someone"}
               </button>

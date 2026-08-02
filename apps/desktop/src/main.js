@@ -195,6 +195,10 @@ function createMainWindow(url) {
     width: 1280,
     height: 840,
     icon: APP_ICON,
+    // Frameless-feeling chrome: the web app's sidebar header is the drag
+    // region (it detects the Electron UA and pads for the traffic lights).
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
