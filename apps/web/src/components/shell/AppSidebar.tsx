@@ -221,7 +221,13 @@ export function AppSidebar({
                   <button
                     type="button"
                     className={itemClass(active)}
-                    onClick={() => router.push(`/c/${c.slug}`)}
+                    // Voice channels are meetings — they open in their own
+                    // tab so the workspace stays where it is.
+                    onClick={() =>
+                      c.kind === "voice"
+                        ? window.open(`/c/${c.slug}`, "_blank")
+                        : router.push(`/c/${c.slug}`)
+                    }
                   >
                     {c.kind === "voice" ? (
                       <Volume2 className="size-4 shrink-0 text-base-content/50" />

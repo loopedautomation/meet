@@ -12,7 +12,6 @@ import {
   Users,
   X,
 } from "lucide-react"
-import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
@@ -54,7 +53,6 @@ export function TextChannelView({
   label: string
   canModerate: boolean
 }) {
-  const router = useRouter()
   const [messages, setMessages] = useState<ChannelMessage[] | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
@@ -215,7 +213,8 @@ export function TextChannelView({
         <button
           type="button"
           className="btn btn-primary btn-sm"
-          onClick={() => router.push(`/c/${slug}?huddle=1`)}
+          // The huddle opens in its own tab so the conversation stays put.
+          onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
         >
           <PhoneCall className="size-4" />
           Start a huddle
