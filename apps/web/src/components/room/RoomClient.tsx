@@ -555,7 +555,7 @@ export function RoomClient({
     // the host key (creator's browser) or the management password, exchanged
     // below for this room's key.
     return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+      <main className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="animate-pulse font-medium text-lg">
           This meeting hasn't started yet
         </p>
@@ -572,7 +572,7 @@ export function RoomClient({
 
   if (rejoining) {
     return (
-      <main className="flex min-h-dvh items-center justify-center gap-3">
+      <main className="flex min-h-full items-center justify-center gap-3">
         <span className="loading loading-spinner" />
         Rejoining…
       </main>
@@ -665,7 +665,7 @@ export function RoomClient({
             "Check that the LiveKit server is running and reachable.",
         )
       }}
-      className="h-dvh"
+      className="h-full"
     >
       <QueryClientProvider client={queryClient}>
         {inWaitingRoom ? (

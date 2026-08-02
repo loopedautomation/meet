@@ -116,7 +116,7 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-4xl flex-col px-6">
+    <main className="mx-auto flex min-h-full max-w-4xl flex-col px-6">
       <header className="flex items-center justify-between py-6">
         <Wordmark />
         <ThemeToggle />

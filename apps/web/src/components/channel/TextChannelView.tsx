@@ -1,7 +1,6 @@
 "use client"
 
 import {
-  ArrowLeft,
   Hash,
   Paperclip,
   Pencil,
@@ -16,7 +15,6 @@ import {
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import { Wordmark } from "@/components/brand/BrandMark"
 import { Markdown } from "@/components/Markdown"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
@@ -204,39 +202,24 @@ export function TextChannelView({
   const pinned = (messages ?? []).filter((m) => m.pinned)
 
   return (
-    <main className="mx-auto flex h-dvh max-w-3xl flex-col px-4">
+    <main className="mx-auto flex h-full max-w-3xl flex-col px-4">
       <header className="flex items-center justify-between gap-3 border-base-300 border-b py-3">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm btn-square"
-            title="Back to workspace"
-            onClick={() => router.push("/")}
-          >
-            <ArrowLeft className="size-4" />
-          </button>
-          <span className="flex items-center gap-1 font-semibold">
-            {label.startsWith("#") ? (
-              <Hash className="size-4 text-base-content/60" />
-            ) : (
-              <Users className="size-4 text-base-content/60" />
-            )}
-            {label.replace(/^#/, "")}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => router.push(`/c/${slug}?huddle=1`)}
-          >
-            <PhoneCall className="size-4" />
-            Start a huddle
-          </button>
-          <span className="hidden sm:block">
-            <Wordmark />
-          </span>
-        </div>
+        <span className="flex items-center gap-1 font-semibold">
+          {label.startsWith("#") ? (
+            <Hash className="size-4 text-base-content/60" />
+          ) : (
+            <Users className="size-4 text-base-content/60" />
+          )}
+          {label.replace(/^#/, "")}
+        </span>
+        <button
+          type="button"
+          className="btn btn-primary btn-sm"
+          onClick={() => router.push(`/c/${slug}?huddle=1`)}
+        >
+          <PhoneCall className="size-4" />
+          Start a huddle
+        </button>
       </header>
 
       {pinned.length > 0 && (
