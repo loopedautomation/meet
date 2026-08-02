@@ -3,6 +3,7 @@
 import {
   ArrowLeft,
   Hash,
+  Paperclip,
   Pencil,
   PhoneCall,
   Pin,
@@ -20,6 +21,8 @@ import { Markdown } from "@/components/Markdown"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
 
+type Attachment = { key: string; name: string; type: string; size: number }
+
 type ChannelMessage = {
   id: string
   from: string
@@ -29,6 +32,7 @@ type ChannelMessage = {
   editedAt?: number
   replyToId?: string
   pinned?: boolean
+  attachments?: Attachment[]
   reactions: Record<string, { count: number; mine: boolean }>
   own: boolean
 }
@@ -61,6 +65,43 @@ export function TextChannelView({
   const bottomRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true)
   const markedRead = useRef(false)
+  const [canAttach, setCanAttach] = useState(false)
+  const [pending, setPending] = useState<Attachment[]>([])
+  const [uploading, setUploading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    void fetch("/api/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setCanAttach(Boolean(d?.features?.attachments)))
+      .catch(() => {})
+  }, [])
+
+  const upload = async (file: File) => {
+    if (file.size > 25 * 1024 * 1024) {
+      toast.error("Files top out at 25MB.")
+      return
+    }
+    setUploading(true)
+    try {
+      const res = await fetch(`/api/channels/${room}/attachments`, {
+        method: "POST",
+        headers: {
+          "content-type": file.type || "application/octet-stream",
+          "x-file-name": file.name,
+        },
+        body: file,
+      })
+      const data = await res.json().catch(() => null)
+      if (!res.ok || !data?.key) {
+        toast.error(data?.error ?? "Upload failed.")
+        return
+      }
+      setPending((prev) => [...prev, data as Attachment])
+    } finally {
+      setUploading(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -97,7 +138,7 @@ export function TextChannelView({
   const send = async (e: React.FormEvent) => {
     e.preventDefault()
     const text = draft.trim()
-    if (!text || sending) return
+    if ((!text && pending.length === 0) || sending) return
     setSending(true)
     try {
       const res = editing
@@ -109,7 +150,11 @@ export function TextChannelView({
         : await fetch(`/api/channels/${room}/messages`, {
             method: "POST",
             headers: { "content-type": "application/json" },
-            body: JSON.stringify({ text, replyToId: replyTo?.id }),
+            body: JSON.stringify({
+              text,
+              replyToId: replyTo?.id,
+              ...(pending.length ? { attachments: pending } : {}),
+            }),
           })
       if (!res.ok) {
         toast.error("Could not send the message.")
@@ -118,6 +163,7 @@ export function TextChannelView({
       setDraft("")
       setEditing(null)
       setReplyTo(null)
+      setPending([])
       // Mark caught-up on your own send.
       void fetch(`/api/channels/${room}/read`, { method: "POST" }).catch(
         () => {},
@@ -249,7 +295,32 @@ export function TextChannelView({
                   </div>
                 )}
                 <div className="flex items-start justify-between gap-2">
-                  <Markdown text={m.text} className="min-w-0 text-sm" />
+                  <span className="min-w-0">
+                    {m.text && <Markdown text={m.text} className="text-sm" />}
+                    {m.attachments?.map((a) =>
+                      a.type.startsWith("image/") ? (
+                        <img
+                          key={a.key}
+                          src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                          alt={a.name}
+                          className="mt-1 max-h-64 max-w-full rounded-box"
+                        />
+                      ) : (
+                        <a
+                          key={a.key}
+                          href={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                          className="link mt-1 flex items-center gap-1 text-sm"
+                          download={a.name}
+                        >
+                          <Paperclip className="size-3.5" />
+                          {a.name}
+                          <span className="text-base-content/40 text-xs">
+                            ({Math.max(1, Math.round(a.size / 1024))} KB)
+                          </span>
+                        </a>
+                      ),
+                    )}
+                  </span>
                   <span className="invisible flex shrink-0 items-center group-hover:visible">
                     {QUICK_EMOJI.slice(0, 3).map((e) => (
                       <button
@@ -349,10 +420,56 @@ export function TextChannelView({
           </button>
         </div>
       )}
+      {pending.length > 0 && (
+        <div className="flex flex-wrap gap-2 pt-2">
+          {pending.map((a) => (
+            <span key={a.key} className="badge badge-ghost gap-1">
+              <Paperclip className="size-3" />
+              {a.name}
+              <button
+                type="button"
+                className="ml-1"
+                onClick={() =>
+                  setPending((prev) => prev.filter((p) => p.key !== a.key))
+                }
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
       <form
         onSubmit={send}
         className="flex items-center gap-2 border-base-300 border-t py-3"
       >
+        {canAttach && !editing && (
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0]
+                if (file) void upload(file)
+                e.target.value = ""
+              }}
+            />
+            <button
+              type="button"
+              className="btn btn-ghost btn-square"
+              title="Attach a file"
+              disabled={uploading}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {uploading ? (
+                <span className="loading loading-spinner loading-sm" />
+              ) : (
+                <Paperclip className="size-5" />
+              )}
+            </button>
+          </>
+        )}
         <input
           className="input w-full"
           placeholder={`Message ${label}`}
@@ -362,7 +479,7 @@ export function TextChannelView({
         <button
           type="submit"
           className="btn btn-primary"
-          disabled={!draft.trim() || sending}
+          disabled={(!draft.trim() && pending.length === 0) || sending}
         >
           {sending ? (
             <span className="loading loading-spinner loading-sm" />

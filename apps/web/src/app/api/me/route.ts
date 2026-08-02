@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
+import { storageConfigured } from "@/lib/server/storage"
 
 export const dynamic = "force-dynamic"
 
@@ -32,6 +33,7 @@ export async function GET() {
   const user = await getSessionUser()
   return NextResponse.json({
     authMode: mode,
+    features: { attachments: storageConfigured() },
     user: user
       ? {
           id: user.id,

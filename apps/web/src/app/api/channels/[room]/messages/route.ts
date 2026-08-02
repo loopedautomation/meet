@@ -9,9 +9,17 @@ import { getMemberUser } from "@/lib/server/session"
 
 type Params = { params: Promise<{ room: string }> }
 
+const attachmentSchema = z.object({
+  key: z.string().max(300),
+  name: z.string().max(160),
+  type: z.string().max(120),
+  size: z.number().int().positive(),
+})
+
 const sendSchema = z.object({
-  text: z.string().min(1).max(8000),
+  text: z.string().max(8000),
   replyToId: z.string().uuid().optional(),
+  attachments: z.array(attachmentSchema).max(5).optional(),
 })
 
 // The channel's text sidecar, v1: append-only history so the chat survives
@@ -40,6 +48,7 @@ export async function GET(_request: Request, { params }: Params) {
       authorAgentId: schema.messages.authorAgentId,
       content: schema.messages.content,
       replyToId: schema.messages.replyToId,
+      attachments: schema.messages.attachments,
       pinnedAt: schema.messages.pinnedAt,
       createdAt: schema.messages.createdAt,
       editedAt: schema.messages.editedAt,
@@ -90,6 +99,7 @@ export async function GET(_request: Request, { params }: Params) {
       at: r.createdAt.getTime(),
       ...(r.editedAt ? { editedAt: r.editedAt.getTime() } : {}),
       ...(r.replyToId ? { replyToId: r.replyToId } : {}),
+      ...(r.attachments ? { attachments: r.attachments } : {}),
       ...(r.pinnedAt ? { pinned: true } : {}),
       reactions: reactionsFor.get(r.id) ?? {},
       own: r.authorUserId === user.id,
@@ -115,6 +125,15 @@ export async function POST(request: Request, { params }: Params) {
   const body = sendSchema.safeParse(await request.json().catch(() => null))
   if (!body.success)
     return NextResponse.json({ error: "text required" }, { status: 400 })
+  const attachments = body.data.attachments ?? []
+  if (!body.data.text.trim() && attachments.length === 0) {
+    return NextResponse.json({ error: "text required" }, { status: 400 })
+  }
+  // An attachment key must live in this channel's namespace — uploads are
+  // channel-scoped, so a key can't be replayed into another conversation.
+  if (attachments.some((a) => !a.key.startsWith(`att/${channel.publicId}/`))) {
+    return NextResponse.json({ error: "invalid attachment" }, { status: 400 })
+  }
   const id = uuidv7()
   await getDb()
     .insert(schema.messages)
@@ -125,6 +144,7 @@ export async function POST(request: Request, { params }: Params) {
       authorKind: "user",
       content: body.data.text,
       replyToId: body.data.replyToId ?? null,
+      attachments: attachments.length ? attachments : null,
     })
   // Agents that belong to this channel get their turn (DMs always;
   // shared channels on @mention). Never blocks the send.
