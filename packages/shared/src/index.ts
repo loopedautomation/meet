@@ -167,6 +167,11 @@ export const participantMetaSchema = z.object({
   // privileges — the token route's own isHost check, mirrored into public
   // room metadata since only the holder otherwise knows.
   isHost: z.boolean().optional(),
+  // Signed-in members carry their account through the room: userId is the
+  // instance's users.id (the identity is u_<userId>), role their instance
+  // role. Guests carry neither — additive, old clients parse fine.
+  userId: z.string().optional(),
+  role: z.enum(["owner", "admin", "member"]).optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
 
@@ -359,6 +364,15 @@ export const roomMetadataSchema = z.object({
    */
   hostIdentity: z.string().optional(),
   settings: roomSettingsSchema.optional(),
+  /**
+   * Channel-backed rooms: kind "channel" marks a LiveKit room that belongs
+   * to a persistent channel (room name ch-<publicId>). The room is
+   * disposable — recreated on join, GC'd when empty — while the channel row
+   * in Postgres is the durable thing. Absent kind = a meeting room (legacy
+   * and current meetings alike).
+   */
+  kind: z.enum(["meeting", "channel"]).optional(),
+  channelId: z.string().optional(),
 })
 export type RoomMetadata = z.infer<typeof roomMetadataSchema>
 

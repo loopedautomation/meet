@@ -2,6 +2,10 @@ packages:
   - apps/*
   - packages/*
 
+# pnpm blocks postinstall scripts by default; electron's downloads its binary.
+onlyBuiltDependencies:
+  - electron
+
 catalog:
   typescript: ^5.9.3
   zod: ^4.1.13

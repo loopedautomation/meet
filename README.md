@@ -11,11 +11,12 @@
 
 Self-hostable video meetings with first-class AI agent participants. Share a link, talk face to face — and invite an agent into the room. It listens to the conversation, speaks its answers, can be interrupted mid-sentence, and streams its tool calls (web lookups, code, APIs) into the meeting as it works. Open source, powered by [LiveKit](https://livekit.io) and the [Looped agent framework](https://github.com/loopedautomation/agent-framework).
 
-**Contents:** [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Your own agents](#registering-your-own-agents) · [cal.com](./calcom.md) · [Self-hosting](./selfhost.md) · [Development](#development) · [Theming](#theming--whitelabel)
+**Contents:** [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Your own agents](#registering-your-own-agents) · [cal.com](./calcom.md) · [Self-hosting](./selfhost.md) · [Development](#development) · [Theming](#theming--whitelabel) · [Roadmap](./docs/ROADMAP.md)
 
 ## Features
 
-- **Google-Meet-style rooms** — create a room, share `/r/{slug}`, join with a display name. No accounts, no IdP.
+- **Google-Meet-style rooms** — create a room, share `/r/{slug}`, join with a display name. Accounts are optional: guests always join with just a name.
+- **Persistent voice channels** *(new, Phase 0)* — with accounts enabled, your server gets channels that never end: no scheduling, no links, click #standup and you're in. Membership is invite-only; presence is tracked live. See [UPGRADING](./docs/UPGRADING.md) to turn it on, and the [roadmap](./docs/ROADMAP.md) for where this is going.
 - **Agents as participants** — invite any [looped-af](https://github.com/loopedautomation/agent-framework) agent from the agents panel, unchanged; it joins with its own tile, live state (listening / thinking / speaking), and voice.
 - **Realtime speech-to-speech agents** — optionally front an agent with a realtime voice model (~500ms conversational presence) that acts as the brain's voice: everything of substance — answers, actions, doc writes — comes from the looped agent brain, which also hears the ongoing conversation, so the agent's memory, tools, and permissions stay in one place.
 - **Turn policies** — per-agent etiquette a host can change mid-call: speak freely (`open`), only when addressed (`on-mention`), or raise a hand and wait to be called on (`raise-hand`). Zap an agent to wake it up for a while.

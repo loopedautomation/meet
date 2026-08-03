@@ -5,3 +5,9 @@ services:
   agent-bridge:
     volumes:
       - ./agent-registry.yaml:/app/agent-registry.yaml:ro
+  postgres:
+    # Loopback-only: lets the host-run web dev server (pnpm dev) reach the
+    # stack's postgres without exposing it beyond this machine. Published on
+    # 55432 so a postgres already running on the host's 5432 never collides.
+    ports:
+      - "127.0.0.1:55432:5432"

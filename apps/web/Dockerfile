@@ -17,12 +17,14 @@ WORKDIR /repo
 COPY package.json pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 COPY packages/shared/package.json packages/shared/
+COPY packages/db/package.json packages/db/
 RUN pnpm install --frozen-lockfile=false --filter @meet/web... --filter .
 
 FROM base AS builder
 WORKDIR /repo
 COPY --from=deps /repo ./
 COPY packages/shared packages/shared
+COPY packages/db packages/db
 COPY apps/web apps/web
 # LIVEKIT_PUBLIC_URL is only read server-side at runtime (the token API
 # returns it as serverUrl) — nothing is inlined into the client bundle, so the
@@ -39,6 +41,9 @@ ENV NODE_ENV=production
 COPY --from=builder /repo/apps/web/.next/standalone ./
 COPY --from=builder /repo/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /repo/apps/web/public ./apps/web/public
+# SQL migrations, applied at boot by src/instrumentation.ts (which finds this
+# path relative to the /app workdir).
+COPY --from=builder /repo/packages/db/drizzle ./packages/db/drizzle
 COPY --from=infisical /usr/local/bin/infisical /usr/local/bin/infisical
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 EXPOSE 3000

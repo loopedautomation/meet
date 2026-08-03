@@ -53,6 +53,15 @@ services:
           force_tcp: ${LIVEKIT_FORCE_TCP:-false}
         keys:
           ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-}
+        # Presence: joins/leaves stream to the web app's webhook sink, which
+        # maintains the room_presence table behind the channel sidebar.
+        # Host-run dev web overrides the URL via LIVEKIT_WEBHOOK_URL
+        # (http://host.docker.internal:3000/...). Deliveries are retried, and
+        # the sink no-ops without a database.
+        webhook:
+          urls:
+            - ${LIVEKIT_WEBHOOK_URL:-http://web:3000/api/livekit/webhook}
+          api_key: ${LIVEKIT_API_KEY:-devkey}
         logging:
           level: info
     ports:
@@ -67,6 +76,24 @@ services:
       retries: 5
     restart: unless-stopped
 
+  postgres:
+    image: postgres:17-alpine
+    <<: *local-env
+    environment:
+      POSTGRES_USER: meet
+      POSTGRES_DB: meet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-meet-dev-only}
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    # Compose-network only — no host port. The debug override publishes
+    # 127.0.0.1:5432 for the host-run web dev server.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meet -d meet"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   web:
     image: ghcr.io/loopedautomation/meet-web:${IMAGE_TAG:-latest}
     pull_policy: always
@@ -75,12 +102,17 @@ services:
     <<: *local-env
     # All app config and secrets come from Infisical in production, or from
     # the root .env locally — never set them here, or they'd shadow the
-    # injected values.
+    # injected values. DATABASE_URL is the one exception: like LIVEKIT_CONFIG
+    # it's stack topology, and its default points at the stack's own postgres.
+    # Override via the host env / .env only to use an external database.
     environment:
       <<: *infisical
       INFISICAL_SECRETS_PATH: "/apps/web /shared"
+      DATABASE_URL: ${DATABASE_URL:-postgresql://meet:${POSTGRES_PASSWORD:-meet-dev-only}@postgres:5432/meet}
     depends_on:
       livekit:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     healthcheck:
       test:
@@ -145,3 +177,4 @@ services:
 
 volumes:
   demo-agent-data:
+  pg-data:

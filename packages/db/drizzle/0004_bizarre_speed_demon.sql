@@ -1,0 +1,1 @@
+ALTER TABLE "server_agents" ADD COLUMN "name" text;

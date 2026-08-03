@@ -21,6 +21,7 @@ import {
   useMentionables,
 } from "@/components/room/panels/MentionPicker"
 import { track } from "@/lib/analytics"
+import { $channelRoom } from "@/stores/channelContext"
 import {
   $chatMessages,
   $typingAgents,
@@ -194,6 +195,23 @@ function MessageActions({
 export function ChatPanel() {
   const { localParticipant } = useLocalParticipant()
   const messages = useStore($chatMessages)
+  const channelRoom = useStore($channelRoom)
+
+  // Channels have a persistent text sidecar: hydrate history once so the
+  // conversation survives the room emptying. addChatMessage dedupes by id,
+  // so a rehydrate (panel remount) is harmless.
+  const hydratedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!channelRoom || hydratedRef.current === channelRoom) return
+    hydratedRef.current = channelRoom
+    void fetch(`/api/channels/${channelRoom}/messages`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { messages: ChatMessage[] } | null) => {
+        if (!data) return
+        for (const m of data.messages) addChatMessage(m)
+      })
+      .catch(() => {})
+  }, [channelRoom])
   const typing = useStore($typingAgents)
   const typingNames = Object.values(typing).map((t) => t.name)
   const [draft, setDraft] = useState("")
@@ -300,6 +318,15 @@ export function ChatPanel() {
       })
     }
     if (addressed.length > 0) noteAgentAsked(addressed[0].agentId ?? "unknown")
+    // In a channel the message also lands in Postgres, so it's still there
+    // tomorrow — live delivery stays on the data channel either way.
+    if (channelRoom) {
+      void fetch(`/api/channels/${channelRoom}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      }).catch(() => {})
+    }
     await send(new TextEncoder().encode(JSON.stringify(message)), {
       topic: DataTopic.Chat,
       reliable: true,
