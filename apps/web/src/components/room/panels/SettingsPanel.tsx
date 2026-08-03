@@ -25,6 +25,7 @@ import { toast } from "react-toastify"
 import { NetworkSection } from "@/components/room/CallHealth"
 import { MicTest, SpeakerTest } from "@/components/room/panels/DeviceTests"
 import { Select } from "@/components/ui/Select"
+import { useIsTouchDevice } from "@/hooks/useIsTouchDevice"
 import { useAgentPermissions } from "@/hooks/useRoomSettings"
 import { supportsVoiceIsolation } from "@/hooks/useVoiceIsolation"
 import { BACKGROUNDS, type CameraEffect } from "@/lib/backgrounds"
@@ -80,6 +81,7 @@ export function SettingsPanel({ slug }: { slug: string }) {
   const joinCameraOff = useStore($joinCameraOff)
   const meetingSounds = useStore($meetingSounds)
   const autoDataSaver = useStore($autoDataSaver)
+  const isTouchDevice = useIsTouchDevice()
 
   return (
     <div className="flex flex-col gap-6 p-4">
@@ -157,20 +159,22 @@ export function SettingsPanel({ slug }: { slug: string }) {
             }}
           />
         </label>
-        <label className="flex cursor-pointer items-center justify-between gap-4">
-          <span className="flex flex-col">
-            <span className="text-sm">Push to talk</span>
-            <span className="text-base-content/60 text-xs">
-              While muted, hold Space to speak; release to re-mute.
+        {!isTouchDevice && (
+          <label className="flex cursor-pointer items-center justify-between gap-4">
+            <span className="flex flex-col">
+              <span className="text-sm">Push to talk</span>
+              <span className="text-base-content/60 text-xs">
+                While muted, hold Space to speak; release to re-mute.
+              </span>
             </span>
-          </span>
-          <input
-            type="checkbox"
-            className="toggle toggle-primary"
-            checked={pushToTalk}
-            onChange={(e) => setPushToTalk(e.target.checked)}
-          />
-        </label>
+            <input
+              type="checkbox"
+              className="toggle toggle-primary"
+              checked={pushToTalk}
+              onChange={(e) => setPushToTalk(e.target.checked)}
+            />
+          </label>
+        )}
         <CameraSetting />
         <label className="flex min-w-0 flex-col gap-1">
           <span className="text-base-content/70 text-sm">Camera effect</span>
