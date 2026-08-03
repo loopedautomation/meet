@@ -42,6 +42,7 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { useCameraEffect } from "@/hooks/useCameraEffect"
 import { useIncomingVideo } from "@/hooks/useIncomingVideo"
+import { useIsTouchDevice } from "@/hooks/useIsTouchDevice"
 import { useMeetingSounds } from "@/hooks/useMeetingSounds"
 import { usePushToTalk } from "@/hooks/usePushToTalk"
 import { useStickyDevices } from "@/hooks/useStickyDevices"
@@ -105,7 +106,8 @@ export function ControlBar({
   const incomingVideoOff = useStore($incomingVideoOff)
   useIncomingVideo(incomingVideoOff)
 
-  usePushToTalk(useStore($pushToTalk))
+  const isTouchDevice = useIsTouchDevice()
+  usePushToTalk(useStore($pushToTalk) && !isTouchDevice)
   useMeetingSounds(useStore($meetingSounds))
   const autoDataSaver = useStore($autoDataSaver)
 
