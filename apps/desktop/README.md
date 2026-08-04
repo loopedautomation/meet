@@ -14,6 +14,12 @@ server-side. The shell adds the native layer:
 - **Notifications** — a quiet heads-up when a channel comes alive while
   the app is in the background.
 - **Launch at login** — toggle in the tray menu.
+- **Sign in with browser** — on servers with accounts, the login runs in
+  your default browser (where GitHub & co already know you); the session
+  hands back to the app via a `looped-meet://` deep link. Dev runs and
+  browsers that block custom schemes can paste the shown code into the app
+  instead. The app holds its own revocable session (30 days, sliding) —
+  sign out server-side or remove the member and the device is out.
 
 ## Develop
 

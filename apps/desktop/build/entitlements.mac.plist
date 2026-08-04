@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements. Notarization requires the hardened runtime,
+  which blocks things Chromium relies on by default — hence the three JIT /
+  memory exceptions below. The device entitlements cover the meeting UI's
+  camera and mic; screen sharing needs no entitlement (macOS gates it behind
+  a TCC prompt at first use instead).
+-->
+<plist version="1.0">
+  <dict>
+    <!-- V8 compiles JavaScript at runtime. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <!-- Chromium maps executable pages the JIT entitlement alone doesn't cover. -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <!-- Electron loads framework libraries that aren't signed with our team ID. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+  </dict>
+</plist>

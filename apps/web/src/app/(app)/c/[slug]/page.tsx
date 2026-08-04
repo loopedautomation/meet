@@ -26,7 +26,10 @@ export default async function ChannelPage({ params, searchParams }: Props) {
   const channel = await getChannelBySlug(slug)
   if (!channel || channel.archivedAt) notFound()
   const room = channelRoomName(channel)
-  if (channel.kind === "text" && huddle !== "1") {
+  // Huddles are a DM escalation only — a plain text channel ignores the
+  // huddle flag (voice belongs in voice channels).
+  const huddleAllowed = channel.isDm && huddle === "1"
+  if (channel.kind === "text" && !huddleAllowed) {
     const user = await getSessionUser()
     let label = `#${channel.slug}`
     if (channel.isDm) {

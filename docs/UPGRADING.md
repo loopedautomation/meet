@@ -47,6 +47,13 @@ as before. Postgres sits idle apart from presence rows.
 To force the pre-accounts behavior even with Auth0 env present, set
 `MEET_AUTH_MODE=none`.
 
+The desktop shell signs in through the system browser: it parks a request
+with the server, the browser completes the Auth0 login at
+`/desktop/auth`, and a one-time code returns to the app (deep link or
+paste). The app then holds its own `meet_desktop_session` cookie backed by
+the `desktop_sessions` table — revocable per device, revoked automatically
+when a member is removed, 30-day sliding expiry.
+
 ### Behavior changes for signed-in members
 
 - Members join rooms with a stable identity (`u_<userId>`). LiveKit allows

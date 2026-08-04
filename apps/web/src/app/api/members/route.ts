@@ -20,6 +20,7 @@ export async function GET() {
       email: schema.users.email,
       image: schema.users.image,
       statusText: schema.users.statusText,
+      presence: schema.users.presence,
       role: schema.memberships.role,
       joinedAt: schema.memberships.createdAt,
     })

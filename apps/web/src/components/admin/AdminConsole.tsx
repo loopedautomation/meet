@@ -1,17 +1,8 @@
 "use client"
 
-import {
-  ArrowLeft,
-  Copy,
-  Download,
-  ShieldCheck,
-  Trash2,
-  UserMinus,
-} from "lucide-react"
-import { useRouter } from "next/navigation"
+import { Copy, Download, ShieldCheck, Trash2, UserMinus } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "react-toastify"
-import { Wordmark } from "@/components/brand/BrandMark"
 
 type Member = {
   id: string
@@ -43,7 +34,6 @@ export function AdminConsole({
   isOwner: boolean
   selfId: string
 }) {
-  const router = useRouter()
   const [settings, setSettings] = useState<Settings | null>(null)
   const [members, setMembers] = useState<Member[]>([])
   const [invites, setInvites] = useState<Invite[]>([])
@@ -143,19 +133,9 @@ export function AdminConsole({
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-3xl flex-col gap-6 px-6 pb-16">
-      <header className="flex items-center justify-between py-6">
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm btn-square"
-            onClick={() => router.push("/")}
-          >
-            <ArrowLeft className="size-4" />
-          </button>
-          <h1 className="font-semibold text-xl">Server admin</h1>
-        </div>
-        <Wordmark />
+    <main className="mx-auto flex h-full max-w-3xl flex-col gap-6 overflow-y-auto px-6 pb-16">
+      <header className="py-6">
+        <h1 className="font-semibold text-xl">Server admin</h1>
       </header>
 
       <section className="card card-border bg-base-200/20">

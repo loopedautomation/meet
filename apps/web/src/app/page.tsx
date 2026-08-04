@@ -1,9 +1,8 @@
 import { Bot, LogIn, MessagesSquare, Wrench } from "lucide-react"
+import { redirect } from "next/navigation"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
-import { ChannelList } from "@/components/home/ChannelList"
 import { HomeActions } from "@/components/home/HomeActions"
-import { StatusEditor } from "@/components/home/StatusEditor"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
 
@@ -28,6 +27,8 @@ const features = [
 export default async function HomePage() {
   const withAccounts = authMode() === "auth0"
   const user = withAccounts ? await getSessionUser() : null
+  // Members live in the app shell; the marketing page is for visitors.
+  if (user?.role) redirect("/home")
   return (
     <main className="mx-auto flex min-h-dvh max-w-5xl flex-col px-6">
       <header className="flex items-center justify-between py-6">
@@ -54,17 +55,9 @@ export default async function HomePage() {
                   </span>
                 </button>
                 <ul className="dropdown-content menu z-10 mt-2 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow">
-                  {!user.role && (
-                    <li className="menu-title text-xs">
-                      Not a member yet — ask for an invite
-                    </li>
-                  )}
-                  {user.role && <StatusEditor />}
-                  {(user.role === "owner" || user.role === "admin") && (
-                    <li>
-                      <a href="/admin">Server admin</a>
-                    </li>
-                  )}
+                  <li className="menu-title text-xs">
+                    Not a member yet — ask for an invite
+                  </li>
                   <li>
                     <a href="/auth/logout">Sign out</a>
                   </li>
@@ -78,16 +71,6 @@ export default async function HomePage() {
             ))}
         </div>
       </header>
-
-      {user?.role && (
-        <section className="flex flex-col items-center gap-3 pt-10">
-          <h2 className="font-semibold text-lg">Channels</h2>
-          <ChannelList canCreate={user.role !== "member"} />
-          <div className="divider mx-auto w-full max-w-md text-base-content/40 text-xs">
-            or start an ad-hoc meeting
-          </div>
-        </section>
-      )}
 
       <section className="flex flex-1 flex-col items-center justify-center gap-8 py-16 text-center">
         <span className="badge badge-soft badge-primary">

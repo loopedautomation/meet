@@ -4,44 +4,166 @@
     <meta charset="utf-8" />
     <title>Connect to your server</title>
     <style>
-      :root { color-scheme: light dark; }
+      /* Standalone copy of the looped design tokens. This window is plain
+         file:// HTML — no Tailwind/daisyUI build — so the values from
+         apps/web/src/styles/themes.css are inlined here. Keep them in sync
+         with that file; it stays the source of truth. */
+      @font-face {
+        font-family: "Mona Sans";
+        font-weight: 200 900;
+        font-display: block;
+        font-style: normal;
+        font-stretch: 125%;
+        src: url("./fonts/Mona-Sans.woff2") format("woff2");
+      }
+
+      :root {
+        color-scheme: light dark;
+        --color-base-100: #ffffff;
+        --color-base-200: #f7f7f7;
+        --color-base-300: #e5e5e5;
+        --color-base-content: oklch(10% 0.01 280);
+        --color-primary: oklch(58% 0.22 280);
+        --color-primary-content: oklch(100% 0 0);
+        --color-error: oklch(56% 0.2 30);
+        --radius-field: 0.5rem;
+        --radius-box: 1rem;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --color-base-100: oklch(15% 0.01 270);
+          --color-base-200: oklch(20% 0.01 270);
+          --color-base-300: oklch(32% 0.01 270);
+          --color-base-content: oklch(98.2% 0.00411 91.4);
+        }
+      }
+
       body {
-        font-family: system-ui, -apple-system, sans-serif;
+        font-family: "Mona Sans", ui-sans-serif, system-ui, sans-serif;
+        font-stretch: 125%;
+        background: var(--color-base-100);
+        color: var(--color-base-content);
         display: flex; flex-direction: column; align-items: center;
         justify-content: center; height: 100vh; margin: 0; gap: 14px;
       }
-      h1 { font-size: 18px; margin: 0; }
-      p { margin: 0; font-size: 13px; opacity: 0.65; max-width: 320px; text-align: center; }
+      h1 { font-size: 1.125rem; font-weight: 600; margin: 0; }
+      /* Body copy is weight 300 app-wide (globals.css). */
+      p {
+        margin: 0; font-size: 0.8125rem; font-weight: 300;
+        opacity: 0.65; max-width: 320px; text-align: center;
+      }
       form { display: flex; gap: 8px; }
+
+      /* Input — daisyUI field sizing, pinned at 1rem so focus doesn't
+         reflow the layout (see apps/web/src/styles/input.css). */
       input {
-        width: 240px; padding: 8px 10px; font-size: 14px;
-        border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-        border-radius: 8px; background: transparent; color: inherit;
+        width: 240px; padding: 0.5rem 0.75rem;
+        font-family: inherit; font-size: 1rem;
+        border: 1px solid var(--color-base-300);
+        border-radius: var(--radius-field);
+        background: var(--color-base-100);
+        color: var(--color-base-content);
       }
+      input:focus-visible {
+        outline: 2px solid var(--color-primary);
+        outline-offset: 2px;
+      }
+
+      /* Button — the brutalist silhouette from button.css: variant fill,
+         border mixed 10% toward black, shadow 35%, and a two-layer offset
+         shadow whose outer ring repeats the border colour. Hover is a
+         half-press (2px → 1px); active collapses it entirely. */
       button {
-        padding: 8px 14px; font-size: 14px; border: none; border-radius: 8px;
-        background: #6d28d9; color: white; cursor: pointer;
+        --btn-color: var(--color-primary);
+        --btn-border: color-mix(in oklch, var(--btn-color), black 10%);
+        --btn-shadow-color: color-mix(in oklch, var(--btn-color), black 35%);
+        padding: 0.5rem 0.75rem;
+        font-family: inherit; font-size: 0.8125rem; font-weight: 500;
+        border: 1px solid var(--btn-border);
+        border-radius: var(--radius-field);
+        background: var(--btn-color);
+        color: var(--color-primary-content);
+        cursor: pointer;
+        box-shadow:
+          0.5px 2px 0 0 var(--btn-shadow-color),
+          0.5px 2px 0 1px var(--btn-border);
+        outline-offset: 3px;
+        transition: translate 0.08s ease, box-shadow 0.08s ease,
+          background-color 0.2s, color 0.2s;
       }
-      button:disabled { opacity: 0.6; }
-      #error { color: #dc2626; font-size: 13px; min-height: 18px; }
+      button:hover {
+        translate: 0 1px;
+        box-shadow:
+          0.5px 1px 0 0 var(--btn-shadow-color),
+          0.5px 1px 0 1px var(--btn-border);
+      }
+      button:active {
+        translate: 0 2px;
+        box-shadow: 0 0 0 1px var(--btn-border);
+      }
+      button:focus-visible {
+        outline: 2px solid var(--color-primary);
+      }
+      button:disabled {
+        opacity: 0.6; cursor: not-allowed;
+        translate: none;
+      }
+      #error { color: var(--color-error); font-size: 0.8125rem; min-height: 18px; }
     </style>
   </head>
   <body>
-    <h1>Connect to your team server</h1>
-    <p>
-      Enter the address of a looped meet instance — self-hosted on your own
-      box, or a hosted team server.
-    </p>
-    <form id="form">
-      <input id="url" type="text" placeholder="https://meet.yourteam.com" autofocus />
-      <button id="go" type="submit">Connect</button>
-    </form>
+    <div id="step-connect">
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+        <h1>Connect to your team server</h1>
+        <p>
+          Enter the address of a looped meet instance — self-hosted on your own
+          box, or a hosted team server.
+        </p>
+        <form id="form">
+          <input id="url" type="text" placeholder="https://meet.yourteam.com" autofocus />
+          <button id="go" type="submit">Connect</button>
+        </form>
+      </div>
+    </div>
+    <div id="step-signin" hidden>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 14px;">
+        <h1>Sign in</h1>
+        <p>
+          Sign in with your browser — it already knows you. You'll be sent
+          right back here.
+        </p>
+        <button id="browser-signin" type="button">Sign in with browser</button>
+        <p>Got a code from the browser instead? Paste it here.</p>
+        <form id="code-form">
+          <input id="code" type="text" placeholder="paste code" autocomplete="off" />
+          <button id="code-go" type="submit">Continue</button>
+        </form>
+      </div>
+    </div>
     <div id="error"></div>
     <script>
       const form = document.getElementById("form")
       const input = document.getElementById("url")
       const go = document.getElementById("go")
       const error = document.getElementById("error")
+      const stepConnect = document.getElementById("step-connect")
+      const stepSignin = document.getElementById("step-signin")
+      // The main process opens this window straight at the sign-in step
+      // when a server is saved but the shell is signed out.
+      if (new URLSearchParams(location.search).get("step") === "signin") {
+        stepConnect.hidden = true
+        stepSignin.hidden = false
+      }
+      // Prefilled with the hosted instance (or the server already in use when
+      // reached via "Change server…") — selected, so typing a different
+      // address replaces it without having to clear the field first.
+      window.meetShell.suggestedServer().then((url) => {
+        if (!url || input.value) return
+        input.value = url
+        input.select()
+      })
+
       form.addEventListener("submit", async (e) => {
         e.preventDefault()
         let value = input.value.trim()
@@ -53,7 +175,30 @@
         if (!result.ok) {
           error.textContent = result.error
           go.disabled = false
+          return
         }
+        if (result.needsSignIn) {
+          stepConnect.hidden = true
+          stepSignin.hidden = false
+          go.disabled = false
+        }
+        // Otherwise the main process has already opened the workspace.
+      })
+
+      document.getElementById("browser-signin").addEventListener("click", async () => {
+        error.textContent = ""
+        const result = await window.meetShell.signInWithBrowser()
+        if (!result.ok) error.textContent = result.error
+      })
+
+      document.getElementById("code-form").addEventListener("submit", async (e) => {
+        e.preventDefault()
+        const code = document.getElementById("code").value.trim()
+        if (!code) return
+        error.textContent = ""
+        const result = await window.meetShell.submitAuthCode(code)
+        if (!result.ok) error.textContent = result.error
+        // On success the main process closes this window.
       })
     </script>
   </body>

@@ -101,7 +101,7 @@ export function MeetingView({
     // a document — nothing inside it may push the page into scrolling
     // (mobile rubber-banding, sideways drift from a wide header or a
     // dragged self-view at the edge).
-    <div className="flex h-dvh flex-col overflow-hidden overscroll-none bg-base-200">
+    <div className="flex h-full flex-col overflow-hidden overscroll-none bg-base-200">
       <RoomAudioRenderer />
       <RoomDataListener slug={slug} />
       <ControlBar slug={slug} shareBase={shareBase} startedAt={startedAt} />

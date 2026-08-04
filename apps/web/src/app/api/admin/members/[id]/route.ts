@@ -2,6 +2,7 @@ import { eq, getDb, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
+import { revokeUserDesktopSessions } from "@/lib/server/desktopSession"
 import { getMemberUser } from "@/lib/server/session"
 
 type Params = { params: Promise<{ id: string }> }
@@ -89,5 +90,8 @@ export async function DELETE(request: Request, { params }: Params) {
   } else {
     await db.delete(schema.memberships).where(eq(schema.memberships.userId, id))
   }
+  // Membership gone (or account purged — cascade got the rows already):
+  // signed-in desktop shells must not keep a live session.
+  await revokeUserDesktopSessions(id)
   return NextResponse.json({ ok: true })
 }

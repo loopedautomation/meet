@@ -43,7 +43,21 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
   // Stored prefs are read after mount so SSR and first client render agree.
   const [restored, setRestored] = useState(false)
   useEffect(() => {
-    setDisplayName(readStoredString("displayName"))
+    const stored = readStoredString("displayName")
+    setDisplayName(stored)
+    // Signed-in members shouldn't retype their name — prefill from the
+    // account when nothing was stored (a typed name still wins next time).
+    if (!stored) {
+      void fetch("/api/me")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          const accountName = d?.user?.name ?? d?.user?.email
+          if (accountName) {
+            setDisplayName((current) => current || accountName)
+          }
+        })
+        .catch(() => {})
+    }
     // "Always join muted / camera off" beats last call's state.
     setAudioEnabled($joinMuted.get() ? false : readStoredToggle("audioEnabled"))
     setVideoEnabled(
@@ -116,7 +130,7 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-4xl flex-col px-6">
+    <main className="mx-auto flex min-h-full max-w-4xl flex-col px-6">
       <header className="flex items-center justify-between py-6">
         <Wordmark />
         <ThemeToggle />
