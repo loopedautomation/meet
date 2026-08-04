@@ -21,12 +21,18 @@ name: Release Desktop
 # are for local testing only — Gatekeeper rejects them on other machines,
 # and the verify job below fails a tagged release that isn't properly signed.
 #
-# Secrets:
-#   CSC_LINK                     base64 of the Developer ID Application .p12
-#   CSC_KEY_PASSWORD             password for that .p12
-#   APPLE_ID                     Apple account email for notarization
-#   APPLE_APP_SPECIFIC_PASSWORD  app-specific password, NOT the account password
-#   APPLE_TEAM_ID                10-character team id
+# Secrets (shared org-wide with looped whisper — same Developer ID team, same
+# App Store Connect key, so the names match that repo and the values are set
+# once at the organisation level):
+#   MACOS_CERTIFICATE_P12_BASE64  base64 of the Developer ID Application .p12
+#   MACOS_CERTIFICATE_PASSWORD    password for that .p12
+#   APPLE_API_KEY_ID              App Store Connect key id
+#   APPLE_API_ISSUER_ID           issuer id for that key
+#   APPLE_API_PRIVATE_KEY_BASE64  base64 of the .p8 private key
+#
+# Notarization uses an App Store Connect API key rather than an Apple ID and
+# app-specific password: it isn't tied to a personal account, survives 2FA
+# changes, and can be revoked on its own.
 
 on:
   workflow_dispatch:
@@ -63,37 +69,51 @@ jobs:
         id: signing
         shell: bash
         env:
-          MAC_CERT: ${{ secrets.CSC_LINK }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          MAC_CERT: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          API_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
         run: |
           sign=false
           notarize=false
           [ -n "$MAC_CERT" ] && sign=true
-          # Notarization needs a signed app AND the full Apple triple; asking
+          # Notarization needs a signed app AND the full API-key triple; asking
           # Apple to notarize an unsigned build just fails slowly.
-          if [ "$sign" = true ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ]; then
+          if [ "$sign" = true ] && [ -n "$API_KEY_ID" ] && [ -n "$API_ISSUER_ID" ] && [ -n "$API_KEY_BASE64" ]; then
             notarize=true
           fi
           echo "sign=$sign" >> "$GITHUB_OUTPUT"
           echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
           echo "sign=$sign notarize=$notarize"
 
+      # electron-builder wants the key as a file on disk, not an env value.
+      # RUNNER_TEMP is wiped when the job ends and never lands in an artifact.
+      - name: Stage App Store Connect key
+        if: steps.signing.outputs.notarize == 'true'
+        shell: bash
+        env:
+          API_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+        run: |
+          printf '%s' "$API_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/apple-api-key.p8"
+          chmod 600 "$RUNNER_TEMP/apple-api-key.p8"
+
       - name: Warn when signing is skipped
         if: steps.signing.outputs.sign != 'true'
         run: |
-          echo "::warning title=Unsigned build::No signing certificate configured — the app will be unsigned and rejected by Gatekeeper. Set CSC_LINK / CSC_KEY_PASSWORD before distributing."
+          echo "::warning title=Unsigned build::No signing certificate configured — the app will be unsigned and rejected by Gatekeeper. Set MACOS_CERTIFICATE_P12_BASE64 / MACOS_CERTIFICATE_PASSWORD before distributing."
 
       - name: Build installers
         working-directory: apps/desktop
         shell: bash
         env:
-          # electron-builder picks these up directly when present.
-          CSC_LINK: ${{ secrets.CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # electron-builder reads CSC_* for signing and APPLE_API_* for
+          # notarization; the org secrets are named for whisper's workflow, so
+          # they're mapped across here rather than duplicated under new names.
+          CSC_LINK: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY: ${{ runner.temp }}/apple-api-key.p8
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Only publish for a tag — a manual run builds artifacts to inspect
