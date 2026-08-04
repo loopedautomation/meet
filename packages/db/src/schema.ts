@@ -25,6 +25,9 @@ export const users = pgTable("users", {
   image: text("image"),
   // Custom status ("in deep work", "back at 3") shown next to the name.
   statusText: text("status_text"),
+  // Presence indicator the member picks: active | away | dnd. The effective
+  // dot combines this with the live online registry (offline beats all).
+  presence: text("presence").notNull().default("active"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -71,6 +74,46 @@ export const invites = pgTable(
   },
   (t) => [check("invites_role_check", sql`${t.role} in ('admin', 'member')`)],
 )
+
+// Desktop sign-in handoff: the shell starts a request with a PKCE-style
+// challenge, the browser session approves it (minting a one-time code), and
+// the shell exchanges code+verifier for a desktop session. Rows are inert
+// after 10 minutes or first use.
+export const desktopAuthRequests = pgTable("desktop_auth_requests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // base64url(sha256(verifier)) — the verifier never leaves the shell.
+  challenge: text("challenge").notNull(),
+  // sha256 of the one-time code; null until a signed-in member approves.
+  codeHash: text("code_hash").unique(),
+  userId: uuid("user_id").references(() => users.id, { onDelete: "cascade" }),
+  consumedAt: timestamp("consumed_at", { withTimezone: true }),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
+// Desktop shell sessions — the server-side store behind the
+// meet_desktop_session cookie (the web session stays the Auth0 SDK cookie;
+// this parallel store exists so devices can be revoked individually).
+export const desktopSessions = pgTable("desktop_sessions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // sha256 of the cookie value; the plaintext token is never stored.
+  tokenHash: text("token_hash").notNull().unique(),
+  userId: uuid("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  deviceName: text("device_name"),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  // Sliding — bumped on activity; stale devices age out.
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
 
 export const channels = pgTable(
   "channels",

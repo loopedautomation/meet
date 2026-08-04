@@ -4,6 +4,7 @@
 // updates ship server-side. What the shell adds is the native layer: tray
 // presence ("who's in #standup" from the menu bar), a global shortcut,
 // notifications, auto-launch.
+const crypto = require("node:crypto")
 const fs = require("node:fs")
 const path = require("node:path")
 const {
@@ -19,6 +20,11 @@ const {
   shell,
   Tray,
 } = require("electron")
+const { autoUpdater } = require("electron-updater")
+
+// Brand icon; electron-builder derives the packaged icns/ico from the same
+// file, this path covers dev runs and Linux/Windows windows.
+const APP_ICON = path.join(__dirname, "..", "build", "icon.png")
 
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json")
 
@@ -42,11 +48,200 @@ let mainWindow = null
 /** @type {Tray | null} */
 let tray = null
 let presenceTimer = null
+let updateTimer = null
+// Set once an update is downloaded and staged — the tray reads this to offer
+// the restart, and the app installs it on quit either way.
+let updateReady = null
+// Most recent channel list handed to the tray, so it can be rebuilt without
+// waiting for the next presence poll.
+let lastChannels = null
 // Last seen occupancy per channel slug — notification edge detection.
 const lastOccupancy = new Map()
 
+// The instance most users want, offered as the prefilled suggestion on the
+// connect screen rather than connected to silently — self-hosting stays
+// visible, and picking it is one click.
+// TODO: flip to https://meet.looped.sh once the hosted instance is live.
+const DEFAULT_SERVER_URL = "https://meet.dev.looped.sh"
+
+/** MEET_SERVER_URL selects the server outright, so dev runs (and scripted or
+ * kiosk deployments) skip the connect screen. It's still only a default:
+ * once a server has been chosen in the app the saved value wins, and
+ * "Change server…" writes an explicit null the env var must not resurrect. */
+function envServerUrl() {
+  const raw = process.env.MEET_SERVER_URL
+  if (!raw) return null
+  try {
+    return new URL(raw).origin
+  } catch {
+    console.warn(`MEET_SERVER_URL is not a valid URL, ignoring: ${raw}`)
+    return null
+  }
+}
+
 function serverUrl() {
-  return loadSettings().serverUrl ?? null
+  const saved = loadSettings().serverUrl
+  return saved !== undefined ? saved : envServerUrl()
+}
+
+/** What the connect screen prefills: the server currently in use if there is
+ * one (so "Change server…" opens on the existing address), else the default. */
+function suggestedServerUrl() {
+  return serverUrl() ?? DEFAULT_SERVER_URL
+}
+
+// ---- Compatibility handshake ----------------------------------------------
+// Mirrors packages/shared/src/protocol.ts, which documents the contract and
+// when to bump — that file is the source of truth. Duplicated rather than
+// imported because this is a plain CommonJS Electron process with no build
+// step, and the alternative (bundling the TS package into the shell) buys
+// nothing for two integers. protocol.test.ts asserts the shared side; the
+// values below must be updated alongside it.
+const CLIENT_PROTOCOL = 1
+/** Oldest server protocol this shell can talk to. */
+const MIN_SERVER_PROTOCOL = 1
+const SERVICE_ID = "looped-meet"
+
+/**
+ * Probe a server and check we can actually talk to it. Every failure mode
+ * returns a message naming the side at fault and the action that fixes it —
+ * "couldn't reach it" and "reached it but it's four versions ahead" are very
+ * different problems for the person typing the address.
+ */
+async function handshake(base) {
+  let body
+  try {
+    const res = await fetch(new URL("/api/health", base), {
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    body = await res.json()
+  } catch {
+    return { ok: false, error: "Couldn't reach a meet server at that address." }
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    body.service !== SERVICE_ID ||
+    typeof body.protocol !== "number" ||
+    typeof body.minClientProtocol !== "number"
+  ) {
+    // Also covers a genuine pre-handshake server — indistinguishable from
+    // here, and either way this shell shouldn't proceed.
+    return {
+      ok: false,
+      error: "That address answered, but it isn't a looped meet server.",
+    }
+  }
+  if (CLIENT_PROTOCOL < body.minClientProtocol) {
+    return {
+      ok: false,
+      error: `That server needs a newer version of looped meet (it runs ${body.version ?? "a newer build"}). Update the app and try again.`,
+    }
+  }
+  if (body.protocol < MIN_SERVER_PROTOCOL) {
+    return {
+      ok: false,
+      error: `That server is too old for this app (it runs ${body.version ?? "an older build"}). It needs upgrading.`,
+    }
+  }
+  return { ok: true, server: body }
+}
+
+// ---- Sign in with browser -------------------------------------------------
+// The browser (already signed into GitHub & co) completes the Auth0 login;
+// the server mints a one-time code that comes back via the looped-meet://
+// deep link (or pasted by hand in dev). The code is PKCE-style bound to
+// this verifier, which never leaves the process — a leaked deep-link URL
+// can't be exchanged by anyone else.
+let pendingVerifier = null
+
+async function startBrowserSignIn() {
+  const base = serverUrl()
+  if (!base) return { ok: false, error: "Connect to a server first." }
+  pendingVerifier = crypto.randomBytes(32).toString("base64url")
+  const challenge = crypto
+    .createHash("sha256")
+    .update(pendingVerifier)
+    .digest("base64url")
+  try {
+    const res = await fetch(new URL("/api/desktop/auth/start", base), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ challenge }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    const { requestId } = await res.json()
+    await shell.openExternal(
+      new URL(`/desktop/auth?request=${requestId}`, base).toString(),
+    )
+    return { ok: true }
+  } catch {
+    pendingVerifier = null
+    return { ok: false, error: "Couldn't start sign-in with that server." }
+  }
+}
+
+/** Exchange the one-time code for the desktop session cookie. Uses the
+ * default session's fetch so the Set-Cookie lands in the same cookie jar
+ * the main window and tray polling use. */
+async function completeBrowserSignIn(code) {
+  const base = serverUrl()
+  if (!base) return { ok: false, error: "Connect to a server first." }
+  if (!pendingVerifier) {
+    return { ok: false, error: "Start the sign-in from the app first." }
+  }
+  try {
+    const res = await session.defaultSession.fetch(
+      new URL("/api/desktop/session", base).toString(),
+      {
+        method: "POST",
+        credentials: "include",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          code,
+          verifier: pendingVerifier,
+          deviceName: `${process.platform} · looped meet ${app.getVersion()}`,
+        }),
+        signal: AbortSignal.timeout(5000),
+      },
+    )
+    if (!res.ok) {
+      return { ok: false, error: "That code is invalid, expired, or used." }
+    }
+    pendingVerifier = null
+    BrowserWindow.getAllWindows().forEach((w) => w.close())
+    showWorkspace()
+    void pollPresence()
+    return { ok: true }
+  } catch {
+    return { ok: false, error: "Couldn't reach the server." }
+  }
+}
+
+/** looped-meet://auth?code=...&server=... from the OS (deep link). The
+ * server param must match the configured server — a link from anywhere
+ * else is ignored rather than letting it steer the exchange. */
+function handleDeepLink(rawUrl) {
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    return
+  }
+  if (url.protocol !== "looped-meet:" || url.hostname !== "auth") return
+  const code = url.searchParams.get("code")
+  const from = url.searchParams.get("server")
+  const base = serverUrl()
+  if (!code || !base || !from || new URL(from).origin !== new URL(base).origin)
+    return
+  void completeBrowserSignIn(code)
+}
+
+function deepLinkFromArgv(argv) {
+  return argv.find((arg) => arg.startsWith("looped-meet://")) ?? null
 }
 
 // 16x16 monochrome dot — a placeholder template icon until brand art lands.
@@ -54,25 +249,51 @@ const TRAY_ICON = nativeImage.createFromDataURL(
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAcElEQVR4nKWTwQ3AIAwDL1U3yJhs1jHTR6WCQoWa4Bd62TgWmNkFYGYXtRoAVb2f8xNJPCFXm3AEwMx2YFmA1t3rIN45CKMYm4gzmJcirD5AJZFEHRJTBBRoS8T2H4hOsWXQfSjRJdpv7B/pE2Y/0w3IlUbBB6NC1QAAAABJRU5ErkJggg==",
 )
 
-function createConnectWindow() {
+function createConnectWindow(step) {
   const win = new BrowserWindow({
     width: 460,
-    height: 320,
+    height: 380,
     resizable: false,
+    icon: APP_ICON,
     webPreferences: {
       preload: path.join(__dirname, "connect-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
   })
-  void win.loadFile(path.join(__dirname, "connect.html"))
+  void win.loadFile(path.join(__dirname, "connect.html"), {
+    query: step ? { step } : {},
+  })
   return win
+}
+
+/** Whether the configured server has accounts and this shell isn't signed
+ * in — if so, launching lands on the browser sign-in step, not a workspace
+ * that would only show the web login inside the shell. */
+async function needsSignIn() {
+  const base = serverUrl()
+  if (!base) return false
+  try {
+    const res = await session.defaultSession.fetch(
+      new URL("/api/me", base).toString(),
+      { credentials: "include", signal: AbortSignal.timeout(5000) },
+    )
+    const data = await res.json()
+    return data.authMode !== "none" && !data.user
+  } catch {
+    return false
+  }
 }
 
 function createMainWindow(url) {
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
+    icon: APP_ICON,
+    // Frameless-feeling chrome: the web app's sidebar header is the drag
+    // region (it detects the Electron UA and pads for the traffic lights).
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -128,6 +349,9 @@ async function fetchChannels() {
 
 function rebuildTray(channels) {
   if (!tray) return
+  // Remembered so callers that only change one part of the menu (the update
+  // item) can rebuild without knowing the current presence state.
+  lastChannels = channels
   const channelItems =
     channels === null
       ? [{ label: "Sign in in the app to see channels", enabled: false }]
@@ -143,8 +367,20 @@ function rebuildTray(channels) {
                 : `#${c.slug}`,
             click: () => showWorkspace(`/c/${c.slug}`),
           }))
+  // Only present once an update is staged — the restart is offered, never
+  // forced, and sits at the top where it's actually noticed.
+  const updateItems = updateReady
+    ? [
+        {
+          label: `Restart to update to ${updateReady.version}`,
+          click: () => restartToUpdate(),
+        },
+        { type: "separator" },
+      ]
+    : []
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      ...updateItems,
       { label: "Open looped meet", click: () => showWorkspace() },
       { type: "separator" },
       ...channelItems,
@@ -167,6 +403,58 @@ function rebuildTray(channels) {
       { label: "Quit", role: "quit" },
     ]),
   )
+}
+
+// ---- Auto-update ----------------------------------------------------------
+// Updates come from the GitHub Releases feed the release workflow publishes
+// (electron-builder writes latest-mac.yml alongside the zip). macOS requires
+// the update to be signed by the same Developer ID as the installed app —
+// an unsigned build silently never updates, which is part of why the release
+// workflow fails a tagged build that isn't properly signed.
+
+/** How often to re-check while the app stays open. Tray apps run for weeks,
+ * so a launch-only check would leave long-lived sessions permanently stale. */
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+function initAutoUpdates() {
+  // electron-updater throws without an app-update.yml, which only exists in a
+  // packaged build. Dev runs skip it entirely rather than crash on launch.
+  if (!app.isPackaged) return
+
+  // Download in the background, but never restart under the user — someone
+  // mid-meeting must not have the app quit out from under them. The update
+  // installs on the next quit, or immediately if they pick the tray item.
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on("update-downloaded", (info) => {
+    updateReady = info
+    rebuildTray(lastChannels)
+    new Notification({
+      title: "Update ready",
+      body: `looped meet ${info.version} installs when you restart.`,
+    }).show()
+  })
+
+  // Update failures are never fatal and never interrupt: a server that can't
+  // be reached, a rate limit, or an unsigned build all land here, and the
+  // right response is to carry on and retry on the next tick.
+  autoUpdater.on("error", (err) => {
+    console.warn("auto-update failed:", err?.message ?? err)
+  })
+
+  void autoUpdater.checkForUpdates().catch(() => {})
+  updateTimer = setInterval(() => {
+    void autoUpdater.checkForUpdates().catch(() => {})
+  }, UPDATE_CHECK_INTERVAL_MS)
+}
+
+/** Quit and apply a staged update. Windows are closed explicitly first:
+ * `window-all-closed` is preventDefault'd to keep this a tray app, so the
+ * usual quit path would otherwise leave them hanging around. */
+function restartToUpdate() {
+  BrowserWindow.getAllWindows().forEach((w) => w.destroy())
+  autoUpdater.quitAndInstall()
 }
 
 function notifyJoins(channels) {
@@ -195,7 +483,36 @@ async function pollPresence() {
   notifyJoins(channels)
 }
 
+// Deep links need a single instance: on Windows/Linux the OS launches a
+// second process with the URL in argv, which we forward to the first.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+}
+app.on("second-instance", (_e, argv) => {
+  const link = deepLinkFromArgv(argv)
+  if (link) handleDeepLink(link)
+  else showWorkspace()
+})
+// macOS delivers deep links here; register before ready.
+app.on("open-url", (e, url) => {
+  e.preventDefault()
+  handleDeepLink(url)
+})
+if (app.isPackaged) {
+  app.setAsDefaultProtocolClient("looped-meet")
+} else if (process.argv[1]) {
+  // Dev: the protocol has to point at electron + this project explicitly.
+  app.setAsDefaultProtocolClient("looped-meet", process.execPath, [
+    path.resolve(process.argv[1]),
+  ])
+}
+
 app.whenReady().then(() => {
+  // Packaged macOS builds get the icon from the .icns; dev runs need it set
+  // on the dock explicitly.
+  if (process.platform === "darwin" && !app.isPackaged) {
+    app.dock?.setIcon(nativeImage.createFromPath(APP_ICON))
+  }
   // The member UI needs camera/mic (and screenshare via the handler below);
   // grant media to the configured server only.
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
@@ -219,31 +536,45 @@ app.whenReady().then(() => {
     } catch {
       return { ok: false, error: "That doesn't look like a URL." }
     }
-    try {
-      const res = await fetch(new URL("/api/health", base), {
-        signal: AbortSignal.timeout(5000),
-      })
-      if (!res.ok) throw new Error(String(res.status))
-    } catch {
-      return { ok: false, error: "Couldn't reach a meet server at that address." }
-    }
+    const shake = await handshake(base)
+    if (!shake.ok) return { ok: false, error: shake.error }
     saveSettings({ serverUrl: base })
-    BrowserWindow.getAllWindows().forEach((w) => w.close())
-    showWorkspace()
-    return { ok: true }
+    // Servers with accounts get the browser sign-in step; auth-less
+    // deployments (and already-signed-in shells) go straight in.
+    const signIn = await needsSignIn()
+    if (!signIn) {
+      BrowserWindow.getAllWindows().forEach((w) => w.close())
+      showWorkspace()
+    }
+    return { ok: true, needsSignIn: signIn }
   })
+
+  ipcMain.handle("suggested-server", () => suggestedServerUrl())
+  ipcMain.handle("sign-in-with-browser", () => startBrowserSignIn())
+  ipcMain.handle("submit-auth-code", (_e, code) =>
+    completeBrowserSignIn(String(code ?? "").trim()),
+  )
 
   tray = new Tray(TRAY_ICON)
   tray.setToolTip("looped meet")
   rebuildTray(null)
   presenceTimer = setInterval(() => void pollPresence(), 15_000)
   void pollPresence()
+  initAutoUpdates()
 
   // One keystroke from anywhere back to the workspace.
   globalShortcut.register("CommandOrControl+Shift+M", () => showWorkspace())
 
-  if (serverUrl()) showWorkspace()
-  else createConnectWindow()
+  if (serverUrl()) {
+    // Signed-out shells land on the browser sign-in step rather than a
+    // workspace that would only offer the in-window web login.
+    void needsSignIn().then((signIn) => {
+      if (signIn) createConnectWindow("signin")
+      else showWorkspace()
+    })
+  } else {
+    createConnectWindow()
+  }
 
   app.on("activate", () => {
     if (serverUrl()) showWorkspace()
@@ -259,4 +590,5 @@ app.on("window-all-closed", (e) => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll()
   if (presenceTimer) clearInterval(presenceTimer)
+  if (updateTimer) clearInterval(updateTimer)
 })

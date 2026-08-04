@@ -57,7 +57,7 @@ export function WaitingRoom({
   }, [room, localParticipant, prefs, onAdmitted])
 
   return (
-    <main className="flex min-h-dvh flex-col items-center justify-center gap-6 px-6">
+    <main className="flex min-h-full flex-col items-center justify-center gap-6 px-6">
       <Wordmark />
       {denied ? (
         <p className="text-base-content/70">

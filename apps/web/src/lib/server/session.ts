@@ -1,6 +1,11 @@
 import { eq, getDb, schema, sql } from "@meet/db"
+import { cookies } from "next/headers"
 import { auth0 } from "./auth0"
 import { authMode } from "./authMode"
+import {
+  DESKTOP_SESSION_COOKIE,
+  validateDesktopSession,
+} from "./desktopSession"
 
 // The session seam: every server-side consumer of "who is this request"
 // goes through here, so a future identity swap (BYO OIDC, local accounts)
@@ -13,6 +18,8 @@ export type SessionUser = {
   email: string | null
   name: string | null
   image: string | null
+  /** Presence indicator the member picked (active | away | dnd). */
+  presence: string
   /** null = authenticated but not a member (no invite accepted yet). */
   role: "owner" | "admin" | "member" | null
 }
@@ -26,6 +33,27 @@ export type SessionUser = {
  */
 export async function getSessionUser(): Promise<SessionUser | null> {
   if (authMode() !== "auth0") return null
+
+  // Desktop shell branch: an opaque cookie backed by desktop_sessions,
+  // minted by the browser-handoff sign-in. The user row already exists
+  // (created during the browser login), so no upsert here.
+  const desktopToken = (await cookies()).get(DESKTOP_SESSION_COOKIE)?.value
+  if (desktopToken) {
+    const user = await validateDesktopSession(desktopToken)
+    if (user) {
+      const membership = await resolveMembership(user.id)
+      return {
+        id: user.id,
+        auth0Sub: user.auth0Sub,
+        email: user.email,
+        name: user.name,
+        image: user.image,
+        presence: user.presence,
+        role: (membership?.role as SessionUser["role"]) ?? null,
+      }
+    }
+  }
+
   const session = await auth0().getSession()
   if (!session?.user?.sub) return null
   const { sub, email, name, picture } = session.user
@@ -50,11 +78,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     })
     .returning()
 
-  let membership = await db.query.memberships.findFirst({
-    where: eq(schema.memberships.userId, user.id),
-  })
-  if (!membership) membership = await claimOwnerIfFirst(user.id)
-  if (!membership) membership = await joinIfPublic(user.id)
+  const membership = await resolveMembership(user.id)
 
   return {
     id: user.id,
@@ -62,8 +86,21 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     email: user.email,
     name: user.name,
     image: user.image,
+    presence: user.presence,
     role: (membership?.role as SessionUser["role"]) ?? null,
   }
+}
+
+/** Membership resolution shared by both identity branches: existing row,
+ * else first-login owner claim, else public-mode join. */
+async function resolveMembership(userId: string) {
+  const db = getDb()
+  let membership = await db.query.memberships.findFirst({
+    where: eq(schema.memberships.userId, userId),
+  })
+  if (!membership) membership = await claimOwnerIfFirst(userId)
+  if (!membership) membership = await joinIfPublic(userId)
+  return membership
 }
 
 /** First login on a fresh instance claims the owner role. The insert is

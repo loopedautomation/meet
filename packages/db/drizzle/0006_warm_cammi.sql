@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN "presence" text DEFAULT 'active' NOT NULL;

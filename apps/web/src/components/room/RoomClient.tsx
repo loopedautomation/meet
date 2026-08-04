@@ -17,6 +17,7 @@ import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
 import {
   $autoGain,
+  $joinMuted,
   $sendQuality,
   AUTO_RESOLUTION,
   SEND_QUALITY_RESOLUTION,
@@ -256,6 +257,43 @@ export function RoomClient({
     },
     [slug, mode, tokenEndpoint],
   )
+
+  // Channel calls join Discord-style: clicking the channel IS joining, no
+  // lobby stop. The display name comes from the last call or the account;
+  // mic honors the join-muted preference, camera always starts off (nobody
+  // wants an unannounced camera). Guests without a resolvable name (and any
+  // join failure) fall back to the lobby.
+  const isChannelCall = mode === "channel"
+  const [autoJoining, setAutoJoining] = useState(isChannelCall)
+  const autoJoinTried = useRef(false)
+  useEffect(() => {
+    if (!isChannelCall || autoJoinTried.current || session || rejoining) return
+    autoJoinTried.current = true
+    ;(async () => {
+      let name = ""
+      try {
+        name = localStorage.getItem("displayName") ?? ""
+      } catch {}
+      if (!name) {
+        try {
+          const d = await fetch("/api/me").then((r) => (r.ok ? r.json() : null))
+          name = d?.user?.name ?? d?.user?.email ?? ""
+        } catch {}
+      }
+      if (!name) {
+        setAutoJoining(false)
+        return
+      }
+      await handleJoin({
+        displayName: name,
+        audioEnabled: !$joinMuted.get(),
+        videoEnabled: false,
+        audioDeviceId: readDevicePref("audioinput") || undefined,
+        videoDeviceId: readDevicePref("videoinput") || undefined,
+      })
+      setAutoJoining(false)
+    })()
+  }, [isChannelCall, session, rejoining, handleJoin])
 
   // A refresh rejoins the meeting automatically; only an explicit leave (or a
   // server-side disconnect) drops back to the lobby.
@@ -555,7 +593,7 @@ export function RoomClient({
     // the host key (creator's browser) or the management password, exchanged
     // below for this room's key.
     return (
-      <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+      <main className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
         <p className="animate-pulse font-medium text-lg">
           This meeting hasn't started yet
         </p>
@@ -572,7 +610,7 @@ export function RoomClient({
 
   if (rejoining) {
     return (
-      <main className="flex min-h-dvh items-center justify-center gap-3">
+      <main className="flex min-h-full items-center justify-center gap-3">
         <span className="loading loading-spinner" />
         Rejoining…
       </main>
@@ -580,6 +618,14 @@ export function RoomClient({
   }
 
   if (!session) {
+    if (autoJoining) {
+      return (
+        <main className="flex min-h-full items-center justify-center gap-3">
+          <span className="loading loading-spinner" />
+          Joining…
+        </main>
+      )
+    }
     return <Lobby slug={slug} onJoin={handleJoin} />
   }
 
@@ -665,7 +711,7 @@ export function RoomClient({
             "Check that the LiveKit server is running and reachable.",
         )
       }}
-      className="h-dvh"
+      className="h-full"
     >
       <QueryClientProvider client={queryClient}>
         {inWaitingRoom ? (

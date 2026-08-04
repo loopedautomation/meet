@@ -1,0 +1,175 @@
+name: Release Desktop
+
+# Build the macOS Electron shell, sign and notarize it, and upload the
+# installers to a GitHub Release. Windows and Linux come later — this
+# workflow is macOS-only by design, not by omission.
+#
+# Triggers:
+#   - desktop version tag (e.g. desktop-v0.1.0) -> full release build
+#   - manual dispatch                           -> build artifacts only
+#
+# The tag is deliberately prefixed: `v0.1.0` already means "server images"
+# (see publish-images.yaml), and the desktop app versions independently of
+# the server it talks to.
+#
+# The release is created as a DRAFT. Nothing reaches users until someone
+# opens it, checks the installers, and publishes.
+#
+# Signing degrades gracefully, matching publish-images.yaml: without
+# credentials the build still runs and produces an unsigned app, so
+# packaging never blocks on secrets that aren't set up yet. Unsigned builds
+# are for local testing only — Gatekeeper rejects them on other machines,
+# and the verify job below fails a tagged release that isn't properly signed.
+#
+# Secrets:
+#   CSC_LINK                     base64 of the Developer ID Application .p12
+#   CSC_KEY_PASSWORD             password for that .p12
+#   APPLE_ID                     Apple account email for notarization
+#   APPLE_APP_SPECIFIC_PASSWORD  app-specific password, NOT the account password
+#   APPLE_TEAM_ID                10-character team id
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["desktop-v[0-9]*.[0-9]*.[0-9]*"]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build macOS
+    runs-on: macos-14
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install
+
+      # Resolved in one place so the build step stays a single command.
+      # electron-builder reads CSC_LINK from the env; all that needs deciding
+      # here is whether to sign at all, and whether to notarize.
+      - name: Resolve signing configuration
+        id: signing
+        shell: bash
+        env:
+          MAC_CERT: ${{ secrets.CSC_LINK }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          sign=false
+          notarize=false
+          [ -n "$MAC_CERT" ] && sign=true
+          # Notarization needs a signed app AND the full Apple triple; asking
+          # Apple to notarize an unsigned build just fails slowly.
+          if [ "$sign" = true ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            notarize=true
+          fi
+          echo "sign=$sign" >> "$GITHUB_OUTPUT"
+          echo "notarize=$notarize" >> "$GITHUB_OUTPUT"
+          echo "sign=$sign notarize=$notarize"
+
+      - name: Warn when signing is skipped
+        if: steps.signing.outputs.sign != 'true'
+        run: |
+          echo "::warning title=Unsigned build::No signing certificate configured — the app will be unsigned and rejected by Gatekeeper. Set CSC_LINK / CSC_KEY_PASSWORD before distributing."
+
+      - name: Build installers
+        working-directory: apps/desktop
+        shell: bash
+        env:
+          # electron-builder picks these up directly when present.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Only publish for a tag — a manual run builds artifacts to inspect
+          # without creating or touching a release.
+          if [ "${{ startsWith(github.ref, 'refs/tags/desktop-v') }}" = "true" ]; then
+            args="--publish always"
+          else
+            args="--publish never"
+          fi
+
+          if [ "${{ steps.signing.outputs.sign }}" != "true" ]; then
+            # Without this electron-builder hunts the runner keychain for any
+            # identity and fails confusingly when it finds none; explicitly
+            # opting out produces a clean unsigned build instead.
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          if [ "${{ steps.signing.outputs.notarize }}" = "true" ]; then
+            args="$args -c.mac.notarize=true"
+          fi
+
+          pnpm exec electron-builder --config electron-builder.yml $args
+
+      # Kept even on a tagged run: the release is a draft, and having the
+      # exact binaries attached to the workflow run makes it possible to
+      # inspect what was built without publishing anything.
+      - name: Upload installers
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macOS
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            # The update feed electron-updater polls — without it on the
+            # release, installed apps never see the new version.
+            apps/desktop/dist/latest-mac.yml
+
+  # Signing is easy to get subtly wrong — a build can be "signed" with the
+  # wrong identity, or notarized without the ticket being stapled — and the
+  # symptom only shows up on a user's machine as "app is damaged". Verify the
+  # real artifact with Apple's own tooling instead of trusting the build log.
+  verify:
+    name: Verify signature and notarization
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    runs-on: macos-14
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: desktop-macOS
+          path: dist
+
+      - name: Check signature and notarization
+        run: |
+          set -euo pipefail
+          dmg="$(ls dist/*.dmg | head -1)"
+          echo "Verifying $dmg"
+
+          hdiutil attach "$dmg" -nobrowse -mountpoint /tmp/meet-verify
+          app="$(ls -d /tmp/meet-verify/*.app | head -1)"
+          trap 'hdiutil detach /tmp/meet-verify || true' EXIT
+
+          echo "--- codesign ---"
+          if ! codesign --verify --deep --strict --verbose=2 "$app"; then
+            echo "::error title=Unsigned build::codesign verification failed — this build is not distributable."
+            exit 1
+          fi
+
+          echo "--- gatekeeper ---"
+          # spctl mirrors what a user's Mac actually does on first launch,
+          # including whether the notarization ticket is stapled.
+          if ! spctl --assess --type execute --verbose=4 "$app"; then
+            echo "::error title=Gatekeeper rejection::spctl rejected the app — it is unsigned, or notarized without the ticket stapled."
+            exit 1
+          fi
+
+          echo "Signature and notarization verified."
