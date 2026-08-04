@@ -21,6 +21,7 @@ import { ScreenShareTile } from "@/components/room/ScreenShareTile"
 import { WhiteboardStage } from "@/components/room/WhiteboardStage"
 import { useAgentControlToasts } from "@/hooks/useAgentControlToasts"
 import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
+import { useIOSSpeakerBias } from "@/hooks/useIOSSpeakerBias"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { useKnockAlerts } from "@/hooks/useKnockAlerts"
 import {
@@ -45,6 +46,7 @@ export function MeetingView({
   startedAt?: number
 }) {
   useJoinLeaveSounds()
+  useIOSSpeakerBias()
   useKnockAlerts(slug)
   useAgentControlToasts()
   useAwayOnHidden()
