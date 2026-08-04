@@ -1,14 +1,47 @@
-# Minimal packaging config — unsigned local builds via `pnpm package`.
-# Signing/notarization and update feeds come with the release pipeline.
+# Packaging config. Local `pnpm package` runs unsigned; the release workflow
+# (.github/workflows/release-desktop.yaml) supplies signing credentials via
+# env and publishes to GitHub Releases.
 appId: sh.looped.meet
 productName: looped meet
 directories:
   output: dist
+  buildResources: build
 files:
   - src/**
   - package.json
+
+# Publish to GitHub Releases. electron-builder only uploads when invoked with
+# `--publish`, so local packaging never touches the remote.
+publish:
+  provider: github
+  owner: loopedautomation
+  repo: meet
+
 mac:
   category: public.app-category.productivity
+  # Notarization is refused without the hardened runtime.
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  # Apple silicon only for now — no x64 or universal build. Intel Macs can be
+  # added later by appending `x64` to these arch lists.
+  target:
+    - target: dmg
+      arch: [arm64]
+    # zip alongside dmg — electron-updater can only consume the zip on macOS,
+    # so dropping it would silently break auto-updates.
+    - target: zip
+      arch: [arm64]
+  # macOS shows these strings in the permission prompts; without them the
+  # prompt is refused outright and capture silently fails.
+  extendInfo:
+    NSCameraUsageDescription: looped meet uses your camera for video meetings.
+    NSMicrophoneUsageDescription: looped meet uses your microphone for meetings.
+
+# Windows and Linux targets come later — macOS is the only platform the
+# release pipeline builds today.
+
 protocols:
   - name: looped meet
     schemes: [looped-meet]
