@@ -20,6 +20,7 @@ const {
   shell,
   Tray,
 } = require("electron")
+const { autoUpdater } = require("electron-updater")
 
 // Brand icon; electron-builder derives the packaged icns/ico from the same
 // file, this path covers dev runs and Linux/Windows windows.
@@ -47,11 +48,105 @@ let mainWindow = null
 /** @type {Tray | null} */
 let tray = null
 let presenceTimer = null
+let updateTimer = null
+// Set once an update is downloaded and staged — the tray reads this to offer
+// the restart, and the app installs it on quit either way.
+let updateReady = null
+// Most recent channel list handed to the tray, so it can be rebuilt without
+// waiting for the next presence poll.
+let lastChannels = null
 // Last seen occupancy per channel slug — notification edge detection.
 const lastOccupancy = new Map()
 
+// The instance most users want, offered as the prefilled suggestion on the
+// connect screen rather than connected to silently — self-hosting stays
+// visible, and picking it is one click.
+// TODO: flip to https://meet.looped.sh once the hosted instance is live.
+const DEFAULT_SERVER_URL = "https://meet.dev.looped.sh"
+
+/** MEET_SERVER_URL selects the server outright, so dev runs (and scripted or
+ * kiosk deployments) skip the connect screen. It's still only a default:
+ * once a server has been chosen in the app the saved value wins, and
+ * "Change server…" writes an explicit null the env var must not resurrect. */
+function envServerUrl() {
+  const raw = process.env.MEET_SERVER_URL
+  if (!raw) return null
+  try {
+    return new URL(raw).origin
+  } catch {
+    console.warn(`MEET_SERVER_URL is not a valid URL, ignoring: ${raw}`)
+    return null
+  }
+}
+
 function serverUrl() {
-  return loadSettings().serverUrl ?? null
+  const saved = loadSettings().serverUrl
+  return saved !== undefined ? saved : envServerUrl()
+}
+
+/** What the connect screen prefills: the server currently in use if there is
+ * one (so "Change server…" opens on the existing address), else the default. */
+function suggestedServerUrl() {
+  return serverUrl() ?? DEFAULT_SERVER_URL
+}
+
+// ---- Compatibility handshake ----------------------------------------------
+// Mirrors packages/shared/src/protocol.ts, which documents the contract and
+// when to bump — that file is the source of truth. Duplicated rather than
+// imported because this is a plain CommonJS Electron process with no build
+// step, and the alternative (bundling the TS package into the shell) buys
+// nothing for two integers. protocol.test.ts asserts the shared side; the
+// values below must be updated alongside it.
+const CLIENT_PROTOCOL = 1
+/** Oldest server protocol this shell can talk to. */
+const MIN_SERVER_PROTOCOL = 1
+const SERVICE_ID = "looped-meet"
+
+/**
+ * Probe a server and check we can actually talk to it. Every failure mode
+ * returns a message naming the side at fault and the action that fixes it —
+ * "couldn't reach it" and "reached it but it's four versions ahead" are very
+ * different problems for the person typing the address.
+ */
+async function handshake(base) {
+  let body
+  try {
+    const res = await fetch(new URL("/api/health", base), {
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) throw new Error(String(res.status))
+    body = await res.json()
+  } catch {
+    return { ok: false, error: "Couldn't reach a meet server at that address." }
+  }
+
+  if (
+    !body ||
+    typeof body !== "object" ||
+    body.service !== SERVICE_ID ||
+    typeof body.protocol !== "number" ||
+    typeof body.minClientProtocol !== "number"
+  ) {
+    // Also covers a genuine pre-handshake server — indistinguishable from
+    // here, and either way this shell shouldn't proceed.
+    return {
+      ok: false,
+      error: "That address answered, but it isn't a looped meet server.",
+    }
+  }
+  if (CLIENT_PROTOCOL < body.minClientProtocol) {
+    return {
+      ok: false,
+      error: `That server needs a newer version of looped meet (it runs ${body.version ?? "a newer build"}). Update the app and try again.`,
+    }
+  }
+  if (body.protocol < MIN_SERVER_PROTOCOL) {
+    return {
+      ok: false,
+      error: `That server is too old for this app (it runs ${body.version ?? "an older build"}). It needs upgrading.`,
+    }
+  }
+  return { ok: true, server: body }
 }
 
 // ---- Sign in with browser -------------------------------------------------
@@ -254,6 +349,9 @@ async function fetchChannels() {
 
 function rebuildTray(channels) {
   if (!tray) return
+  // Remembered so callers that only change one part of the menu (the update
+  // item) can rebuild without knowing the current presence state.
+  lastChannels = channels
   const channelItems =
     channels === null
       ? [{ label: "Sign in in the app to see channels", enabled: false }]
@@ -269,8 +367,20 @@ function rebuildTray(channels) {
                 : `#${c.slug}`,
             click: () => showWorkspace(`/c/${c.slug}`),
           }))
+  // Only present once an update is staged — the restart is offered, never
+  // forced, and sits at the top where it's actually noticed.
+  const updateItems = updateReady
+    ? [
+        {
+          label: `Restart to update to ${updateReady.version}`,
+          click: () => restartToUpdate(),
+        },
+        { type: "separator" },
+      ]
+    : []
   tray.setContextMenu(
     Menu.buildFromTemplate([
+      ...updateItems,
       { label: "Open looped meet", click: () => showWorkspace() },
       { type: "separator" },
       ...channelItems,
@@ -293,6 +403,58 @@ function rebuildTray(channels) {
       { label: "Quit", role: "quit" },
     ]),
   )
+}
+
+// ---- Auto-update ----------------------------------------------------------
+// Updates come from the GitHub Releases feed the release workflow publishes
+// (electron-builder writes latest-mac.yml alongside the zip). macOS requires
+// the update to be signed by the same Developer ID as the installed app —
+// an unsigned build silently never updates, which is part of why the release
+// workflow fails a tagged build that isn't properly signed.
+
+/** How often to re-check while the app stays open. Tray apps run for weeks,
+ * so a launch-only check would leave long-lived sessions permanently stale. */
+const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
+
+function initAutoUpdates() {
+  // electron-updater throws without an app-update.yml, which only exists in a
+  // packaged build. Dev runs skip it entirely rather than crash on launch.
+  if (!app.isPackaged) return
+
+  // Download in the background, but never restart under the user — someone
+  // mid-meeting must not have the app quit out from under them. The update
+  // installs on the next quit, or immediately if they pick the tray item.
+  autoUpdater.autoDownload = true
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on("update-downloaded", (info) => {
+    updateReady = info
+    rebuildTray(lastChannels)
+    new Notification({
+      title: "Update ready",
+      body: `looped meet ${info.version} installs when you restart.`,
+    }).show()
+  })
+
+  // Update failures are never fatal and never interrupt: a server that can't
+  // be reached, a rate limit, or an unsigned build all land here, and the
+  // right response is to carry on and retry on the next tick.
+  autoUpdater.on("error", (err) => {
+    console.warn("auto-update failed:", err?.message ?? err)
+  })
+
+  void autoUpdater.checkForUpdates().catch(() => {})
+  updateTimer = setInterval(() => {
+    void autoUpdater.checkForUpdates().catch(() => {})
+  }, UPDATE_CHECK_INTERVAL_MS)
+}
+
+/** Quit and apply a staged update. Windows are closed explicitly first:
+ * `window-all-closed` is preventDefault'd to keep this a tray app, so the
+ * usual quit path would otherwise leave them hanging around. */
+function restartToUpdate() {
+  BrowserWindow.getAllWindows().forEach((w) => w.destroy())
+  autoUpdater.quitAndInstall()
 }
 
 function notifyJoins(channels) {
@@ -374,14 +536,8 @@ app.whenReady().then(() => {
     } catch {
       return { ok: false, error: "That doesn't look like a URL." }
     }
-    try {
-      const res = await fetch(new URL("/api/health", base), {
-        signal: AbortSignal.timeout(5000),
-      })
-      if (!res.ok) throw new Error(String(res.status))
-    } catch {
-      return { ok: false, error: "Couldn't reach a meet server at that address." }
-    }
+    const shake = await handshake(base)
+    if (!shake.ok) return { ok: false, error: shake.error }
     saveSettings({ serverUrl: base })
     // Servers with accounts get the browser sign-in step; auth-less
     // deployments (and already-signed-in shells) go straight in.
@@ -393,6 +549,7 @@ app.whenReady().then(() => {
     return { ok: true, needsSignIn: signIn }
   })
 
+  ipcMain.handle("suggested-server", () => suggestedServerUrl())
   ipcMain.handle("sign-in-with-browser", () => startBrowserSignIn())
   ipcMain.handle("submit-auth-code", (_e, code) =>
     completeBrowserSignIn(String(code ?? "").trim()),
@@ -403,6 +560,7 @@ app.whenReady().then(() => {
   rebuildTray(null)
   presenceTimer = setInterval(() => void pollPresence(), 15_000)
   void pollPresence()
+  initAutoUpdates()
 
   // One keystroke from anywhere back to the workspace.
   globalShortcut.register("CommandOrControl+Shift+M", () => showWorkspace())
@@ -432,4 +590,5 @@ app.on("window-all-closed", (e) => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll()
   if (presenceTimer) clearInterval(presenceTimer)
+  if (updateTimer) clearInterval(updateTimer)
 })
