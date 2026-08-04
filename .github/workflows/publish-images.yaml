@@ -4,16 +4,25 @@ name: Publish Images
 # Container Registry (ghcr.io/loopedautomation/meet-<service>), so the
 # prod box never builds — its compose only pulls (see docker-compose.yaml).
 #
+# Promotion flow:
+#   feature --PR--> next --merge--> dev --tag v*--> main
+#
 # Triggers:
-#   - push to `main`                 -> rolling :latest image
+#   - push to `dev`                  -> rolling :dev image, deployed to the
+#                                       dev environment (meet.dev.looped.sh)
+#   - push to `main`                 -> rolling :latest image, deployed to prod
 #   - version tag push (e.g. v0.1.0) -> pinned :<version> image
 #   - manual dispatch
 # Every image also gets a :sha-<short> tag for traceability.
+#
+# The :dev and :latest tags are deliberately distinct. docker-compose.yaml
+# defaults IMAGE_TAG to `latest`, so a dev build sharing that tag would
+# silently replace what production pulls on its next restart.
 
 on:
   workflow_dispatch:
   push:
-    branches: ["main"]
+    branches: ["main", "dev"]
     tags: ["v[0-9]*.[0-9]*.[0-9]*"]
 
 concurrency:
@@ -58,6 +67,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=sha,prefix=sha-
 
       - uses: docker/build-push-action@v6
@@ -75,22 +85,43 @@ jobs:
             NEXT_PUBLIC_POSTHOG_KEY=${{ secrets.POSTHOG_KEY }}
 
   # Tell Coolify to redeploy once ALL images are published, so it pulls the
-  # freshly-pushed images instead of racing the build on git push. No-ops
-  # until the COOLIFY_DEPLOY_WEBHOOK secret is set.
+  # freshly-pushed images instead of racing the build on git push.
+  #
+  # One job serves both environments: `dev` redeploys meet.dev.looped.sh from
+  # :dev, `main` redeploys production from :latest. Each no-ops until its own
+  # webhook secret is set, so wiring up dev can't disturb prod.
   deploy:
-    name: Trigger Coolify deploy
+    name: Trigger Coolify deploy (${{ github.ref_name }})
     needs: publish
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger Coolify redeploy
+      # Deliberately two steps rather than one with a selected webhook: in a
+      # `${{ cond && A || B }}` expression an unset A is falsy and falls
+      # through to B, so a dev push with no dev webhook configured would
+      # redeploy PRODUCTION. Separate steps gated on the ref can't do that.
+      - name: Trigger dev redeploy
+        if: github.ref == 'refs/heads/dev'
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK_DEV }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
+        run: |
+          if [ -z "$WEBHOOK" ]; then
+            echo "::warning title=No deploy triggered::COOLIFY_DEPLOY_WEBHOOK_DEV is not set — :dev images were published but the dev environment was not redeployed."
+            exit 0
+          fi
+          curl -fsSL -X GET "$WEBHOOK" ${COOLIFY_TOKEN:+-H "Authorization: Bearer $COOLIFY_TOKEN"}
+          echo "Triggered Coolify deploy for dev."
+
+      - name: Trigger production redeploy
+        if: github.ref == 'refs/heads/main'
         env:
           WEBHOOK: ${{ secrets.COOLIFY_DEPLOY_WEBHOOK }}
           COOLIFY_TOKEN: ${{ secrets.COOLIFY_API_TOKEN }}
         run: |
           if [ -z "$WEBHOOK" ]; then
-            echo "No COOLIFY_DEPLOY_WEBHOOK secret set — skipping deploy trigger."
+            echo "::warning title=No deploy triggered::COOLIFY_DEPLOY_WEBHOOK is not set — skipping deploy trigger."
             exit 0
           fi
           curl -fsSL -X GET "$WEBHOOK" ${COOLIFY_TOKEN:+-H "Authorization: Bearer $COOLIFY_TOKEN"}
-          echo "Triggered Coolify deploy."
+          echo "Triggered Coolify deploy for production."

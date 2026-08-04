@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   pull_request:
   push:
-    branches: ["main", "next"]
+    # dev included so the integration branch is checked in its own right —
+    # a merge can break what neither side broke alone.
+    branches: ["main", "next", "dev"]
 
 jobs:
   check:
