@@ -24,6 +24,7 @@ import {
   registerDynamicAgent,
 } from "./dynamic.js"
 import { loadRegistry } from "./registry.js"
+import { textTurn } from "./text-chat.js"
 import { acceptTranscriberRequest } from "./transcriber-worker.js"
 import { acceptRequest } from "./worker.js"
 
@@ -125,6 +126,39 @@ app.get("/agents", (c) => {
     }),
   )
   return c.json({ agents })
+})
+
+// Room-less text turn: DMs and text channels talk to an agent's brain
+// directly, keyed by conversation for continuity. Same bearer gate as
+// everything else on this API.
+app.post("/agents/:id/text", async (c) => {
+  const id = c.req.param("id")
+  const entry = loadRegistry().find((a) => a.id === id)
+  if (!entry) return c.json({ error: "unknown agent" }, 404)
+  let body: { conversationId?: string; text?: string }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "invalid body" }, 400)
+  }
+  const conversationId = body.conversationId
+  const text = body.text
+  if (
+    !conversationId ||
+    !/^[a-z0-9-]{1,64}$/.test(conversationId) ||
+    !text ||
+    typeof text !== "string" ||
+    text.length > 8000
+  ) {
+    return c.json({ error: "conversationId and text required" }, 400)
+  }
+  try {
+    const reply = await textTurn(entry, conversationId, text)
+    return c.json({ reply, agentId: entry.id, name: entry.name })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "agent unavailable"
+    return c.json({ error: message }, 502)
+  }
 })
 
 app.post("/rooms/:room/agents/:id", async (c) => {

@@ -95,12 +95,17 @@ export function isElementChurn(
  * Fold Excalidraw's bookkeeping (fractional index, restore version bump)
  * into the cached record without advancing its LWW clock or changing its
  * author — nothing changed that peers or the store care about ordering.
+ *
+ * An adoption that changes nothing writes nothing: `setKey` compares by
+ * reference, so handing it a freshly built twin of the cached record still
+ * notifies every listener. The whiteboard schedules a scene rebuild off
+ * those notifications and re-adopts at the end of each one, so a no-op
+ * adopt is enough to keep the board rebuilding forever.
  */
 export function adoptCanvasRecord(id: string, element: unknown) {
   const current = $canvasRecords.get()[id]
   if (!current) return
-  $canvasRecords.setKey(id, {
-    ...current,
-    record: JSON.parse(JSON.stringify(element)) as Record<string, unknown>,
-  })
+  const record = JSON.parse(JSON.stringify(element)) as Record<string, unknown>
+  if (JSON.stringify(current.record) === JSON.stringify(record)) return
+  $canvasRecords.setKey(id, { ...current, record })
 }

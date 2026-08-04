@@ -7,6 +7,7 @@ import { NextResponse } from "next/server"
 import { isKicked } from "@/lib/server/kicked"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
+import { getMemberUser } from "@/lib/server/session"
 import {
   deriveHostKey,
   isRecreatableRoomSlug,
@@ -43,6 +44,11 @@ export async function POST(request: Request, { params }: Params) {
   if (!body.success) {
     return NextResponse.json({ error: "displayName required" }, { status: 400 })
   }
+
+  // Signed-in members carry their account into the room; guests (or
+  // MEET_AUTH_MODE=none deployments) resolve to null and take the exact
+  // pre-accounts path everywhere below.
+  const member = await getMemberUser().catch(() => null)
 
   // Meeting codes are durable: LiveKit garbage-collects empty rooms after a
   // few minutes, so a link recreates its room on demand — in the not-started
@@ -94,7 +100,12 @@ export async function POST(request: Request, { params }: Params) {
   } catch {}
   // Against the derived key, never a metadata copy — metadata is public to
   // the room, so a key read from it would authorise the people it gates.
-  const isCreator = keyMatches(body.data.hostKey, deriveHostKey(slug))
+  // Instance owners/admins count as creator for any meeting room: they can
+  // start and host meetings without hunting for the derived key.
+  const isCreator =
+    keyMatches(body.data.hostKey, deriveHostKey(slug)) ||
+    member?.role === "owner" ||
+    member?.role === "admin"
 
   // Count humans already inside — a lingering transcriber or agent must never
   // count, so joining "alone with the transcriber" still reads as an empty
@@ -102,8 +113,14 @@ export async function POST(request: Request, { params }: Params) {
   // Fails closed: an error here must not read as "empty room" — that would
   // turn a LiveKit hiccup into direct admission for whoever asked first.
   let participantCount: number
+  // Every identity currently known to the room (any kind) — consulted below
+  // to tell a reconnecting identity's departure-timeout race apart from a
+  // genuinely reconvened meeting.
+  let presentIdentities: Set<string>
   try {
-    participantCount = (await roomService().listParticipants(slug)).filter(
+    const present = await roomService().listParticipants(slug)
+    presentIdentities = new Set(present.map((p) => p.identity))
+    participantCount = present.filter(
       (p) => parseParticipantMeta(p.metadata)?.kind === "human",
     ).length
   } catch {
@@ -148,15 +165,17 @@ export async function POST(request: Request, { params }: Params) {
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()
 
-  // A refresh presents its previous token as proof of admission: accept it
+  // A rejoin presents its previous token as proof of admission: accept it
   // if it verifies for this room with admitted (human) metadata, or — for a
   // knocker upgrading their proof right after admission — if its identity is
   // currently connected with human metadata. Identities removed by
   // moderation are refused either way: a kick must end the session, not
-  // hand out a fresh identity.
-  // The proof's verified identity, kept for `refresh` renewals below.
+  // hand out a fresh identity. Checked whenever a rejoinToken is presented —
+  // not just while waiting or refreshing — so a host's plain rejoin (e.g. a
+  // reopened tab, never "waiting" since the host walks straight in) still
+  // gets identity continuity instead of always minting a fresh one.
   let rejoinIdentity: string | undefined
-  if ((waiting || body.data.refresh) && body.data.rejoinToken) {
+  if (body.data.rejoinToken) {
     try {
       const claims = await new TokenVerifier(apiKey, apiSecret).verify(
         body.data.rejoinToken,
@@ -185,23 +204,39 @@ export async function POST(request: Request, { params }: Params) {
   }
   // A fresh occurrence: the first human entering (not knocking) resets the
   // call timer — covers both a first start and a meeting reconvening in a
-  // room the GC hadn't swept yet.
-  if (!waiting && participantCount === 0) {
+  // room the GC hadn't swept yet. Skipped only when the verified rejoin
+  // identity is still present in the room's participant list — the true
+  // departureTimeout race, where the human count reads 0 while LiveKit still
+  // holds the departing identity. A rejoin into a genuinely empty room (say,
+  // reconvening with unexpired proof hours later) is a fresh start and gets
+  // a fresh clock like anyone else.
+  const departureRace =
+    rejoinIdentity !== undefined && presentIdentities.has(rejoinIdentity)
+  if (!waiting && participantCount === 0 && !departureRace) {
     roomMeta = { ...roomMeta, startedAt: Date.now() }
     await roomService()
       .updateRoomMetadata(slug, JSON.stringify(roomMeta))
       .catch(() => undefined)
   }
 
-  // A refresh renews the SAME participant: keeping the identity keeps
-  // API-auth (which derives identity from this token) consistent with the
-  // still-connected LiveKit participant. Only honored with verified,
-  // admitted proof — never from the request body alone.
+  // A rejoin (refresh or plain) renews the SAME participant: keeping the
+  // identity keeps API-auth (which derives identity from this token)
+  // consistent with the still-connected LiveKit participant, and preserves
+  // LiveKit-side per-identity state (raised hand, agent assignment). Only
+  // honored with verified, admitted proof — never from the request body
+  // alone; see the verification block above.
+  // Members get a stable identity derived from their account — presence
+  // resolves to a real person, and rejoining any room continues the same
+  // participant. LiveKit preempts an older connection with the same identity
+  // in the same room, so a member opening a second tab into one room bumps
+  // the first (one active connection per member per room — intended).
+  // Guests keep the ephemeral form; the prefixes can't collide.
   const identity =
-    body.data.refresh && rejoinIdentity ? rejoinIdentity : `user-${nanoid(10)}`
+    rejoinIdentity ?? (member ? `u_${member.id}` : `user-${nanoid(10)}`)
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),
+    ...(member ? { userId: member.id, role: member.role ?? undefined } : {}),
   }
   const token = new AccessToken(apiKey, apiSecret, {
     identity,
@@ -245,5 +280,10 @@ export async function POST(request: Request, { params }: Params) {
     // (no management gate) the first human in acts as host, as before.
     isHost,
     roomStartedAt,
+    // Deterministic from the slug alone (same value claim-host would hand
+    // out) — safe to include whenever the server itself granted host status,
+    // so a legitimate open-deployment first-joiner-host can actually use
+    // host-gated routes instead of just seeing host UI that then 403s.
+    hostKey: isHost ? deriveHostKey(slug) : undefined,
   })
 }

@@ -1,4 +1,8 @@
-import { SELF_TRANSCRIBE_ACTIVE, SELF_TRANSCRIBE_ATTRIBUTE } from "@meet/shared"
+import {
+  SELF_TRANSCRIBE_ACTIVE,
+  SELF_TRANSCRIBE_ATTRIBUTE,
+  TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE,
+} from "@meet/shared"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 // The worker drives everything through the rtc-node room/AudioStream FFI;
@@ -81,6 +85,7 @@ function makeRoom() {
         write: async () => {},
         close: async () => {},
       }),
+      setAttributes: vi.fn(async () => {}),
     },
     on(event: string, handler: Handler) {
       handlers.set(event, handler)
@@ -107,11 +112,14 @@ const fakeEngine = {
   }),
 }
 
-async function startWorker(room: ReturnType<typeof makeRoom>) {
+async function startWorker(
+  room: ReturnType<typeof makeRoom>,
+  stt: unknown = fakeEngine,
+) {
   const ctx = {
     proc: {
       userData: {
-        stt: fakeEngine,
+        stt,
         denoiser: null,
         finalizerLoading: Promise.resolve(null),
       },
@@ -242,5 +250,18 @@ describe("transcriber handoff", () => {
     )
     await tick()
     expect(postTranscriptSegment).not.toHaveBeenCalled()
+  })
+
+  it("still joins and advertises unavailability when the STT engine failed to load", async () => {
+    const room = makeRoom()
+    const alice = makeParticipant("alice")
+    room.remoteParticipants.set("alice", alice)
+    await startWorker(room, { error: "missing model assets" })
+
+    expect(room.localParticipant.setAttributes).toHaveBeenCalledWith({
+      [TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE]: "true",
+    })
+    // No engine means no transcription loops start for anyone.
+    expect(audioStreams).toHaveLength(0)
   })
 })

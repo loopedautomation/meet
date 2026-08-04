@@ -12,10 +12,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@auth0/nextjs-auth0": "^4.26.0",
+    "@aws-sdk/client-s3": "^3.1101.0",
     "@excalidraw/excalidraw": "0.18.1",
     "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
     "@livekit/components-react": "catalog:",
     "@livekit/track-processors": "^0.7.2",
+    "@meet/db": "workspace:*",
     "@meet/shared": "workspace:*",
     "@nanostores/react": "catalog:",
     "@tanstack/react-query": "catalog:",
@@ -31,6 +34,7 @@
     "react-dom": "catalog:",
     "react-markdown": "^10.1.0",
     "react-toastify": "^11.1.0",
+    "remark-emoji": "^5.0.1",
     "remark-gfm": "^4.0.1",
     "zod": "catalog:"
   },

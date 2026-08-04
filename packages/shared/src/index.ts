@@ -112,6 +112,14 @@ export const SELF_TRANSCRIBE_ATTRIBUTE = "stt.local"
 export const SELF_TRANSCRIBE_ACTIVE = "active"
 
 /**
+ * Attribute the transcriber service sets on itself (value "true") when its
+ * STT engine failed to load and it joined only to advertise that fact — no
+ * server-side transcription is running for anyone in the room. Lets the
+ * transcript panel tell "nothing said yet" apart from "broken deployment".
+ */
+export const TRANSCRIPTION_UNAVAILABLE_ATTRIBUTE = "stt.unavailable"
+
+/**
  * Streaming ASR models trained on GigaSpeech emit ALL-CAPS text with no
  * punctuation, while finalized utterances are properly cased — so captions
  * visibly "flip" at utterance end. Sentence-case shouty text so interims and
@@ -159,6 +167,11 @@ export const participantMetaSchema = z.object({
   // privileges — the token route's own isHost check, mirrored into public
   // room metadata since only the holder otherwise knows.
   isHost: z.boolean().optional(),
+  // Signed-in members carry their account through the room: userId is the
+  // instance's users.id (the identity is u_<userId>), role their instance
+  // role. Guests carry neither — additive, old clients parse fine.
+  userId: z.string().optional(),
+  role: z.enum(["owner", "admin", "member"]).optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
 
@@ -351,6 +364,15 @@ export const roomMetadataSchema = z.object({
    */
   hostIdentity: z.string().optional(),
   settings: roomSettingsSchema.optional(),
+  /**
+   * Channel-backed rooms: kind "channel" marks a LiveKit room that belongs
+   * to a persistent channel (room name ch-<publicId>). The room is
+   * disposable — recreated on join, GC'd when empty — while the channel row
+   * in Postgres is the durable thing. Absent kind = a meeting room (legacy
+   * and current meetings alike).
+   */
+  kind: z.enum(["meeting", "channel"]).optional(),
+  channelId: z.string().optional(),
 })
 export type RoomMetadata = z.infer<typeof roomMetadataSchema>
 
@@ -1195,6 +1217,12 @@ export const tokenResponseSchema = z.object({
   isHost: z.boolean().default(false),
   /** Epoch ms when the room was created — anchors the call duration timer. */
   roomStartedAt: z.number().default(0),
+  /**
+   * Present when the server granted host status this call — lets the client
+   * actually use host-gated routes (settings/moderate/agents) instead of
+   * showing host UI that then fails authorization.
+   */
+  hostKey: z.string().optional(),
 })
 export type TokenResponse = z.infer<typeof tokenResponseSchema>
 

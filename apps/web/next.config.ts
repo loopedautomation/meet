@@ -2,7 +2,7 @@ import type {NextConfig} from "next"
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  transpilePackages: ["@meet/shared"],
+  transpilePackages: ["@meet/shared", "@meet/db"],
   async rewrites() {
     return [
       // Same-origin PostHog ingestion proxy: COEP require-corp (below) blocks

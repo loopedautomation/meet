@@ -254,4 +254,22 @@ describe("RealtimeSession wire-level gating", () => {
     }
     expect(setup.session.audio.input.transcription.prompt).toContain("Scout")
   })
+
+  // notifyHeard is the only place a spoken turn's speaker gets attributed
+  // (issue #193) — it must land as context without ever making the model
+  // start talking on its own.
+  it("notifyHeard surfaces the line as passive context, no response.create", async () => {
+    const { session, ws, responsesCreated } = await harness("open")
+    session.notifyHeard("[meeting audio] Amin: what's the weather like?")
+    const item = ws.sent.find((f) => f.type === "conversation.item.create") as
+      | (Frame & {
+          item: { role: string; content: { text: string }[] }
+        })
+      | undefined
+    expect(item?.item.role).toBe("user")
+    expect(item?.item.content[0].text).toBe(
+      "[meeting audio] Amin: what's the weather like?",
+    )
+    expect(responsesCreated()).toHaveLength(0)
+  })
 })

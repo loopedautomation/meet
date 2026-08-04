@@ -20,9 +20,9 @@ import {
   Bot,
   Check,
   ChevronDown,
+  EllipsisVertical,
   FileText,
   Hand,
-  LayoutGrid,
   Link as LinkIcon,
   LogOut,
   MessageSquare,
@@ -36,23 +36,25 @@ import {
   Users,
   Video,
   VideoOff,
+  X,
 } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import { Modal } from "@/components/ui/Modal"
 import { useCameraEffect } from "@/hooks/useCameraEffect"
 import { useIncomingVideo } from "@/hooks/useIncomingVideo"
+import { useIsTouchDevice } from "@/hooks/useIsTouchDevice"
 import { useMeetingSounds } from "@/hooks/useMeetingSounds"
 import { usePushToTalk } from "@/hooks/usePushToTalk"
 import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
 import { track } from "@/lib/analytics"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
+import { markExplicitLeave } from "@/lib/leaveIntent"
 import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
-import { $docOnStage, $openPanel, togglePanel } from "@/stores/panels"
+import { $openPanel, togglePanel, toggleWhiteboard } from "@/stores/panels"
 import { $pipWindow, closePip, openPip } from "@/stores/pip"
 import {
   $autoDataSaver,
@@ -81,7 +83,11 @@ export function ControlBar({
   const [copied, setCopied] = useState(false)
   // Guard the destructive leave action behind a confirm — a stray click on the
   // red button shouldn't drop you out of the call and back through the lobby.
+  // The confirm is inline (right beside the button) rather than a centered
+  // modal so the second click needs no pointer travel.
   const [confirmLeave, setConfirmLeave] = useState(false)
+  const leaveRef = useRef<HTMLDivElement>(null)
+  const confirmLeaveRef = useRef<HTMLButtonElement>(null)
   const openPanel = useStore($openPanel)
   const whiteboardOpen = useStore($canvasOpen)
   const canvasUnseen = useStore($canvasUnseen)
@@ -100,12 +106,35 @@ export function ControlBar({
   const incomingVideoOff = useStore($incomingVideoOff)
   useIncomingVideo(incomingVideoOff)
 
-  usePushToTalk(useStore($pushToTalk))
+  const isTouchDevice = useIsTouchDevice()
+  usePushToTalk(useStore($pushToTalk) && !isTouchDevice)
   useMeetingSounds(useStore($meetingSounds))
   const autoDataSaver = useStore($autoDataSaver)
 
   // Keep the chosen mic/camera pinned against OS auto-switching on hot-plug.
   useStickyDevices()
+
+  // While the inline leave confirm is showing: focus it, and let Escape, a
+  // click anywhere else, or a few seconds of hesitation dismiss it.
+  useEffect(() => {
+    if (!confirmLeave) return
+    confirmLeaveRef.current?.focus()
+    const cancel = () => setConfirmLeave(false)
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") cancel()
+    }
+    const onPointerDown = (e: PointerEvent) => {
+      if (!leaveRef.current?.contains(e.target as Node)) cancel()
+    }
+    const timer = window.setTimeout(cancel, 4000)
+    window.addEventListener("keydown", onKeyDown)
+    window.addEventListener("pointerdown", onPointerDown)
+    return () => {
+      window.clearTimeout(timer)
+      window.removeEventListener("keydown", onKeyDown)
+      window.removeEventListener("pointerdown", onPointerDown)
+    }
+  }, [confirmLeave])
 
   // Document PiP is offered only while sharing (its whole point is seeing
   // the others on a single screen) and only where the API exists. Detected
@@ -117,6 +146,23 @@ export function ControlBar({
   }, [])
   useEffect(() => {
     if (!isScreenShareEnabled) closePip()
+  }, [isScreenShareEnabled])
+
+  // Bracket the share from the published state rather than the button, so a
+  // share stopped from the browser's own banner still closes the pair.
+  const shareStartedAt = useRef<number | null>(null)
+  useEffect(() => {
+    if (isScreenShareEnabled) {
+      shareStartedAt.current = Date.now()
+      track("screenshare_started")
+    } else if (shareStartedAt.current) {
+      track("screenshare_stopped", {
+        duration_seconds: Math.round(
+          (Date.now() - shareStartedAt.current) / 1000,
+        ),
+      })
+      shareStartedAt.current = null
+    }
   }, [isScreenShareEnabled])
 
   // Publish the camera orientation so every client renders this feed the
@@ -176,18 +222,22 @@ export function ControlBar({
     })
   }
 
-  const toggleMic = () =>
-    toggle(
+  const toggleMic = () => {
+    track("microphone_toggled", { state: isMicrophoneEnabled ? "off" : "on" })
+    return toggle(
       () => localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled),
       "microphone",
       { key: "audioEnabled", value: !isMicrophoneEnabled },
     )
-  const toggleCamera = () =>
-    toggle(
+  }
+  const toggleCamera = () => {
+    track("camera_toggled", { state: isCameraEnabled ? "off" : "on" })
+    return toggle(
       () => localParticipant.setCameraEnabled(!isCameraEnabled),
       "camera",
       { key: "videoEnabled", value: !isCameraEnabled },
     )
+  }
 
   // Keyboard shortcuts (Meet's conventions): ⌘/Ctrl+D mic, ⌘/Ctrl+E camera.
   const shortcutRefs = useRef({ toggleMic, toggleCamera })
@@ -257,7 +307,7 @@ export function ControlBar({
           >
             <button
               type="button"
-              className="btn btn-circle join-item btn-neutral"
+              className="btn btn-circle join-item btn-neutral max-sm:rounded-full"
               onClick={toggleMic}
               aria-label="Toggle microphone"
             >
@@ -269,8 +319,9 @@ export function ControlBar({
             </button>
           </div>
           {/* Noise removal and blur live in Settings — these menus are for
-              picking devices only. */}
-          <DeviceMenu kind="audioinput" />
+              picking devices only. On phones the chevrons are dropped to
+              keep the header clean; Settings still switches devices. */}
+          <DeviceMenu kind="audioinput" className="max-sm:hidden" />
         </div>
         <div className="join">
           <div
@@ -281,7 +332,7 @@ export function ControlBar({
           >
             <button
               type="button"
-              className="btn btn-circle join-item btn-neutral"
+              className="btn btn-circle join-item btn-neutral max-sm:rounded-full"
               onClick={toggleCamera}
               aria-label="Toggle camera"
             >
@@ -292,7 +343,7 @@ export function ControlBar({
               )}
             </button>
           </div>
-          <DeviceMenu kind="videoinput" />
+          <DeviceMenu kind="videoinput" className="max-sm:hidden" />
         </div>
         <div
           className="tooltip tooltip-bottom"
@@ -302,7 +353,6 @@ export function ControlBar({
             type="button"
             className={`btn btn-circle ${isScreenShareEnabled ? "btn-primary" : "btn-neutral"}`}
             onClick={() => {
-              if (!isScreenShareEnabled) track("screenshare_started")
               toggle(
                 () =>
                   localParticipant.setScreenShareEnabled(
@@ -320,9 +370,14 @@ export function ControlBar({
             <MonitorUp className="size-5" />
           </button>
         </div>
-        {isScreenShareEnabled && pipSupported && (
+        {pipSupported && (
+          // Mounted whenever PiP is supported (a constant for the session),
+          // just hidden outside a screen share — never conditionally
+          // inserted/removed on isScreenShareEnabled, which used to shift
+          // the Hand/Leave buttons after it sideways every time sharing
+          // toggled and made a stray click land on the wrong one.
           <div
-            className="tooltip tooltip-bottom"
+            className={`tooltip tooltip-bottom ${isScreenShareEnabled ? "" : "hidden"}`}
             data-tip={
               pipWindow
                 ? "Close the participant pop-out"
@@ -362,45 +417,48 @@ export function ControlBar({
             <Hand className="size-5" />
           </button>
         </div>
-        <div className="tooltip tooltip-bottom" data-tip="Leave meeting">
-          <button
-            type="button"
-            className="btn btn-circle btn-error"
-            onClick={() => setConfirmLeave(true)}
-            aria-label="Leave meeting"
-          >
-            <LogOut className="size-5" />
-          </button>
+        <div ref={leaveRef} className="flex items-center gap-1">
+          {confirmLeave ? (
+            <>
+              <button
+                ref={confirmLeaveRef}
+                type="button"
+                className="btn btn-error btn-brutalist"
+                onClick={() => {
+                  setConfirmLeave(false)
+                  markExplicitLeave()
+                  void room.disconnect()
+                }}
+                aria-label="Confirm leaving the meeting"
+              >
+                <LogOut className="size-4" />
+                Leave?
+              </button>
+              <div className="tooltip tooltip-bottom" data-tip="Stay">
+                <button
+                  type="button"
+                  className="btn btn-circle btn-ghost"
+                  onClick={() => setConfirmLeave(false)}
+                  aria-label="Stay in the meeting"
+                >
+                  <X className="size-5" />
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="tooltip tooltip-bottom" data-tip="Leave meeting">
+              <button
+                type="button"
+                className="btn btn-circle btn-error"
+                onClick={() => setConfirmLeave(true)}
+                aria-label="Leave meeting"
+              >
+                <LogOut className="size-5" />
+              </button>
+            </div>
+          )}
         </div>
       </div>
-
-      <Modal isOpen={confirmLeave} onClose={() => setConfirmLeave(false)}>
-        <h3 className="font-semibold text-lg">Leave this meeting?</h3>
-        <p className="py-2 text-base-content/70 text-sm">
-          You'll be disconnected from the call and will need to rejoin to come
-          back.
-        </p>
-        <div className="modal-action">
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => setConfirmLeave(false)}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="btn btn-error btn-brutalist"
-            onClick={() => {
-              setConfirmLeave(false)
-              void room.disconnect()
-            }}
-          >
-            <LogOut className="size-4" />
-            Leave
-          </button>
-        </div>
-      </Modal>
 
       {/* Phones: twelve circular buttons don't fit one row — the panel
           icons collapse into a single dropdown (see below) so the header
@@ -473,16 +531,7 @@ export function ControlBar({
           <button
             type="button"
             className={`btn btn-circle indicator ${whiteboardOpen ? "btn-primary" : "btn-ghost"}`}
-            onClick={() => {
-              const opening = !$canvasOpen.get()
-              $canvasOpen.set(opening)
-              if (opening) {
-                $canvasUnseen.set(false)
-                // The stage holds one takeover at a time.
-                $docOnStage.set(false)
-                track("whiteboard_opened")
-              }
-            }}
+            onClick={toggleWhiteboard}
             aria-label={
               agentDrawing && !whiteboardOpen
                 ? `Whiteboard — ${agentDrawing.name} is drawing`
@@ -530,9 +579,20 @@ export function ControlBar({
           {(waitingCount > 0 || canvasUnseen || agentDrawing) && (
             <span className="badge indicator-item badge-primary badge-xs" />
           )}
-          <LayoutGrid className="size-5" />
+          <EllipsisVertical className="size-5" />
         </button>
         <ul className="menu dropdown-content z-30 mt-1 w-52 rounded-box bg-base-100 p-2 shadow-lg ring-1 ring-base-300">
+          <li className="mb-1 border-base-300 border-b pb-1">
+            {/* Kept open on tap so the "Copied" confirmation is seen. */}
+            <button type="button" onClick={() => void copyLink()}>
+              {copied ? (
+                <Check className="size-4 text-success" />
+              ) : (
+                <LinkIcon className="size-4" />
+              )}
+              {copied ? "Copied" : "Copy meeting link"}
+            </button>
+          </li>
           {(
             [
               ["agents", "Agents", Bot],
@@ -567,13 +627,7 @@ export function ControlBar({
               type="button"
               className={whiteboardOpen ? "active" : ""}
               onClick={() => {
-                const opening = !$canvasOpen.get()
-                $canvasOpen.set(opening)
-                if (opening) {
-                  $canvasUnseen.set(false)
-                  $docOnStage.set(false)
-                  track("whiteboard_opened")
-                }
+                toggleWhiteboard()
                 ;(document.activeElement as HTMLElement | null)?.blur()
               }}
             >
@@ -611,6 +665,8 @@ function useRaiseHand(localParticipant: LocalParticipant) {
   const toggleHand = () => {
     const next = !handRaised
     setOptimisticHand(next)
+    // Only the raise is interesting; lowering is bookkeeping.
+    if (next) track("hand_raised")
     localParticipant
       .setAttributes({ [HAND_ATTRIBUTE]: next ? "1" : "" })
       .catch((err: unknown) => {
@@ -649,9 +705,11 @@ function CallTimer({ startedAt }: { startedAt: number }) {
  */
 function DeviceMenu({
   kind,
+  className = "",
   children,
 }: {
   kind: DeviceKind
+  className?: string
   children?: React.ReactNode
 }) {
   const { devices, activeDeviceId, setActiveMediaDevice } =
@@ -664,7 +722,7 @@ function DeviceMenu({
 
   return (
     <div
-      className="dropdown dropdown-bottom"
+      className={`dropdown dropdown-bottom ${className}`}
       onFocusCapture={() => setOpen(true)}
       onBlurCapture={(e) => {
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {

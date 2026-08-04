@@ -17,6 +17,7 @@ import {
 import { RoomEvent } from "livekit-client"
 import { useEffect } from "react"
 import { toast } from "react-toastify"
+import { track } from "@/lib/analytics"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 import {
   $canvasOpen,
@@ -31,6 +32,8 @@ import {
   resetDocPresence,
   upsertDocPresence,
 } from "@/stores/docPresence"
+import { $isHost } from "@/stores/host"
+import { openWhiteboard } from "@/stores/panels"
 import {
   addAgentActivity,
   addChatMessage,
@@ -41,6 +44,7 @@ import {
   setAgentTyping,
   updateChatMessage,
 } from "@/stores/roomData"
+import { claimAgentReplyLatency } from "@/stores/roomTelemetry"
 
 /** Always-mounted subscriber: chat and agent activity survive panel toggling. */
 export function RoomDataListener({ slug }: { slug: string }) {
@@ -66,6 +70,20 @@ export function RoomDataListener({ slug }: { slug: string }) {
         // The message landing is itself the end of composing, so clear any
         // lingering "typing…" for its sender even if the stop signal is in flight.
         if (msg.from) clearAgentTyping(msg.from.identity)
+        // Time an agent's reply against the question this browser asked;
+        // messages nobody here prompted are not a latency measurement.
+        const replyMeta = msg.from
+          ? parseParticipantMeta(msg.from.metadata)
+          : null
+        if (replyMeta?.kind === "agent") {
+          const latency = claimAgentReplyLatency()
+          if (latency !== null) {
+            track("agent_message_received", {
+              agent_type: replyMeta.agentId ?? "unknown",
+              response_latency_ms: latency,
+            })
+          }
+        }
         return
       }
 
@@ -110,6 +128,20 @@ export function RoomDataListener({ slug }: { slug: string }) {
       // crafting activity packets must not be able to fake agent behavior.
       if (!msg.from.identity.startsWith("agent-")) return
       addAgentActivity(parsed.data)
+      // What the agent actually did. Every participant receives this
+      // broadcast, so only the host reports it — otherwise one tool call
+      // would be counted once per browser in the room. Measured on the
+      // result, which is where the duration lives; a tool that never
+      // returns is therefore never counted.
+      if (parsed.data.type === "tool_result" && $isHost.get()) {
+        track("agent_tool_used", {
+          agent_type: parsed.data.agentId,
+          tool: parsed.data.name,
+          source: parsed.data.source ?? "brain",
+          duration_ms: parsed.data.durationMs,
+        })
+      }
+      return
     } catch {}
   })
 
@@ -242,10 +274,7 @@ export function RoomDataListener({ slug }: { slug: string }) {
         if (fromAgent) {
           toast.info(`${senderName} is drawing on the whiteboard`, {
             toastId: "canvas-agent-drawing",
-            onClick: () => {
-              $canvasOpen.set(true)
-              $canvasUnseen.set(false)
-            },
+            onClick: () => openWhiteboard(),
           })
         }
       }

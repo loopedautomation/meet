@@ -1,0 +1,11 @@
+# Minimal packaging config — unsigned local builds via `pnpm package`.
+# Signing/notarization and update feeds come with the release pipeline.
+appId: sh.looped.meet
+productName: looped meet
+directories:
+  output: dist
+files:
+  - src/**
+  - package.json
+mac:
+  category: public.app-category.productivity

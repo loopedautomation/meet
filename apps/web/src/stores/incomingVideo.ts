@@ -9,12 +9,12 @@ const KEY = "incomingVideoOff"
  * the reason you're in the meeting.
  */
 export const $incomingVideoOff = atom<boolean>(
-  typeof window !== "undefined" && localStorage.getItem(KEY) === "1",
+  typeof window !== "undefined" && sessionStorage.getItem(KEY) === "1",
 )
 
 export function setIncomingVideoOff(off: boolean) {
   $incomingVideoOff.set(off)
   try {
-    localStorage.setItem(KEY, off ? "1" : "")
+    sessionStorage.setItem(KEY, off ? "1" : "")
   } catch {}
 }

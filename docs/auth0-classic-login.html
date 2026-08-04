@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Sign in · looped</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+  <style>
+    /* looped brand — tokens lifted verbatim from @looped/config
+       (themes.css / button.css, same files the products vendor):
+       light-first, flat (no depth, no noise), 1px borders, hard
+       0.5px/2px two-layer offset shadows, violet primary
+       oklch(58% .22 280), Mona Sans at 125% stretch. */
+    @font-face {
+      font-family: "Mona Sans";
+      font-weight: 200 900;
+      font-display: block;
+      font-style: normal;
+      font-stretch: 125%;
+      src:
+        url("https://meet.looped.sh/fonts/Mona-Sans.woff2") format("woff2"),
+        url("https://storybook.looped.sh/fonts/Mona-Sans.woff2") format("woff2");
+    }
+    :root {
+      --base-100: #ffffff;
+      --base-200: #f7f7f7;
+      --base-300: #e5e5e5;
+      --content: oklch(10% 0.01 280);
+      --muted: oklch(10% 0.01 280 / 0.55);
+      --primary: oklch(58% 0.22 280);
+      --primary-border: color-mix(in oklch, oklch(58% 0.22 280), black 10%);
+      --primary-shadow: color-mix(in oklch, oklch(58% 0.22 280), black 35%);
+      --radius-box: 1rem;
+      --radius-field: 0.5rem;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --base-100: oklch(15% 0.01 270);
+        --base-200: oklch(20% 0.01 270);
+        --base-300: oklch(32% 0.01 270);
+        --content: oklch(98.2% 0.00411 91.4);
+        --muted: oklch(98.2% 0.00411 91.4 / 0.55);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: "Mona Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--base-100);
+      color: var(--content);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    /* Body copy runs light in the design system. */
+    .badge, footer { font-weight: 300; }
+
+    header {
+      width: 100%;
+      max-width: 960px;
+      padding: 24px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 600;
+      font-size: 18px;
+      letter-spacing: -0.025em;
+    }
+    header svg { height: 20px; width: auto; }
+
+    main {
+      flex: 1;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+      padding: 16px;
+    }
+    .badge {
+      font-size: 12px;
+      color: var(--primary);
+      background: color-mix(in oklch, oklch(58% 0.22 280), transparent 92%);
+      border: 1px solid color-mix(in oklch, oklch(58% 0.22 280), transparent 80%);
+      border-radius: 999px;
+      padding: 4px 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 26px;
+      font-weight: 600;
+      letter-spacing: -0.03em;
+      text-align: center;
+      text-wrap: balance;
+    }
+
+    /* The Lock widget as a looped card: base-100 fill, 1px base-300
+       border, radius-box corners, and the product's two-layer brutalist
+       shadow (offset block + 1px outline of the shadow rectangle). */
+    #lock-container { width: 100%; max-width: 400px; padding-bottom: 48px; }
+    .auth0-lock.auth0-lock {
+      font-family: "Mona Sans", ui-sans-serif, system-ui, sans-serif;
+    }
+    .auth0-lock.auth0-lock .auth0-lock-widget {
+      border-radius: var(--radius-box);
+      border: 1px solid var(--base-300);
+      box-shadow:
+        0.5px 2px 0 0 var(--base-300),
+        0.5px 2px 0 1px var(--base-300);
+      overflow: hidden;
+    }
+    .auth0-lock.auth0-lock .auth0-lock-header { display: none; }
+    .auth0-lock.auth0-lock .auth0-lock-cred-pane {
+      background: #ffffff;
+      border-radius: var(--radius-box);
+    }
+    /* Submit bar in the true brutalist primary: violet fill, 10%-black
+       border on top, flat — no gradients. */
+    .auth0-lock.auth0-lock .auth0-lock-submit {
+      background: var(--primary) !important;
+      border-top: 1px solid var(--primary-border);
+      transition: background 0.15s ease;
+    }
+    .auth0-lock.auth0-lock .auth0-lock-submit:hover {
+      background: var(--primary-border) !important;
+    }
+
+    footer {
+      padding: 16px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <!-- The looped brandmark, verbatim from @looped/ui. -->
+    <svg viewBox="0 0 64 102" xmlns="http://www.w3.org/2000/svg" aria-label="Looped">
+      <path fill-rule="evenodd" clip-rule="evenodd" d="M32 0.368652C41.9277 0.368652 49.8699 8.31082 49.8699 18.2385V59.9349C49.8699 61.9867 51.1936 63.7075 53.1791 64.3031L57.8121 66.5534C61.1213 67.8771 63.7687 71.1864 63.7687 74.8265V84.4233C63.7687 94.0201 56.1574 101.631 46.5606 101.631H31.3382C21.7414 101.631 14.1301 94.0201 14.1301 84.4233V42.0651C14.1301 40.0795 12.8064 38.4249 11.1518 37.763L5.85702 34.7847C2.54778 33.461 0.231312 30.4827 0.231312 27.1735V18.2385C0.231312 8.64175 8.17348 0.368652 17.7703 0.368652H32ZM18.763 15.5911C16.1157 15.5911 14.1301 17.5767 14.1301 20.2241V37.4321C14.1301 39.0867 15.1229 40.4104 16.4466 41.2708L19.4249 43.3888L26.7052 48.3526C27.698 49.3454 28.6908 50.6691 28.6908 52.6546V83.0996C28.6908 85.747 30.6763 87.7326 33.3237 87.7326H45.237C47.8843 87.7326 49.8699 85.747 49.8699 83.0996V65.2297C49.8699 63.2442 48.8771 61.5896 47.2225 60.5968L37.2948 53.9783C36.302 52.9855 35.6402 51.3309 35.6402 49.6763V20.2241C35.6402 17.5767 33.6546 15.5911 31.0072 15.5911H18.763Z" fill="currentColor"/>
+    </svg>
+  </header>
+
+  <main>
+    <span class="badge">One account for everything looped</span>
+    <h1>Sign in to continue</h1>
+    <div id="lock-container"></div>
+  </main>
+
+  <footer>looped.sh — open source · self-hosted</footer>
+
+  <script src="https://cdn.auth0.com/js/lock/14.2.3/lock.min.js"></script>
+  <script>
+    // Decode utf8 characters properly
+    var config = JSON.parse(decodeURIComponent(escape(window.atob('@@config@@'))));
+    config.extraParams = config.extraParams || {};
+    var connection = config.connection;
+    var prompt = config.prompt;
+    var languageDictionary;
+    var language;
+
+    if (config.dict && config.dict.signin && config.dict.signin.title) {
+      languageDictionary = { title: config.dict.signin.title };
+    } else if (typeof config.dict === 'string') {
+      language = config.dict;
+    }
+    // The page carries the brand; the widget just says what to do.
+    languageDictionary = languageDictionary || { title: 'Welcome back' };
+    var loginHint = config.extraParams.login_hint;
+    var colors = config.colors || {};
+
+    var lock = new Auth0Lock(config.clientID, config.auth0Domain, {
+      auth: {
+        redirectUrl: config.callbackURL,
+        responseType: (config.internalOptions || {}).response_type ||
+          (config.callbackOnLocationHash ? 'token' : 'code'),
+        params: config.internalOptions
+      },
+      configurationBaseUrl: config.clientConfigurationBaseUrl,
+      overrides: {
+        __tenant: config.auth0Tenant,
+        __token_issuer: config.authorizationServer.issuer
+      },
+      assetsUrl: config.assetsUrl,
+      allowedConnections: connection ? [connection] : null,
+      rememberLastLogin: !prompt,
+      language: language,
+      languageBaseUrl: config.languageBaseUrl,
+      languageDictionary: languageDictionary,
+      // Render inline in the page instead of the floating modal overlay.
+      container: 'lock-container',
+      theme: {
+        // Fallback only — the CSS above paints the real brand primary.
+        primaryColor: colors.primary ? colors.primary : '#6a58e8'
+      },
+      prefill: loginHint ? { email: loginHint, username: loginHint } : null,
+      closable: false,
+      defaultADUsernameFromEmailPrefix: false
+    });
+
+    lock.show();
+  </script>
+</body>
+</html>

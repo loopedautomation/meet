@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Connect to your server</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; height: 100vh; margin: 0; gap: 14px;
+      }
+      h1 { font-size: 18px; margin: 0; }
+      p { margin: 0; font-size: 13px; opacity: 0.65; max-width: 320px; text-align: center; }
+      form { display: flex; gap: 8px; }
+      input {
+        width: 240px; padding: 8px 10px; font-size: 14px;
+        border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+        border-radius: 8px; background: transparent; color: inherit;
+      }
+      button {
+        padding: 8px 14px; font-size: 14px; border: none; border-radius: 8px;
+        background: #6d28d9; color: white; cursor: pointer;
+      }
+      button:disabled { opacity: 0.6; }
+      #error { color: #dc2626; font-size: 13px; min-height: 18px; }
+    </style>
+  </head>
+  <body>
+    <h1>Connect to your team server</h1>
+    <p>
+      Enter the address of a looped meet instance — self-hosted on your own
+      box, or a hosted team server.
+    </p>
+    <form id="form">
+      <input id="url" type="text" placeholder="https://meet.yourteam.com" autofocus />
+      <button id="go" type="submit">Connect</button>
+    </form>
+    <div id="error"></div>
+    <script>
+      const form = document.getElementById("form")
+      const input = document.getElementById("url")
+      const go = document.getElementById("go")
+      const error = document.getElementById("error")
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault()
+        let value = input.value.trim()
+        if (!value) return
+        if (!/^https?:\/\//.test(value)) value = "https://" + value
+        go.disabled = true
+        error.textContent = ""
+        const result = await window.meetShell.connect(value)
+        if (!result.ok) {
+          error.textContent = result.error
+          go.disabled = false
+        }
+      })
+    </script>
+  </body>
+</html>

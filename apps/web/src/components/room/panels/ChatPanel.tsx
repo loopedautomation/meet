@@ -8,10 +8,11 @@ import {
   TYPING_HEARTBEAT_MS,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Pencil, SendHorizontal, Trash2 } from "lucide-react"
+import { Pencil, SendHorizontal, Smile, Trash2 } from "lucide-react"
 import { nanoid } from "nanoid"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { Markdown } from "@/components/Markdown"
+import { EmojiPicker } from "@/components/room/panels/EmojiPicker"
 import {
   completeMention,
   MentionPicker,
@@ -20,6 +21,7 @@ import {
   useMentionables,
 } from "@/components/room/panels/MentionPicker"
 import { track } from "@/lib/analytics"
+import { $channelRoom } from "@/stores/channelContext"
 import {
   $chatMessages,
   $typingAgents,
@@ -27,6 +29,7 @@ import {
   removeChatMessage,
   updateChatMessage,
 } from "@/stores/roomData"
+import { noteAgentAsked } from "@/stores/roomTelemetry"
 
 /** "Ada is typing…", "Ada and Ben are typing…", "3 people are typing…". */
 function typingLabel(names: string[]): string {
@@ -192,6 +195,23 @@ function MessageActions({
 export function ChatPanel() {
   const { localParticipant } = useLocalParticipant()
   const messages = useStore($chatMessages)
+  const channelRoom = useStore($channelRoom)
+
+  // Channels have a persistent text sidecar: hydrate history once so the
+  // conversation survives the room emptying. addChatMessage dedupes by id,
+  // so a rehydrate (panel remount) is harmless.
+  const hydratedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!channelRoom || hydratedRef.current === channelRoom) return
+    hydratedRef.current = channelRoom
+    void fetch(`/api/channels/${channelRoom}/messages`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { messages: ChatMessage[] } | null) => {
+        if (!data) return
+        for (const m of data.messages) addChatMessage(m)
+      })
+      .catch(() => {})
+  }, [channelRoom])
   const typing = useStore($typingAgents)
   const typingNames = Object.values(typing).map((t) => t.name)
   const [draft, setDraft] = useState("")
@@ -200,7 +220,9 @@ export function ChatPanel() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(
     null,
   )
+  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const draftInputRef = useRef<HTMLInputElement>(null)
   const mentionables = useMentionables()
   const query = mentionQuery(draft)
   const matches = query !== null ? matchMentions(mentionables, query) : []
@@ -248,6 +270,12 @@ export function ChatPanel() {
     },
     [sendActivity],
   )
+  const pickEmoji = (emoji: string) => {
+    draftChanged(draft + emoji)
+    setEmojiPickerOpen(false)
+    draftInputRef.current?.focus()
+  }
+
   const draftChanged = (value: string) => {
     setDraft(value)
     if (!value.trim()) {
@@ -277,7 +305,28 @@ export function ChatPanel() {
     setDraft("")
     if (typingSentAt.current) sendTyping(false)
     addChatMessage(message)
-    track("chat_message_sent")
+    // An @-mentioned agent makes this a question to that agent, not just
+    // room chatter — and starts the clock on its reply.
+    const addressed = mentionables.filter(
+      (m) => m.isAgent && text.includes(`@${m.name}`),
+    )
+    track("chat_message_sent", { is_to_agent: addressed.length > 0 })
+    for (const agent of addressed) {
+      track("agent_message_sent", {
+        agent_type: agent.agentId ?? "unknown",
+        message_length: text.length,
+      })
+    }
+    if (addressed.length > 0) noteAgentAsked(addressed[0].agentId ?? "unknown")
+    // In a channel the message also lands in Postgres, so it's still there
+    // tomorrow — live delivery stays on the data channel either way.
+    if (channelRoom) {
+      void fetch(`/api/channels/${channelRoom}/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text }),
+      }).catch(() => {})
+    }
     await send(new TextEncoder().encode(JSON.stringify(message)), {
       topic: DataTopic.Chat,
       reliable: true,
@@ -387,7 +436,14 @@ export function ChatPanel() {
             onHover={setActive}
           />
         )}
+        {emojiPickerOpen && (
+          <EmojiPicker
+            onPick={pickEmoji}
+            onClose={() => setEmojiPickerOpen(false)}
+          />
+        )}
         <input
+          ref={draftInputRef}
           className="input input-sm flex-1"
           placeholder="Send a message — @ to mention"
           value={draft}
@@ -397,6 +453,15 @@ export function ChatPanel() {
             if (typingSentAt.current) sendTyping(false)
           }}
         />
+        <button
+          type="button"
+          className="btn btn-ghost btn-sm btn-circle"
+          aria-label="Add emoji"
+          title="Add emoji"
+          onClick={() => setEmojiPickerOpen((open) => !open)}
+        >
+          <Smile className="size-4" />
+        </button>
         <button
           type="submit"
           className="btn btn-primary btn-sm btn-circle"
