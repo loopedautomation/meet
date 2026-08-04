@@ -48,6 +48,7 @@ import { usePushToTalk } from "@/hooks/usePushToTalk"
 import { useStickyDevices } from "@/hooks/useStickyDevices"
 import { useVoiceIsolation } from "@/hooks/useVoiceIsolation"
 import { track } from "@/lib/analytics"
+import { copyToClipboard } from "@/lib/clipboard"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { markExplicitLeave } from "@/lib/leaveIntent"
 import { $cameraEffect } from "@/stores/cameraEffect"
@@ -268,11 +269,15 @@ export function ControlBar({
 
   const copyLink = async () => {
     // Prefer the short-link format when the deployment configures one.
-    await navigator.clipboard.writeText(
+    const ok = await copyToClipboard(
       shareBase ? `${shareBase}/${slug}` : window.location.href,
     )
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } else {
+      toast.error("Couldn't copy link. Long-press to copy manually.")
+    }
   }
 
   return (
