@@ -16,6 +16,8 @@ import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Avatar } from "@/components/ui/Avatar"
+import type { ChatMessagePosted } from "@/lib/messageNotifications"
+import { handleIncomingMessage } from "@/lib/messageNotifications"
 import { $activeCall } from "@/stores/activeCall"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
@@ -55,6 +57,7 @@ export type ChannelRow = {
 }
 
 export type SidebarUser = {
+  id: string
   name: string | null
   email: string | null
   image: string | null
@@ -112,6 +115,14 @@ export function AppSidebar({
         // stops mattering once events flow again.
         startPolling()
       }
+      source.addEventListener("chat-message", (e) => {
+        try {
+          const msg = JSON.parse((e as MessageEvent).data) as ChatMessagePosted
+          handleIncomingMessage(msg, user.id, (slug) =>
+            router.push(`/c/${slug}`),
+          )
+        } catch {}
+      })
     } catch {
       startPolling()
     }
@@ -120,7 +131,7 @@ export function AppSidebar({
       if (pollTimer.current) clearInterval(pollTimer.current)
       pollTimer.current = null
     }
-  }, [load])
+  }, [load, user.id, router])
 
   const mintInvite = async () => {
     const res = await fetch("/api/invites", {

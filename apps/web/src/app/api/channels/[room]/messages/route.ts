@@ -4,6 +4,7 @@ import { z } from "zod"
 import { respondAsAgents } from "@/lib/server/agentChat"
 import { authMode } from "@/lib/server/authMode"
 import { canAccessChannel, getChannelByRoomName } from "@/lib/server/channels"
+import { notifyMessagePosted } from "@/lib/server/presence"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import { getMemberUser } from "@/lib/server/session"
 
@@ -146,12 +147,20 @@ export async function POST(request: Request, { params }: Params) {
       replyToId: body.data.replyToId ?? null,
       attachments: attachments.length ? attachments : null,
     })
+  const senderName = user.name ?? user.email ?? "someone"
   // Agents that belong to this channel get their turn (DMs always;
   // shared channels on @mention). Never blocks the send.
-  void respondAsAgents(
-    channel,
-    body.data.text,
-    user.name ?? user.email ?? "someone",
-  )
+  void respondAsAgents(channel, body.data.text, senderName)
+  // Notification fan-out to anyone not actively viewing this channel —
+  // never blocks the send on a failure to notify.
+  void notifyMessagePosted({
+    channelSlug: channel.slug,
+    channelName: channel.name,
+    isDm: channel.isDm,
+    senderId: user.id,
+    senderName,
+    messageId: id,
+    snippet: body.data.text.slice(0, 140),
+  })
   return NextResponse.json({ ok: true, id })
 }

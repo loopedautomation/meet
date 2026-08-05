@@ -3,7 +3,10 @@ import { NextResponse } from "next/server"
 import { authMode } from "@/lib/server/authMode"
 import { channelRoomName, listChannelsForUser } from "@/lib/server/channels"
 import { onlineConnect, onlineDisconnect } from "@/lib/server/onlineRegistry"
-import { PRESENCE_NOTIFY_CHANNEL } from "@/lib/server/presence"
+import {
+  MESSAGE_NOTIFY_CHANNEL,
+  PRESENCE_NOTIFY_CHANNEL,
+} from "@/lib/server/presence"
 import { getMemberUser } from "@/lib/server/session"
 
 export const dynamic = "force-dynamic"
@@ -62,7 +65,17 @@ export async function GET() {
       onlineConnect(user.id)
       try {
         await listener.connect()
-        listener.on("notification", () => {
+        listener.on("notification", (msg) => {
+          // Chat messages forward straight through as their own SSE event —
+          // no debounce, no re-query — distinct from the presence channel
+          // list refresh below, which batches bursts of joins/leaves.
+          if (msg.channel === MESSAGE_NOTIFY_CHANNEL) {
+            if (closed || !msg.payload) return
+            controller.enqueue(
+              encoder.encode(`event: chat-message\ndata: ${msg.payload}\n\n`),
+            )
+            return
+          }
           if (debounce) return
           debounce = setTimeout(() => {
             debounce = null
@@ -71,6 +84,7 @@ export async function GET() {
         })
         listener.on("error", () => controller.close())
         await listener.query(`listen ${PRESENCE_NOTIFY_CHANNEL}`)
+        await listener.query(`listen ${MESSAGE_NOTIFY_CHANNEL}`)
       } catch {
         controller.close()
         void listener.end().catch(() => {})

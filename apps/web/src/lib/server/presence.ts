@@ -7,9 +7,34 @@ import { and, eq, getDb, pgErrorCode, schema, sql } from "@meet/db"
 /** Channel name for LISTEN/NOTIFY — the SSE stream wakes on this. */
 export const PRESENCE_NOTIFY_CHANNEL = "room_presence_changed"
 
+/** Channel name for a new-message LISTEN/NOTIFY — the SSE stream forwards
+ * these straight through as a named "chat-message" event, distinct from the
+ * channel-list refresh triggered by PRESENCE_NOTIFY_CHANNEL. */
+export const MESSAGE_NOTIFY_CHANNEL = "chat_message_posted"
+
 async function notifyPresenceChanged(roomName: string): Promise<void> {
   await getDb()
     .execute(sql`select pg_notify(${PRESENCE_NOTIFY_CHANNEL}, ${roomName})`)
+    .catch(() => undefined)
+}
+
+export type ChatMessagePosted = {
+  channelSlug: string
+  channelName: string
+  isDm: boolean
+  senderId: string
+  senderName: string
+  messageId: string
+  snippet: string
+}
+
+export async function notifyMessagePosted(
+  payload: ChatMessagePosted,
+): Promise<void> {
+  await getDb()
+    .execute(
+      sql`select pg_notify(${MESSAGE_NOTIFY_CHANNEL}, ${JSON.stringify(payload)})`,
+    )
     .catch(() => undefined)
 }
 
