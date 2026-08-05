@@ -55,6 +55,25 @@ contain no key and send nothing.
 - **Scaling**: a single node comfortably handles dozens of concurrent video participants. For multi-node LiveKit you'll need Redis — out of scope here.
 - Alternatively, point the app at **LiveKit Cloud** (set `LIVEKIT_URL`/`LIVEKIT_PUBLIC_URL` and keys) and skip hosting the SFU entirely; you still self-host the web app, bridge, and agents.
 
+## Desktop app configuration
+
+`MEET_SERVER_URL` selects the server the desktop shell connects to outright,
+skipping the connect screen. Set it for managed or kiosk deployments, or to
+run `pnpm run dev:desktop` as a single command against a known server.
+
+```sh
+MEET_SERVER_URL=https://meet.example.com
+```
+
+Precedence, highest first:
+
+1. **Server chosen in the app** — once a user picks a server (or the app
+   remembers one from a previous run), that saved value wins. "Change
+   server…" clears it explicitly; `MEET_SERVER_URL` does not resurrect it.
+2. **`MEET_SERVER_URL`** — used when no server has been chosen yet.
+3. **Baked-in default** — only prefills the connect screen; never connects
+   automatically.
+
 ## Secrets via Infisical
 
 In production, secrets don't need to live on the host at all. Each image ships
