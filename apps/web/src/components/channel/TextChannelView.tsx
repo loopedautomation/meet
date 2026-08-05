@@ -12,9 +12,11 @@ import {
   Users,
   X,
 } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
+import { REJOIN_MAX_AGE_MS } from "@/components/room/RoomClient"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
 
@@ -35,24 +37,50 @@ type ChannelMessage = {
 }
 
 /**
- * A text channel or DM: the persistent conversation is the room. History,
- * sends, edits, deletes, reactions and pins all go through the channel
- * messages API (Postgres); a light poll keeps the view fresh. "Start a
- * huddle" flips into the channel's own voice room — every text channel and
- * DM owns one, so the Slack-huddle escalation is just opening it.
+ * A text channel, DM, or voice channel: the persistent conversation is the
+ * room. History, sends, edits, deletes, reactions and pins all go through
+ * the channel messages API (Postgres); a light poll keeps the view fresh —
+ * none of this depends on being in the room's call, so it's the default
+ * view for every channel kind, voice included. "Start a huddle" (DMs) and
+ * "Join call" (voice channels) are the opt-in escalations into that
+ * channel's own voice room.
  */
 export function TextChannelView({
   room,
   slug,
   label,
+  kind,
   canModerate,
 }: {
   room: string
   slug: string
   /** Display label — #slug for channels, peer names for DMs. */
   label: string
+  kind: "text" | "voice"
   canModerate: boolean
 }) {
+  const router = useRouter()
+  // Chat is the default view for a voice channel, but a reload/revisit
+  // while genuinely mid-call (a fresh rejoin proof left by RoomClient)
+  // must resume the call, not strand the user on chat — mirrors
+  // RoomClient's own rejoin-freshness check.
+  const [resumingCall] = useState(() => {
+    if (kind !== "voice" || typeof window === "undefined") return false
+    try {
+      const raw = localStorage.getItem(`rejoin:${room}`)
+      if (!raw) return false
+      const stored = JSON.parse(raw) as { savedAt?: number }
+      return (
+        typeof stored.savedAt === "number" &&
+        Date.now() - stored.savedAt <= REJOIN_MAX_AGE_MS
+      )
+    } catch {
+      return false
+    }
+  })
+  useEffect(() => {
+    if (resumingCall) router.replace(`/c/${slug}?call=1`)
+  }, [resumingCall, router, slug])
   const [messages, setMessages] = useState<ChannelMessage[] | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
@@ -199,6 +227,14 @@ export function TextChannelView({
   const byId = new Map((messages ?? []).map((m) => [m.id, m]))
   const pinned = (messages ?? []).filter((m) => m.pinned)
 
+  if (resumingCall) {
+    return (
+      <main className="flex h-full items-center justify-center">
+        <span className="loading loading-spinner" />
+      </main>
+    )
+  }
+
   return (
     <main className="mx-auto flex h-full max-w-3xl flex-col px-4">
       <header className="flex items-center justify-between gap-3 border-base-300 border-b py-3">
@@ -210,18 +246,30 @@ export function TextChannelView({
           )}
           {label.replace(/^#/, "")}
         </span>
-        {/* Huddles are a DM escalation only — text channels stay text;
-            voice belongs in voice channels. */}
-        {!label.startsWith("#") && (
+        {kind === "voice" ? (
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            // The huddle opens in its own tab so the conversation stays put.
-            onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+            // Same tab: the call is this page's other state, not a side
+            // conversation to escalate into (unlike a DM huddle).
+            onClick={() => router.push(`/c/${slug}?call=1`)}
           >
             <PhoneCall className="size-4" />
-            Start a huddle
+            Join call
           </button>
+        ) : (
+          // Huddles are a DM escalation only — text channels stay text.
+          !label.startsWith("#") && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              // The huddle opens in its own tab so the conversation stays put.
+              onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+            >
+              <PhoneCall className="size-4" />
+              Start a huddle
+            </button>
+          )
         )}
       </header>
 
