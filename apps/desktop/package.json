@@ -1,6 +1,7 @@
 {
   "name": "@meet/desktop",
-  "version": "0.1.1",
+  "version": "0.1.2",
+  "productName": "Looped Meet",
   "private": true,
   "description": "looped meet desktop \u2014 connect to your team server (self-hosted or hosted)",
   "main": "src/main.js",
