@@ -5,12 +5,18 @@ name: Release Desktop
 # workflow is macOS-only by design, not by omission.
 #
 # Triggers:
-#   - desktop version tag (e.g. desktop-v0.1.0) -> full release build
-#   - manual dispatch                           -> build artifacts only
+#   - version tag (e.g. v0.1.1) -> full release build
+#   - manual dispatch           -> build artifacts only
 #
-# The tag is deliberately prefixed: `v0.1.0` already means "server images"
-# (see publish-images.yaml), and the desktop app versions independently of
-# the server it talks to.
+# Bare semver tags belong to the desktop app, and server image builds carry a
+# `server-` prefix instead (see publish-images.yaml). That split is forced by
+# electron-updater: it walks the repo's releases, skips any tag that isn't
+# valid semver, and picks the newest that is. A prefixed desktop tag would be
+# invisible to it, so auto-update would silently never fire.
+#
+# electron-builder derives the release tag from apps/desktop/package.json
+# (v${version}) rather than from the pushed tag, so the two must agree —
+# push v0.1.1 only after bumping the package to 0.1.1.
 #
 # The release is created as a DRAFT. Nothing reaches users until someone
 # opens it, checks the installers, and publishes.
@@ -37,7 +43,7 @@ name: Release Desktop
 on:
   workflow_dispatch:
   push:
-    tags: ["desktop-v[0-9]*.[0-9]*.[0-9]*"]
+    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -118,7 +124,7 @@ jobs:
         run: |
           # Only publish for a tag — a manual run builds artifacts to inspect
           # without creating or touching a release.
-          if [ "${{ startsWith(github.ref, 'refs/tags/desktop-v') }}" = "true" ]; then
+          if [ "${{ startsWith(github.ref, 'refs/tags/v') }}" = "true" ]; then
             args="--publish always"
           else
             args="--publish never"
@@ -160,7 +166,7 @@ jobs:
   verify:
     name: Verify signature and notarization
     needs: build
-    if: startsWith(github.ref, 'refs/tags/desktop-v')
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: macos-14
     steps:
       - uses: actions/download-artifact@v4
