@@ -1,8 +1,8 @@
 // looped meet desktop: a thin shell over an instance's member UI. The app
 // owns nothing but the window — the UI is served by whichever server you
 // connect to (self-hosted or hosted), so it works with any instance and
-// updates ship server-side. What the shell adds is the native layer: tray
-// presence ("who's in #standup" from the menu bar), a global shortcut,
+// updates ship server-side. What the shell adds is the native layer: channel
+// presence in the app menu ("who's in #standup"), a global shortcut,
 // notifications, auto-launch.
 const crypto = require("node:crypto")
 const fs = require("node:fs")
@@ -18,7 +18,6 @@ const {
   Notification,
   session,
   shell,
-  Tray,
 } = require("electron")
 const { autoUpdater } = require("electron-updater")
 
@@ -52,8 +51,6 @@ function saveSettings(patch) {
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null
-/** @type {Tray | null} */
-let tray = null
 let presenceTimer = null
 let updateTimer = null
 // Set once an update is downloaded and staged — the tray reads this to offer
@@ -251,11 +248,6 @@ function deepLinkFromArgv(argv) {
   return argv.find((arg) => arg.startsWith("looped-meet://")) ?? null
 }
 
-// 16x16 monochrome dot — a placeholder template icon until brand art lands.
-const TRAY_ICON = nativeImage.createFromDataURL(
-  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAcElEQVR4nKWTwQ3AIAwDL1U3yJhs1jHTR6WCQoWa4Bd62TgWmNkFYGYXtRoAVb2f8xNJPCFXm3AEwMx2YFmA1t3rIN45CKMYm4gzmJcirD5AJZFEHRJTBBRoS8T2H4hOsWXQfSjRJdpv7B/pE2Y/0w3IlUbBB6NC1QAAAABJRU5ErkJggg==",
-)
-
 function createConnectWindow(step, params = {}) {
   const win = new BrowserWindow({
     width: 460,
@@ -367,14 +359,21 @@ async function fetchChannels() {
   }
 }
 
-function rebuildTray(channels) {
-  if (!tray) return
-  // Remembered so callers that only change one part of the menu (the update
-  // item) can rebuild without knowing the current presence state.
+/**
+ * Application menu. Everything the shell offers lives here — there is no
+ * tray icon: a menu-bar icon competes for space users have already run out
+ * of, and hides its contents behind an icon nobody recognises. The standard
+ * macOS place to look is the app menu, so that is where these live.
+ *
+ * Rebuilt whenever presence or update state changes, since menu templates
+ * are snapshots — Electron copies them at build time rather than tracking
+ * the values.
+ */
+function rebuildAppMenu(channels = lastChannels) {
   lastChannels = channels
   const channelItems =
     channels === null
-      ? [{ label: "Sign in in the app to see channels", enabled: false }]
+      ? [{ label: "Sign in to see channels", enabled: false }]
       : channels.length === 0
         ? [{ label: "No channels yet", enabled: false }]
         : channels.map((c) => ({
@@ -388,43 +387,65 @@ function rebuildTray(channels) {
             click: () => showWorkspace(`/c/${c.slug}`),
           }))
   // Only present once an update is staged — the restart is offered, never
-  // forced, and sits at the top where it's actually noticed.
+  // forced, and sits directly under the check that found it.
   const updateItems = updateReady
     ? [
         {
           label: `Restart to update to ${updateReady.version}`,
           click: () => restartToUpdate(),
         },
-        { type: "separator" },
       ]
     : []
-  tray.setContextMenu(
+
+  Menu.setApplicationMenu(
     Menu.buildFromTemplate([
-      ...updateItems,
-      { label: "Open looped meet", click: () => showWorkspace() },
-      { type: "separator" },
-      ...channelItems,
-      { type: "separator" },
       {
-        label: "Launch at login",
-        type: "checkbox",
-        checked: app.getLoginItemSettings().openAtLogin,
-        click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
+        label: app.getName(),
+        submenu: [
+          { role: "about" },
+          { type: "separator" },
+          {
+            label: "Check for Updates…",
+            click: () => void checkForUpdatesInteractive(),
+          },
+          ...updateItems,
+          { type: "separator" },
+          {
+            label: "Launch at Login",
+            type: "checkbox",
+            checked: app.getLoginItemSettings().openAtLogin,
+            click: (item) =>
+              app.setLoginItemSettings({ openAtLogin: item.checked }),
+          },
+          {
+            label: "Change Server…",
+            click: () => {
+              saveSettings({ serverUrl: null })
+              mainWindow?.close()
+              createConnectWindow()
+            },
+          },
+          { type: "separator" },
+          { role: "hide" },
+          { role: "hideOthers" },
+          { role: "unhide" },
+          { type: "separator" },
+          { role: "quit" },
+        ],
       },
+      // Without an Edit menu the standard shortcuts don't reach the web app,
+      // so cut/copy/paste and select-all stop working in every text field.
+      { role: "editMenu" },
       {
-        label: "Check for updates…",
-        click: () => void checkForUpdatesInteractive(),
+        label: "Channels",
+        submenu: [
+          { label: "Open Looped Meet", click: () => showWorkspace() },
+          { type: "separator" },
+          ...channelItems,
+        ],
       },
-      {
-        label: "Change server…",
-        click: () => {
-          saveSettings({ serverUrl: null })
-          mainWindow?.close()
-          createConnectWindow()
-        },
-      },
-      { type: "separator" },
-      { label: "Quit", role: "quit" },
+      { role: "viewMenu" },
+      { role: "windowMenu" },
     ]),
   )
 }
@@ -436,7 +457,7 @@ function rebuildTray(channels) {
 // an unsigned build silently never updates, which is part of why the release
 // workflow fails a tagged build that isn't properly signed.
 
-/** How often to re-check while the app stays open. Tray apps run for weeks,
+/** How often to re-check while the app stays open. This app runs for weeks,
  * so a launch-only check would leave long-lived sessions permanently stale. */
 const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
 
@@ -453,7 +474,7 @@ function initAutoUpdates() {
 
   autoUpdater.on("update-downloaded", (info) => {
     updateReady = info
-    rebuildTray(lastChannels)
+    rebuildAppMenu()
     new Notification({
       title: "Update ready",
       body: `looped meet ${info.version} installs when you restart.`,
@@ -474,7 +495,7 @@ function initAutoUpdates() {
 }
 
 /**
- * Tray-initiated update check. The automatic checks are silent by design —
+ * Menu-initiated update check. The automatic checks are silent by design —
  * they must not interrupt — but a check someone asked for has to answer,
  * including when the answer is "nothing to do". Without that it's
  * indistinguishable from a broken button.
@@ -488,7 +509,7 @@ async function checkForUpdatesInteractive() {
     return
   }
   if (updateReady) {
-    // Already downloaded; the restart item is right there in the same menu.
+    // Already downloaded; the restart item sits directly below in the menu.
     new Notification({
       title: "Update ready",
       body: `looped meet ${updateReady.version} installs when you restart.`,
@@ -520,7 +541,7 @@ async function checkForUpdatesInteractive() {
 }
 
 /** Quit and apply a staged update. Windows are closed explicitly first:
- * `window-all-closed` is preventDefault'd to keep this a tray app, so the
+ * `window-all-closed` is preventDefault'd to keep the app alive, so the
  * usual quit path would otherwise leave them hanging around. */
 function restartToUpdate() {
   BrowserWindow.getAllWindows().forEach((w) => w.destroy())
@@ -549,7 +570,7 @@ function notifyJoins(channels) {
 
 async function pollPresence() {
   const channels = await fetchChannels()
-  rebuildTray(channels)
+  rebuildAppMenu(channels)
   notifyJoins(channels)
 }
 
@@ -625,9 +646,7 @@ app.whenReady().then(() => {
     completeBrowserSignIn(String(code ?? "").trim()),
   )
 
-  tray = new Tray(TRAY_ICON)
-  tray.setToolTip("looped meet")
-  rebuildTray(null)
+  rebuildAppMenu(null)
   presenceTimer = setInterval(() => void pollPresence(), 15_000)
   void pollPresence()
   initAutoUpdates()
@@ -651,8 +670,9 @@ app.whenReady().then(() => {
   })
 })
 
-// Tray app: closing the window keeps the shell (and its presence polling)
-// alive; Quit lives in the tray menu.
+// Closing the window keeps the shell (and its presence polling) alive rather
+// than quitting — reopening from the dock is instant, and Quit lives in the
+// app menu.
 app.on("window-all-closed", (e) => {
   e?.preventDefault?.()
 })
