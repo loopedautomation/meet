@@ -26,6 +26,13 @@ const { autoUpdater } = require("electron-updater")
 // file, this path covers dev runs and Linux/Windows windows.
 const APP_ICON = path.join(__dirname, "..", "build", "icon.png")
 
+// Dev runs get their own userData directory, mirroring looped whisper's
+// "(Dev)" split. Without this a `pnpm dev` session and an installed release
+// share one settings file, and a dev server URL leaks into the packaged app
+// — which presents as a blank window pointed at a localhost that isn't
+// running. Must happen before anything reads app.getPath("userData").
+if (!app.isPackaged) app.setName(`${app.getName()} (Dev)`)
+
 const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json")
 
 function loadSettings() {
@@ -249,7 +256,7 @@ const TRAY_ICON = nativeImage.createFromDataURL(
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAcElEQVR4nKWTwQ3AIAwDL1U3yJhs1jHTR6WCQoWa4Bd62TgWmNkFYGYXtRoAVb2f8xNJPCFXm3AEwMx2YFmA1t3rIN45CKMYm4gzmJcirD5AJZFEHRJTBBRoS8T2H4hOsWXQfSjRJdpv7B/pE2Y/0w3IlUbBB6NC1QAAAABJRU5ErkJggg==",
 )
 
-function createConnectWindow(step) {
+function createConnectWindow(step, params = {}) {
   const win = new BrowserWindow({
     width: 460,
     height: 380,
@@ -262,7 +269,7 @@ function createConnectWindow(step) {
     },
   })
   void win.loadFile(path.join(__dirname, "connect.html"), {
-    query: step ? { step } : {},
+    query: step ? { step, ...params } : params,
   })
   return win
 }
@@ -300,6 +307,19 @@ function createMainWindow(url) {
     },
   })
   void win.loadURL(url)
+  // A server that can't be reached leaves an empty window with no
+  // explanation and no way out — the shell has no chrome of its own to
+  // report through. Fall back to the connect screen, which can at least say
+  // what failed and let a different address be entered.
+  win.webContents.on("did-fail-load", (_e, code, description, failedUrl, isMainFrame) => {
+    // Sub-resources and in-page navigations fail routinely and harmlessly;
+    // only a failed main-frame load means there's nothing to show. -3 is
+    // ABORTED, which fires on ordinary navigation away from a page.
+    if (!isMainFrame || code === -3) return
+    console.warn(`workspace load failed (${code} ${description}): ${failedUrl}`)
+    win.destroy()
+    createConnectWindow("failed", { reason: description, url: failedUrl })
+  })
   // Links that leave the instance open in the default browser, not in the
   // shell — the shell is for your server only.
   win.webContents.setWindowOpenHandler(({ url: target }) => {
@@ -392,6 +412,10 @@ function rebuildTray(channels) {
         click: (item) => app.setLoginItemSettings({ openAtLogin: item.checked }),
       },
       {
+        label: "Check for updates…",
+        click: () => void checkForUpdatesInteractive(),
+      },
+      {
         label: "Change server…",
         click: () => {
           saveSettings({ serverUrl: null })
@@ -447,6 +471,52 @@ function initAutoUpdates() {
   updateTimer = setInterval(() => {
     void autoUpdater.checkForUpdates().catch(() => {})
   }, UPDATE_CHECK_INTERVAL_MS)
+}
+
+/**
+ * Tray-initiated update check. The automatic checks are silent by design —
+ * they must not interrupt — but a check someone asked for has to answer,
+ * including when the answer is "nothing to do". Without that it's
+ * indistinguishable from a broken button.
+ */
+async function checkForUpdatesInteractive() {
+  if (!app.isPackaged) {
+    new Notification({
+      title: "Updates unavailable",
+      body: "This is a development build — updates only apply to installed releases.",
+    }).show()
+    return
+  }
+  if (updateReady) {
+    // Already downloaded; the restart item is right there in the same menu.
+    new Notification({
+      title: "Update ready",
+      body: `looped meet ${updateReady.version} installs when you restart.`,
+    }).show()
+    return
+  }
+  try {
+    const result = await autoUpdater.checkForUpdates()
+    // updateInfo always comes back; compare against what's running to tell
+    // "found something newer" from "already current".
+    const found = result?.updateInfo?.version
+    if (found && found !== app.getVersion()) {
+      new Notification({
+        title: "Downloading update",
+        body: `looped meet ${found} is downloading — you'll be told when it's ready.`,
+      }).show()
+    } else {
+      new Notification({
+        title: "Up to date",
+        body: `looped meet ${app.getVersion()} is the latest version.`,
+      }).show()
+    }
+  } catch (err) {
+    new Notification({
+      title: "Couldn't check for updates",
+      body: err?.message ?? "The update server couldn't be reached.",
+    }).show()
+  }
 }
 
 /** Quit and apply a staged update. Windows are closed explicitly first:
