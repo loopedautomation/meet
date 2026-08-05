@@ -1,6 +1,7 @@
 import { LogIn } from "lucide-react"
 import { notFound, redirect } from "next/navigation"
 import { Wordmark } from "@/components/brand/BrandMark"
+import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
 import { authMode } from "@/lib/server/authMode"
 import { approveAuthRequest } from "@/lib/server/desktopSession"
 import { getSessionUser } from "@/lib/server/session"
@@ -28,24 +29,27 @@ export default async function DesktopAuthPage({ searchParams }: SearchParams) {
   }
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-lg flex-col px-6">
-      <header className="py-6">
-        <Wordmark />
-      </header>
-      <section className="flex flex-1 flex-col items-center justify-center gap-4 pb-24 text-center">
-        {!user.role ? (
-          <>
-            <h1 className="font-semibold text-2xl">Not a member yet</h1>
-            <p className="text-base-content/70">
-              You're signed in, but this server is invite-only. Ask a member for
-              an invite, then try again from the desktop app.
-            </p>
-          </>
-        ) : (
-          <Approved requestId={request} userId={user.id} />
-        )}
-      </section>
-    </main>
+    <>
+      <DesktopDragStrip />
+      <main className="mx-auto flex min-h-dvh max-w-lg flex-col px-6">
+        <header className="py-6">
+          <Wordmark />
+        </header>
+        <section className="flex flex-1 flex-col items-center justify-center gap-4 pb-24 text-center">
+          {!user.role ? (
+            <>
+              <h1 className="font-semibold text-2xl">Not a member yet</h1>
+              <p className="text-base-content/70">
+                You're signed in, but this server is invite-only. Ask a member
+                for an invite, then try again from the desktop app.
+              </p>
+            </>
+          ) : (
+            <Approved requestId={request} userId={user.id} />
+          )}
+        </section>
+      </main>
+    </>
   )
 }
 
