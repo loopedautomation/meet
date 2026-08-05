@@ -15,6 +15,7 @@ import { useStore } from "@nanostores/react"
 import { Check, Copy, Download } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Markdown } from "@/components/Markdown"
+import { copyToClipboard } from "@/lib/clipboard"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $doc, encodeDocState, setLocalDocText } from "@/stores/doc"
 import {
@@ -398,13 +399,12 @@ export function DocPanel({
             aria-label="Copy markdown"
             title="Copy markdown"
             onClick={() => {
-              void navigator.clipboard
-                ?.writeText(draft)
-                .then(() => {
+              void copyToClipboard(draft).then((ok) => {
+                if (ok) {
                   setCopied(true)
                   setTimeout(() => setCopied(false), 1500)
-                })
-                .catch(() => undefined)
+                }
+              })
             }}
           >
             {copied ? (
