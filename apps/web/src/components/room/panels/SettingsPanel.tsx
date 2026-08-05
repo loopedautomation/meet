@@ -58,6 +58,7 @@ import {
   setPushToTalk,
   setSendQuality,
 } from "@/stores/preferences"
+import { $speakerMode, setSpeakerMode } from "@/stores/speakerMode"
 import { $theme, setTheme } from "@/stores/theme"
 import {
   $videoTransform,
@@ -595,7 +596,13 @@ function DeviceSelect({
   const { devices, activeDeviceId, setActiveMediaDevice } =
     useMediaDeviceSelect({ kind })
 
-  if (devices.length === 0) return null
+  // iOS Safari never enumerates audiooutput devices and doesn't implement
+  // setSinkId — there's no device list to show. Fall back to the coarse
+  // speaker/earpiece bias instead of hiding the control entirely.
+  if (devices.length === 0) {
+    if (kind !== "audiooutput") return null
+    return <SpeakerModeToggle label={label} />
+  }
 
   return (
     <label className="flex min-w-0 flex-col gap-1">
@@ -622,6 +629,32 @@ function DeviceSelect({
           value: d.deviceId,
           label: cleanDeviceLabel(d.label) || label,
         }))}
+      />
+    </label>
+  )
+}
+
+/**
+ * Fallback for browsers with no output device list to pick from (iOS
+ * Safari). Not a real device switch — see useIOSSpeakerBias — but it gives
+ * mobile users a working way to ask for the loudspeaker instead of silently
+ * losing the control, per #191.
+ */
+function SpeakerModeToggle({ label }: { label: string }) {
+  const mode = useStore($speakerMode)
+
+  return (
+    <label className="flex min-w-0 flex-col gap-1">
+      <span className="text-base-content/70 text-sm">{label}</span>
+      <Select
+        value={mode}
+        onChange={(e) =>
+          setSpeakerMode(e.target.value as "speaker" | "earpiece")
+        }
+        options={[
+          { value: "speaker", label: "Loudspeaker" },
+          { value: "earpiece", label: "Earpiece" },
+        ]}
       />
     </label>
   )
