@@ -59,9 +59,7 @@ export function JoinChannelCall({
   if (!activeCall) {
     return (
       <main className="flex min-h-full flex-col items-center justify-center gap-3 px-6 text-center">
-        <p className="text-base-content/60 text-sm">
-          You left #{channelSlug}.
-        </p>
+        <p className="text-base-content/60 text-sm">You left #{channelSlug}.</p>
         <button
           type="button"
           className="btn btn-primary btn-sm"
