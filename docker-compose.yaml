@@ -52,16 +52,24 @@ services:
           # TCP-only media is rock solid for local dev. Set false in production.
           force_tcp: ${LIVEKIT_FORCE_TCP:-false}
         keys:
-          ${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-}
+          ${LIVEKIT_API_KEY:?LIVEKIT_API_KEY must be set to the api key name — the part before the colon in LIVEKIT_KEYS}: ${LIVEKIT_API_SECRET:-}
         # Presence: joins/leaves stream to the web app's webhook sink, which
         # maintains the room_presence table behind the channel sidebar.
         # Host-run dev web overrides the URL via LIVEKIT_WEBHOOK_URL
         # (http://host.docker.internal:3000/...). Deliveries are retried, and
         # the sink no-ops without a database.
+        # livekit-server refuses to start unless this api_key is one of the
+        # keys above (or in LIVEKIT_KEYS), and it exits without a message the
+        # deploy log surfaces — the stack just reports "livekit is unhealthy"
+        # and web never starts, because it waits on livekit. A default here
+        # (this used to be `devkey`) is therefore worse than none: it's
+        # guaranteed wrong in any real deployment and fails invisibly. The
+        # `:?` above makes compose refuse to render with a message naming the
+        # variable instead.
         webhook:
           urls:
             - ${LIVEKIT_WEBHOOK_URL:-http://web:3000/api/livekit/webhook}
-          api_key: ${LIVEKIT_API_KEY:-devkey}
+          api_key: ${LIVEKIT_API_KEY}
         logging:
           level: info
     ports:
