@@ -5,15 +5,21 @@ name: Publish Images
 # prod box never builds — its compose only pulls (see docker-compose.yaml).
 #
 # Promotion flow:
-#   feature --PR--> next --merge--> dev --tag v*--> main
+#   feature --PR--> next --merge--> dev --tag server-v*--> main
 #
 # Triggers:
-#   - push to `dev`                  -> rolling :dev image, deployed to the
-#                                       dev environment (meet.dev.looped.sh)
-#   - push to `main`                 -> rolling :latest image, deployed to prod
-#   - version tag push (e.g. v0.1.0) -> pinned :<version> image
+#   - push to `dev`                       -> rolling :dev image, deployed to
+#                                            the dev env (meet.dev.looped.sh)
+#   - push to `main`                      -> rolling :latest image -> prod
+#   - server tag push (e.g. server-v0.2.0) -> pinned :0.2.0 image
 #   - manual dispatch
 # Every image also gets a :sha-<short> tag for traceability.
+#
+# The `server-` prefix exists so bare `v*` tags belong to the desktop app
+# (see release-desktop.yaml). electron-updater only considers releases whose
+# tag is valid semver and skips everything else, so the desktop app cannot
+# use a prefix — the server is the side that has to carry one. The prefix is
+# stripped from the image tag: `server-v0.2.0` publishes `:0.2.0`.
 #
 # The :dev and :latest tags are deliberately distinct. docker-compose.yaml
 # defaults IMAGE_TAG to `latest`, so a dev build sharing that tag would
@@ -23,7 +29,7 @@ on:
   workflow_dispatch:
   push:
     branches: ["main", "dev"]
-    tags: ["v[0-9]*.[0-9]*.[0-9]*"]
+    tags: ["server-v[0-9]*.[0-9]*.[0-9]*"]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -65,7 +71,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/meet-${{ matrix.service }}
           tags: |
-            type=semver,pattern={{version}}
+            # `type=semver` can't parse the server- prefix, so match it
+            # explicitly and publish the bare version: server-v0.2.0 -> :0.2.0
+            type=match,pattern=server-v(\d+\.\d+\.\d+),group=1
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
             type=sha,prefix=sha-
