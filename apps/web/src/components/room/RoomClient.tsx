@@ -31,7 +31,7 @@ const queryClient = new QueryClient()
 // token behind it can still be valid — tokens carry a 1h TTL (see the token
 // route). Past that, walking straight past the lobby would be pure bypass:
 // the server would refuse the stale proof and mint a fresh identity anyway.
-const REJOIN_MAX_AGE_MS = 60 * 60 * 1000
+export const REJOIN_MAX_AGE_MS = 60 * 60 * 1000
 // A non-terminal disconnect retries the join at most this many times before
 // giving up and landing back at the lobby.
 const MAX_AUTO_REJOIN_ATTEMPTS = 3
@@ -258,11 +258,14 @@ export function RoomClient({
     [slug, mode, tokenEndpoint],
   )
 
-  // Channel calls join Discord-style: clicking the channel IS joining, no
-  // lobby stop. The display name comes from the last call or the account;
-  // mic honors the join-muted preference, camera always starts off (nobody
-  // wants an unannounced camera). Guests without a resolvable name (and any
-  // join failure) fall back to the lobby.
+  // Channel calls join Discord-style once mounted: no lobby stop. The
+  // channel page itself is chat-first (see app/(app)/c/[slug]/page.tsx) —
+  // this component only mounts once the user explicitly clicks "Join
+  // call", at which point joining happens immediately. The display name
+  // comes from the last call or the account; mic honors the join-muted
+  // preference, camera always starts off (nobody wants an unannounced
+  // camera). Guests without a resolvable name (and any join failure) fall
+  // back to the lobby.
   const isChannelCall = mode === "channel"
   const [autoJoining, setAutoJoining] = useState(isChannelCall)
   const autoJoinTried = useRef(false)

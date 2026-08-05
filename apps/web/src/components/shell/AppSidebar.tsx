@@ -295,8 +295,9 @@ export function AppSidebar({
                         <button
                           type="button"
                           className={itemClass(active)}
-                          // Clicking a voice channel IS joining the call —
-                          // RoomClient auto-joins channel rooms.
+                          // Voice channels open chat-first, same as text
+                          // channels — joining the call is an explicit
+                          // action from that page (see #241).
                           onClick={() => router.push(`/c/${c.slug}`)}
                         >
                           {c.kind === "voice" ? (
