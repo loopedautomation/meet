@@ -3,6 +3,7 @@
 import { Copy, Download, ShieldCheck, Trash2, UserMinus } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "react-toastify"
+import { copyToClipboard } from "@/lib/clipboard"
 
 type Member = {
   id: string
@@ -96,8 +97,12 @@ export function AdminConsole({
       toast.error(data?.error ?? "Could not mint the invite.")
       return
     }
-    await navigator.clipboard.writeText(data.url).catch(() => {})
-    toast.success("Invite link copied to your clipboard.")
+    const ok = await copyToClipboard(data.url)
+    if (ok) {
+      toast.success("Invite link copied to your clipboard.")
+    } else {
+      toast.error("Could not copy the invite link.")
+    }
     await load()
   }
 
