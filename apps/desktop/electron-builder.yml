@@ -2,7 +2,7 @@
 # (.github/workflows/release-desktop.yaml) supplies signing credentials via
 # env and publishes to GitHub Releases.
 appId: sh.looped.meet
-productName: looped meet
+productName: Looped Meet
 directories:
   output: dist
   buildResources: build

@@ -149,11 +149,21 @@
       const error = document.getElementById("error")
       const stepConnect = document.getElementById("step-connect")
       const stepSignin = document.getElementById("step-signin")
+      const query = new URLSearchParams(location.search)
       // The main process opens this window straight at the sign-in step
       // when a server is saved but the shell is signed out.
-      if (new URLSearchParams(location.search).get("step") === "signin") {
+      if (query.get("step") === "signin") {
         stepConnect.hidden = true
         stepSignin.hidden = false
+      }
+      // …or here, with a reason, when the workspace couldn't be loaded at
+      // all. Saying which address failed matters: the usual cause is a saved
+      // server that has moved or stopped, and the address is the only clue.
+      if (query.get("step") === "failed") {
+        const failed = query.get("url")
+        error.textContent = failed
+          ? `Couldn't load ${new URL(failed).origin} — ${query.get("reason") ?? "the server didn't respond"}.`
+          : "Couldn't load that server."
       }
       // Prefilled with the hosted instance (or the server already in use when
       // reached via "Change server…") — selected, so typing a different
