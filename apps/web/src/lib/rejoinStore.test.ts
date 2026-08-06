@@ -29,6 +29,7 @@ const prefs = { displayName: "Ada", audioEnabled: true, videoEnabled: false }
 describe("rejoin store", () => {
   beforeEach(() => {
     vi.stubGlobal("sessionStorage", memoryStorage())
+    vi.stubGlobal("localStorage", memoryStorage())
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -51,6 +52,43 @@ describe("rejoin store", () => {
 
   it("returns null rather than throwing on unparseable data", () => {
     sessionStorage.setItem("rejoin:room-a", "{not json")
+    expect(readRejoin("room-a")).toBeNull()
+    sessionStorage.setItem("rejoin:room-b", "null")
+    expect(readRejoin("room-b")).toBeNull()
+  })
+
+  // Proofs written before this store lived in localStorage; the first read
+  // imports them so a deploy doesn't bounce mid-meeting users to the lobby —
+  // and evicts the localStorage copy, which is a live bearer credential
+  // nothing else would ever delete.
+  it("migrates a legacy localStorage proof and evicts the original", () => {
+    localStorage.setItem(
+      "rejoin:room-a",
+      JSON.stringify({ prefs, rejoinToken: "old", savedAt: Date.now() }),
+    )
+    expect(readRejoin("room-a")).toMatchObject({ rejoinToken: "old" })
+    expect(localStorage.getItem("rejoin:room-a")).toBeNull()
+    // Now owned by sessionStorage: later reads don't depend on localStorage.
+    expect(readRejoin("room-a")).toMatchObject({ rejoinToken: "old" })
+  })
+
+  it("prefers the sessionStorage proof over an unmigrated legacy one", () => {
+    writeRejoin("room-a", { prefs, rejoinToken: "current" })
+    localStorage.setItem(
+      "rejoin:room-a",
+      JSON.stringify({ prefs, rejoinToken: "stale" }),
+    )
+    expect(readRejoin("room-a")?.rejoinToken).toBe("current")
+  })
+
+  it("writes and clears evict any legacy localStorage copy", () => {
+    localStorage.setItem("rejoin:room-a", "legacy")
+    writeRejoin("room-a", { prefs, rejoinToken: "tok" })
+    expect(localStorage.getItem("rejoin:room-a")).toBeNull()
+
+    localStorage.setItem("rejoin:room-a", "legacy-again")
+    clearRejoin("room-a")
+    expect(localStorage.getItem("rejoin:room-a")).toBeNull()
     expect(readRejoin("room-a")).toBeNull()
   })
 

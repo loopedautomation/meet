@@ -31,14 +31,38 @@ export type StoredRejoin = {
 
 const key = (slug: string) => `rejoin:${slug}`
 
+/**
+ * One-time import of a proof written by the pre-sessionStorage code, which
+ * kept it in localStorage. Besides carrying a mid-meeting user across the
+ * deploy instead of bouncing them to the lobby, this is a cleanup with teeth:
+ * the entry is a live bearer credential, and nothing else would ever delete
+ * it from localStorage. Freshness still gates any auto-join (isRejoinFresh),
+ * so a months-old leftover can't walk past the lobby.
+ */
+function migrateLegacyEntry(slug: string): string | null {
+  try {
+    const raw = localStorage.getItem(key(slug))
+    if (raw !== null) {
+      // Copy before evicting: a failed write must leave the proof where it
+      // was, to be retried on the next read, not destroy it.
+      sessionStorage.setItem(key(slug), raw)
+      localStorage.removeItem(key(slug))
+    }
+    return raw
+  } catch {
+    return null
+  }
+}
+
 /** The stored proof for this room, or null when absent/unreadable. */
 export function readRejoin(slug: string): StoredRejoin | null {
   try {
-    const raw = sessionStorage.getItem(key(slug))
+    const raw = sessionStorage.getItem(key(slug)) ?? migrateLegacyEntry(slug)
     if (!raw) return null
     const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== "object") return null
     // Older entries stored the preferences at the top level.
-    return parsed?.prefs ? (parsed as StoredRejoin) : { prefs: parsed }
+    return parsed.prefs ? (parsed as StoredRejoin) : { prefs: parsed }
   } catch {
     return null
   }
@@ -54,12 +78,17 @@ export function writeRejoin(
       key(slug),
       JSON.stringify({ ...entry, savedAt: Date.now() }),
     )
+    // A fresh proof supersedes any pre-migration copy of the old one.
+    localStorage.removeItem(key(slug))
   } catch {}
 }
 
 export function clearRejoin(slug: string): void {
   try {
     sessionStorage.removeItem(key(slug))
+    // A pre-migration entry may still sit in localStorage; a clear must
+    // revoke that copy of the credential too.
+    localStorage.removeItem(key(slug))
   } catch {}
 }
 
