@@ -2,6 +2,7 @@ import { getDb } from "@meet/db"
 import { notFound } from "next/navigation"
 import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
 import { AppShell } from "@/components/shell/AppShell"
+import { MobileSidebarToggle } from "@/components/shell/MobileSidebarToggle"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
 
@@ -36,6 +37,7 @@ export default async function AppLayout({
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       {dragStrip}
+      <MobileSidebarToggle />
       <AppShell
         user={{
           name: user.name,
