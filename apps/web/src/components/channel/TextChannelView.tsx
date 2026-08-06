@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
 import { REJOIN_MAX_AGE_MS } from "@/components/room/RoomClient"
+import { Modal } from "@/components/ui/Modal"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
 
@@ -93,6 +94,10 @@ export function TextChannelView({
   const [pending, setPending] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [lightbox, setLightbox] = useState<{
+    url: string
+    name: string
+  } | null>(null)
 
   useEffect(() => {
     void fetch("/api/me")
@@ -333,12 +338,23 @@ export function TextChannelView({
                     {m.text && <Markdown text={m.text} className="text-sm" />}
                     {m.attachments?.map((a) =>
                       a.type.startsWith("image/") ? (
-                        <img
+                        <button
                           key={a.key}
-                          src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                          alt={a.name}
-                          className="mt-1 max-h-64 max-w-full rounded-box"
-                        />
+                          type="button"
+                          className="mt-1 block cursor-zoom-in"
+                          onClick={() =>
+                            setLightbox({
+                              url: `/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`,
+                              name: a.name,
+                            })
+                          }
+                        >
+                          <img
+                            src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                            alt={a.name}
+                            className="max-h-64 max-w-full rounded-box"
+                          />
+                        </button>
                       ) : (
                         <a
                           key={a.key}
@@ -458,7 +474,15 @@ export function TextChannelView({
         <div className="flex flex-wrap gap-2 pt-2">
           {pending.map((a) => (
             <span key={a.key} className="badge badge-ghost gap-1">
-              <Paperclip className="size-3" />
+              {a.type.startsWith("image/") ? (
+                <img
+                  src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                  alt=""
+                  className="size-4 rounded object-cover"
+                />
+              ) : (
+                <Paperclip className="size-3" />
+              )}
               {a.name}
               <button
                 type="button"
@@ -522,6 +546,20 @@ export function TextChannelView({
           )}
         </button>
       </form>
+      <Modal
+        isOpen={lightbox !== null}
+        onClose={() => setLightbox(null)}
+        className="max-w-none bg-transparent p-0 shadow-none"
+      >
+        {lightbox && (
+          <img
+            src={lightbox.url}
+            alt={lightbox.name}
+            className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-box"
+            onClick={() => setLightbox(null)}
+          />
+        )}
+      </Modal>
     </main>
   )
 }
