@@ -4,6 +4,7 @@ import { useParticipants } from "@livekit/components-react"
 import { parseParticipantMeta } from "@meet/shared"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { admitErrorMessage } from "@/lib/admit"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 
 /**
@@ -72,7 +73,7 @@ function KnockToast({
   const decide = async (action: "admit" | "deny") => {
     setBusy(true)
     try {
-      await fetch(`/api/rooms/${slug}/admit`, {
+      const res = await fetch(`/api/rooms/${slug}/admit`, {
         method: "POST",
         // The server derives who's admitting from the verified token.
         headers: {
@@ -81,8 +82,14 @@ function KnockToast({
         },
         body: JSON.stringify({ identity, action }),
       })
-    } finally {
+      // Dismissing regardless made a rejected admit look like it worked; keep
+      // the toast up so the knock can be retried.
+      if (!res.ok) throw new Error(await admitErrorMessage(res, action))
       toast.dismiss(`knock-${identity}`)
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setBusy(false)
     }
   }
 

@@ -8,6 +8,7 @@ import { Track } from "livekit-client"
 import { Bot, Check, Crown, Mic, MicOff, User, UserX, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
+import { admitErrorMessage } from "@/lib/admit"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $isHost } from "@/stores/host"
 
@@ -62,7 +63,10 @@ export function ParticipantsPanel({ slug }: { slug: string }) {
         },
         body: JSON.stringify({ identity, action }),
       })
-      if (!res.ok) throw new Error(`could not ${action} participant`)
+      // One generic message for every status made this undiagnosable from a
+      // bug report — a 401 (stale/absent proof) and a 502 (LiveKit refused)
+      // need different things from the user.
+      if (!res.ok) throw new Error(await admitErrorMessage(res, action))
     } catch (err) {
       toast.error((err as Error).message)
     } finally {

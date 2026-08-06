@@ -16,8 +16,8 @@ import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
-import { REJOIN_MAX_AGE_MS } from "@/components/room/RoomClient"
 import { Modal } from "@/components/ui/Modal"
+import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
 
@@ -67,17 +67,7 @@ export function TextChannelView({
   // RoomClient's own rejoin-freshness check.
   const [resumingCall] = useState(() => {
     if (kind !== "voice" || typeof window === "undefined") return false
-    try {
-      const raw = localStorage.getItem(`rejoin:${room}`)
-      if (!raw) return false
-      const stored = JSON.parse(raw) as { savedAt?: number }
-      return (
-        typeof stored.savedAt === "number" &&
-        Date.now() - stored.savedAt <= REJOIN_MAX_AGE_MS
-      )
-    } catch {
-      return false
-    }
+    return isRejoinFresh(readRejoin(room))
   })
   useEffect(() => {
     if (resumingCall) router.replace(`/c/${slug}?call=1`)
