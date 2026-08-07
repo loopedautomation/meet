@@ -3,8 +3,8 @@ import {
   clearRejoin,
   clearRejoinIfToken,
   isRejoinFresh,
-  readRejoin,
   REJOIN_MAX_AGE_MS,
+  readRejoin,
   rejoinToken,
   writeRejoin,
 } from "./rejoinStore"
