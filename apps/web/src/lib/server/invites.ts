@@ -2,7 +2,7 @@ import { eq, getDb, schema, sql } from "@meet/db"
 import { nanoid } from "nanoid"
 
 export type InviteCheck =
-  | { ok: true; role: "admin" | "member" }
+  | { ok: true; role: "admin" | "member"; serverId: string }
   | { ok: false; reason: "not-found" | "revoked" | "expired" | "exhausted" }
 
 function validate(invite: typeof schema.invites.$inferSelect): InviteCheck {
@@ -13,7 +13,11 @@ function validate(invite: typeof schema.invites.$inferSelect): InviteCheck {
   if (invite.maxUses !== null && invite.useCount >= invite.maxUses) {
     return { ok: false, reason: "exhausted" }
   }
-  return { ok: true, role: invite.role as "admin" | "member" }
+  return {
+    ok: true,
+    role: invite.role as "admin" | "member",
+    serverId: invite.serverId,
+  }
 }
 
 export async function checkInvite(code: string): Promise<InviteCheck> {
@@ -25,6 +29,7 @@ export async function checkInvite(code: string): Promise<InviteCheck> {
 }
 
 export async function createInvite(opts: {
+  serverId: string
   createdBy: string
   role: "admin" | "member"
   expiresInHours?: number
@@ -33,6 +38,7 @@ export async function createInvite(opts: {
   const [invite] = await getDb()
     .insert(schema.invites)
     .values({
+      serverId: opts.serverId,
       code: nanoid(12),
       role: opts.role,
       createdBy: opts.createdBy,
@@ -47,13 +53,15 @@ export async function createInvite(opts: {
 
 /**
  * Accept an invite as the signed-in user — the only way membership is ever
- * created after the first-login owner bootstrap. Runs in a transaction with
- * the invite row locked, so a last-use race can't oversubscribe it.
+ * created (other than a server's creator becoming its owner). Runs in a
+ * transaction with the invite row locked, so a last-use race can't
+ * oversubscribe it. Joining an invite's server doesn't touch any other
+ * server the user already belongs to.
  */
 export async function redeemInvite(
   code: string,
   userId: string,
-): Promise<InviteCheck | { ok: true; role: "admin" | "member" }> {
+): Promise<InviteCheck> {
   const db = getDb()
   return await db.transaction(async (tx) => {
     const [invite] = await tx
@@ -66,7 +74,7 @@ export async function redeemInvite(
     if (!check.ok) return check
     await tx
       .insert(schema.memberships)
-      .values({ userId, role: check.role })
+      .values({ serverId: invite.serverId, userId, role: check.role })
       .onConflictDoNothing()
     await tx
       .update(schema.invites)

@@ -1,4 +1,4 @@
-import { eq, getDb, schema } from "@meet/db"
+import { and, eq, getDb, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -15,15 +15,19 @@ export async function PATCH(request: Request, { params }: Params) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (user?.role !== "owner") {
+  if (user?.role !== "owner" || !user.serverId) {
     return NextResponse.json({ error: "owner required" }, { status: 403 })
   }
+  const serverId = user.serverId
   const { id } = await params
   const body = roleSchema.safeParse(await request.json().catch(() => null))
   if (!body.success)
     return NextResponse.json({ error: "role required" }, { status: 400 })
   const target = await getDb().query.memberships.findFirst({
-    where: eq(schema.memberships.userId, id),
+    where: and(
+      eq(schema.memberships.serverId, serverId),
+      eq(schema.memberships.userId, id),
+    ),
   })
   if (!target)
     return NextResponse.json({ error: "not a member" }, { status: 404 })
@@ -36,7 +40,12 @@ export async function PATCH(request: Request, { params }: Params) {
   await getDb()
     .update(schema.memberships)
     .set({ role: body.data.role })
-    .where(eq(schema.memberships.userId, id))
+    .where(
+      and(
+        eq(schema.memberships.serverId, serverId),
+        eq(schema.memberships.userId, id),
+      ),
+    )
   return NextResponse.json({ ok: true })
 }
 
@@ -50,9 +59,10 @@ export async function DELETE(request: Request, { params }: Params) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user || user.role === "member") {
+  if (!user || !user.serverId || user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   }
+  const serverId = user.serverId
   const { id } = await params
   if (id === user.id) {
     return NextResponse.json(
@@ -62,7 +72,10 @@ export async function DELETE(request: Request, { params }: Params) {
   }
   const db = getDb()
   const target = await db.query.memberships.findFirst({
-    where: eq(schema.memberships.userId, id),
+    where: and(
+      eq(schema.memberships.serverId, serverId),
+      eq(schema.memberships.userId, id),
+    ),
   })
   if (!target)
     return NextResponse.json({ error: "not a member" }, { status: 404 })
@@ -86,9 +99,18 @@ export async function DELETE(request: Request, { params }: Params) {
         { status: 403 },
       )
     }
+    // Purge removes the account instance-wide (every server), not just this
+    // one — the GDPR delete is about the person's data, not one membership.
     await db.delete(schema.users).where(eq(schema.users.id, id))
   } else {
-    await db.delete(schema.memberships).where(eq(schema.memberships.userId, id))
+    await db
+      .delete(schema.memberships)
+      .where(
+        and(
+          eq(schema.memberships.serverId, serverId),
+          eq(schema.memberships.userId, id),
+        ),
+      )
   }
   // Membership gone (or account purged — cascade got the rows already):
   // signed-in desktop shells must not keep a live session.

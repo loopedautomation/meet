@@ -1,9 +1,9 @@
-import { eq, getDb, schema, sql } from "@meet/db"
+import { and, eq, getDb, schema, sql } from "@meet/db"
 import { NextResponse } from "next/server"
 import { authMode } from "@/lib/server/authMode"
 import { checkInvite, redeemInvite } from "@/lib/server/invites"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
-import { getSessionUser } from "@/lib/server/session"
+import { ACTIVE_SERVER_COOKIE, getSessionUser } from "@/lib/server/session"
 
 type Params = { params: Promise<{ code: string }> }
 
@@ -44,8 +44,6 @@ export async function POST(request: Request, { params }: Params) {
   const user = await getSessionUser()
   if (!user)
     return NextResponse.json({ error: "sign in first" }, { status: 401 })
-  if (user.role)
-    return NextResponse.json({ ok: true, role: user.role, already: true })
   const result = await redeemInvite(code, user.id)
   if (!result.ok) {
     return NextResponse.json(
@@ -53,7 +51,19 @@ export async function POST(request: Request, { params }: Params) {
       { status: 410 },
     )
   }
-  return NextResponse.json({ ok: true, role: result.role })
+  const response = NextResponse.json({
+    ok: true,
+    role: result.role,
+    serverId: result.serverId,
+  })
+  // Land the member in the server they just joined.
+  response.cookies.set(ACTIVE_SERVER_COOKIE, result.serverId, {
+    httpOnly: true,
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+  })
+  return response
 }
 
 /** Revoke — admins and the owner. */
@@ -62,12 +72,17 @@ export async function DELETE(_request: Request, { params }: Params) {
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const { code } = await params
   const user = await getSessionUser()
-  if (!user?.role || user.role === "member") {
+  if (!user?.role || !user.serverId || user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   }
   await getDb()
     .update(schema.invites)
     .set({ revokedAt: sql`now()` })
-    .where(eq(schema.invites.code, code))
+    .where(
+      and(
+        eq(schema.invites.code, code),
+        eq(schema.invites.serverId, user.serverId),
+      ),
+    )
   return NextResponse.json({ ok: true })
 }

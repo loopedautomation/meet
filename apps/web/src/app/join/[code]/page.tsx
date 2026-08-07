@@ -5,6 +5,7 @@ import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
 import { AcceptInvite } from "@/components/join/AcceptInvite"
 import { authMode } from "@/lib/server/authMode"
 import { checkInvite } from "@/lib/server/invites"
+import { getMembership } from "@/lib/server/servers"
 import { getSessionUser } from "@/lib/server/session"
 
 type Params = { params: Promise<{ code: string }> }
@@ -23,6 +24,10 @@ export default async function JoinPage({ params }: Params) {
     checkInvite(code),
     getSessionUser(),
   ])
+  const alreadyMember =
+    invite.ok && user
+      ? Boolean(await getMembership(invite.serverId, user.id))
+      : false
 
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
@@ -42,7 +47,7 @@ export default async function JoinPage({ params }: Params) {
                 Ask whoever invited you for a fresh link.
               </p>
             </>
-          ) : user?.role ? (
+          ) : alreadyMember ? (
             <>
               <h1 className="font-semibold text-2xl">
                 You're already a member

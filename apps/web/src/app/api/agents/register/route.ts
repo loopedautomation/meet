@@ -101,11 +101,17 @@ export async function POST(request: Request) {
     .returning()
 
   // Registered agents are server agents — that's the point of registering.
+  // Scoped to the token's server, matching where it was minted.
   await db
     .insert(schema.serverAgents)
-    .values({ agentId: agent.id, name, addedBy: createdBy })
+    .values({
+      serverId: tokenRow.serverId,
+      agentId: agent.id,
+      name,
+      addedBy: createdBy,
+    })
     .onConflictDoUpdate({
-      target: schema.serverAgents.agentId,
+      target: [schema.serverAgents.serverId, schema.serverAgents.agentId],
       set: { name },
     })
 

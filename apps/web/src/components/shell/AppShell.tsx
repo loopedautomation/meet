@@ -5,7 +5,8 @@ import { RoomClient } from "@/components/room/RoomClient"
 import { $activeCall } from "@/stores/activeCall"
 import { $channelRoom } from "@/stores/channelContext"
 import { ActiveCallBar } from "./ActiveCallBar"
-import { AppSidebar, type SidebarUser } from "./AppSidebar"
+import { AppSidebar, type ServerSummary, type SidebarUser } from "./AppSidebar"
+import { MobileSidebarToggle } from "./MobileSidebarToggle"
 
 /**
  * The member app shell: sidebar + main content area. Lives above route
@@ -19,10 +20,15 @@ import { AppSidebar, type SidebarUser } from "./AppSidebar"
 export function AppShell({
   user,
   serverName,
+  servers,
+  activeServerId,
   children,
 }: {
   user: SidebarUser
   serverName: string
+  /** Every server this member belongs to — the switcher rail's data. */
+  servers: ServerSummary[]
+  activeServerId: string | null
   children: React.ReactNode
 }) {
   const activeCall = useStore($activeCall)
@@ -30,25 +36,38 @@ export function AppShell({
   const viewingCall = activeCall?.room === viewedRoom
 
   return (
-    <div className="flex min-h-0 flex-1">
-      <AppSidebar user={user} serverName={serverName} />
-      <main className="relative min-w-0 flex-1 overflow-hidden">
-        <div className={activeCall && !viewingCall ? "hidden" : "contents"}>
-          {children}
-        </div>
-        {activeCall && (
-          <div className={viewingCall ? "absolute inset-0" : "hidden"}>
-            <RoomClient
-              key={activeCall.room}
-              slug={activeCall.room}
-              mode="channel"
-            />
+    <>
+      <MobileSidebarToggle />
+      <div className="flex min-h-0 flex-1">
+        <AppSidebar
+          // Remount on server switch — AppSidebar owns client-side state
+          // (loaded channels, the presence SSE connection) that a prop
+          // change alone wouldn't reset, so without this key it keeps
+          // showing the previous server's channels after switching.
+          key={activeServerId}
+          user={user}
+          serverName={serverName}
+          servers={servers}
+          activeServerId={activeServerId}
+        />
+        <main className="relative min-w-0 flex-1 overflow-hidden">
+          <div className={activeCall && !viewingCall ? "hidden" : "contents"}>
+            {children}
           </div>
-        )}
-        {activeCall && !viewingCall && (
-          <ActiveCallBar channelSlug={activeCall.channelSlug} />
-        )}
-      </main>
-    </div>
+          {activeCall && (
+            <div className={viewingCall ? "absolute inset-0" : "hidden"}>
+              <RoomClient
+                key={activeCall.room}
+                slug={activeCall.room}
+                mode="channel"
+              />
+            </div>
+          )}
+          {activeCall && !viewingCall && (
+            <ActiveCallBar channelSlug={activeCall.channelSlug} />
+          )}
+        </main>
+      </div>
+    </>
   )
 }

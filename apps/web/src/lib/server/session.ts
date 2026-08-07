@@ -1,4 +1,4 @@
-import { eq, getDb, schema, sql } from "@meet/db"
+import { and, eq, getDb, schema, sql } from "@meet/db"
 import { cookies } from "next/headers"
 import { auth0 } from "./auth0"
 import { authMode } from "./authMode"
@@ -11,6 +11,10 @@ import {
 // goes through here, so a future identity swap (BYO OIDC, local accounts)
 // touches this file and nothing else.
 
+/** Which server "role"/"serverId" below refer to — the member's last
+ * visited server, remembered across sessions so switching sticks. */
+export const ACTIVE_SERVER_COOKIE = "meet_active_server"
+
 export type SessionUser = {
   /** users.id — the stable id LiveKit identities derive from (u_<id>). */
   id: string
@@ -20,16 +24,22 @@ export type SessionUser = {
   image: string | null
   /** Presence indicator the member picked (active | away | dnd). */
   presence: string
-  /** null = authenticated but not a member (no invite accepted yet). */
+  /** The member's active server (see ACTIVE_SERVER_COOKIE) — null when
+   * they belong to no server yet (fresh account, hasn't created/joined one). */
+  serverId: string | null
+  /** Role on the active server. null = no active server, or authenticated
+   * but not a member of it. Membership is never auto-created here — joining
+   * is always the member's own action (create a server, or accept an
+   * invite). */
   role: "owner" | "admin" | "member" | null
 }
 
 /**
  * Resolve the requesting user, or null when signed out (or when the
  * deployment runs without accounts). Upserts the users row so the profile
- * tracks the IdP, and claims the owner membership on the very first login
- * this instance ever sees. Membership is never created here otherwise —
- * joining is always the member's own action (an accepted invite).
+ * tracks the IdP, and resolves their role on the "active server" (the one
+ * the sidebar/URL last pointed at, tracked by ACTIVE_SERVER_COOKIE, falling
+ * back to whichever server they joined first).
  */
 export async function getSessionUser(): Promise<SessionUser | null> {
   if (authMode() !== "auth0") return null
@@ -41,7 +51,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   if (desktopToken) {
     const user = await validateDesktopSession(desktopToken)
     if (user) {
-      const membership = await resolveMembership(user.id)
+      const active = await resolveActiveMembership(user.id)
       return {
         id: user.id,
         auth0Sub: user.auth0Sub,
@@ -49,7 +59,8 @@ export async function getSessionUser(): Promise<SessionUser | null> {
         name: user.name,
         image: user.image,
         presence: user.presence,
-        role: (membership?.role as SessionUser["role"]) ?? null,
+        serverId: active?.serverId ?? null,
+        role: active?.role ?? null,
       }
     }
   }
@@ -78,7 +89,7 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     })
     .returning()
 
-  const membership = await resolveMembership(user.id)
+  const active = await resolveActiveMembership(user.id)
 
   return {
     id: user.id,
@@ -87,59 +98,49 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     name: user.name,
     image: user.image,
     presence: user.presence,
-    role: (membership?.role as SessionUser["role"]) ?? null,
+    serverId: active?.serverId ?? null,
+    role: active?.role ?? null,
   }
 }
 
-/** Membership resolution shared by both identity branches: existing row,
- * else first-login owner claim, else public-mode join. */
-async function resolveMembership(userId: string) {
+/** The member's active server: whichever ACTIVE_SERVER_COOKIE names, if
+ * they still belong to it, else the server they joined first, else null
+ * (no servers at all — the onboarding/create-server state). */
+async function resolveActiveMembership(
+  userId: string,
+): Promise<{ serverId: string; role: "owner" | "admin" | "member" } | null> {
   const db = getDb()
-  let membership = await db.query.memberships.findFirst({
+  const cookieServerId = (await cookies()).get(ACTIVE_SERVER_COOKIE)?.value
+
+  if (cookieServerId) {
+    const membership = await db.query.memberships.findFirst({
+      where: and(
+        eq(schema.memberships.serverId, cookieServerId),
+        eq(schema.memberships.userId, userId),
+      ),
+    })
+    if (membership) {
+      return {
+        serverId: membership.serverId,
+        role: membership.role as "owner" | "admin" | "member",
+      }
+    }
+  }
+
+  const first = await db.query.memberships.findFirst({
     where: eq(schema.memberships.userId, userId),
+    orderBy: (m, { asc }) => asc(m.createdAt),
   })
-  if (!membership) membership = await claimOwnerIfFirst(userId)
-  if (!membership) membership = await joinIfPublic(userId)
-  return membership
+  if (!first) return null
+  return {
+    serverId: first.serverId,
+    role: first.role as "owner" | "admin" | "member",
+  }
 }
 
-/** First login on a fresh instance claims the owner role. The insert is
- * guarded by "memberships is empty" inside a single statement, so two
- * concurrent first logins can't both win (the loser just stays a
- * non-member and needs an invite — visible, not corrupting). */
-async function claimOwnerIfFirst(userId: string) {
-  const db = getDb()
-  const inserted = await db.execute(sql`
-    insert into memberships (user_id, role)
-    select ${userId}, 'owner'
-    where not exists (select 1 from memberships)
-    on conflict do nothing
-    returning user_id, role, created_at
-  `)
-  if (inserted.rows.length === 0) return undefined
-  return await db.query.memberships.findFirst({
-    where: eq(schema.memberships.userId, userId),
-  })
-}
-
-/** Public-server mode (Phase 3): when the instance's registration is
- * "open", signing in IS joining — still the member's own action, no invite
- * needed. Private (invite) instances never reach this. */
-async function joinIfPublic(userId: string) {
-  const db = getDb()
-  const settings = await db.query.instanceSettings.findFirst()
-  if (settings?.registration !== "open") return undefined
-  await db
-    .insert(schema.memberships)
-    .values({ userId, role: "member" })
-    .onConflictDoNothing()
-  return await db.query.memberships.findFirst({
-    where: eq(schema.memberships.userId, userId),
-  })
-}
-
-/** Convenience for API routes: the session user only if they're a member. */
+/** Convenience for API routes: the session user only if they're a member
+ * of an active server. */
 export async function getMemberUser(): Promise<SessionUser | null> {
   const user = await getSessionUser()
-  return user?.role ? user : null
+  return user?.role && user.serverId ? user : null
 }
