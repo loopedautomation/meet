@@ -1,4 +1,4 @@
-import { desc, getDb, schema } from "@meet/db"
+import { desc, eq, getDb, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -22,12 +22,13 @@ export async function GET() {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getSessionUser()
-  if (!user?.role || user.role === "member") {
+  if (!user?.role || !user.serverId || user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   }
   const invites = await getDb()
     .select()
     .from(schema.invites)
+    .where(eq(schema.invites.serverId, user.serverId))
     .orderBy(desc(schema.invites.createdAt))
     .limit(200)
   return NextResponse.json({ invites })
@@ -40,7 +41,7 @@ export async function POST(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getSessionUser()
-  if (!user?.role || user.role === "member") {
+  if (!user?.role || !user.serverId || user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   }
   if (rateLimited(`invite-create:${clientKey(request)}`, 30, 60 * 60 * 1000)) {
@@ -64,7 +65,11 @@ export async function POST(request: Request) {
       { status: 403 },
     )
   }
-  const invite = await createInvite({ createdBy: user.id, ...body.data })
+  const invite = await createInvite({
+    serverId: user.serverId,
+    createdBy: user.id,
+    ...body.data,
+  })
   const origin = process.env.APP_BASE_URL ?? new URL(request.url).origin
   return NextResponse.json({
     code: invite.code,

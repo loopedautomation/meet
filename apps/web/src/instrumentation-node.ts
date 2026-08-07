@@ -60,21 +60,40 @@ export async function registerNode(): Promise<void> {
   startRetentionSweeper()
 }
 
-// Data lifecycle: when the instance sets a retention window, expired
-// messages are hard-deleted (reactions cascade). Runs at boot and daily —
-// coarse on purpose; retention is a policy, not a stopwatch.
+// Data lifecycle: each server can set its own retention window; expired
+// messages in that server's channels are hard-deleted (reactions cascade).
+// Runs at boot and daily — coarse on purpose; retention is a policy, not a
+// stopwatch.
 function startRetentionSweeper(): void {
   const sweep = async () => {
     try {
-      const { getDb, schema, lt } = await import("@meet/db")
+      const { getDb, schema, lt, inArray, eq, and } = await import("@meet/db")
       const db = getDb()
-      const settings = await db.query.instanceSettings.findFirst()
-      const days = settings?.retentionDays
-      if (!days) return
-      const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
-      await db
-        .delete(schema.messages)
-        .where(lt(schema.messages.createdAt, cutoff))
+      const servers = await db
+        .select({
+          id: schema.servers.id,
+          retentionDays: schema.servers.retentionDays,
+        })
+        .from(schema.servers)
+      for (const server of servers) {
+        const days = server.retentionDays
+        if (!days) continue
+        const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+        const channels = await db
+          .select({ id: schema.channels.id })
+          .from(schema.channels)
+          .where(eq(schema.channels.serverId, server.id))
+        const channelIds = channels.map((c) => c.id)
+        if (channelIds.length === 0) continue
+        await db
+          .delete(schema.messages)
+          .where(
+            and(
+              lt(schema.messages.createdAt, cutoff),
+              inArray(schema.messages.channelId, channelIds),
+            ),
+          )
+      }
     } catch (err) {
       console.error("retention sweep failed", err)
     }

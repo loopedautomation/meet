@@ -64,6 +64,13 @@
       "when": 1786618542654,
       "tag": "0008_stiff_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786108872921,
+      "tag": "0009_stale_fixer",
+      "breakpoints": true
     }
   ]
 }
