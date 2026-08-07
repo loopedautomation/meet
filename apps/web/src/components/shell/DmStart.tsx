@@ -4,6 +4,7 @@ import { Bot, Plus } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { toast } from "react-toastify"
+import { presenceDotClass } from "@/components/ui/Avatar"
 
 type Member = {
   id: string
@@ -11,18 +12,6 @@ type Member = {
   email: string | null
   online: boolean
   presence?: "active" | "away" | "dnd"
-}
-
-/** Effective presence dot: offline beats everything, then the member's
- * chosen indicator (away/dnd) tints the online dot. */
-export function presenceDotClass(m: {
-  online: boolean
-  presence?: string
-}): string {
-  if (!m.online) return "bg-base-content/20"
-  if (m.presence === "away") return "bg-warning"
-  if (m.presence === "dnd") return "bg-error"
-  return "bg-success"
 }
 
 /** Start (or reopen) a DM — pick a teammate, land in the conversation. */

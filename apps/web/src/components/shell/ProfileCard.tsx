@@ -3,6 +3,7 @@
 import { useStore } from "@nanostores/react"
 import { LogOut, Settings } from "lucide-react"
 import { useEffect, useState } from "react"
+import { Avatar } from "@/components/ui/Avatar"
 import { Select } from "@/components/ui/Select"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
 import { readDevicePref, setDevicePref } from "@/stores/devicePrefs"
@@ -83,18 +84,12 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
         className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left hover:bg-base-200"
         onFocus={() => void loadDevices()}
       >
-        <span className="relative shrink-0">
-          {user.image ? (
-            <img src={user.image} alt="" className="size-9 rounded-full" />
-          ) : (
-            <span className="flex size-9 items-center justify-center rounded-full bg-base-300 font-medium">
-              {(user.name ?? user.email ?? "?").slice(0, 1).toUpperCase()}
-            </span>
-          )}
-          <span
-            className={`absolute right-0 bottom-0 size-3 rounded-full border-2 border-base-200 ${PRESENCE_DOT[presence]}`}
-          />
-        </span>
+        <Avatar
+          name={user.name ?? user.email ?? "?"}
+          image={user.image}
+          online
+          presence={presence}
+        />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium text-sm">
             {user.name ?? user.email ?? "Member"}
