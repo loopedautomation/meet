@@ -19,10 +19,12 @@ import { AppSidebar, type SidebarUser } from "./AppSidebar"
 export function AppShell({
   user,
   serverName,
+  isElectron,
   children,
 }: {
   user: SidebarUser
   serverName: string
+  isElectron: boolean
   children: React.ReactNode
 }) {
   const activeCall = useStore($activeCall)
@@ -31,7 +33,7 @@ export function AppShell({
 
   return (
     <div className="flex min-h-0 flex-1">
-      <AppSidebar user={user} serverName={serverName} />
+      <AppSidebar user={user} serverName={serverName} isElectron={isElectron} />
       <main className="relative min-w-0 flex-1 overflow-hidden">
         <div className={activeCall && !viewingCall ? "hidden" : "contents"}>
           {children}

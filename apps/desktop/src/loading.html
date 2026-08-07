@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Looped Meet</title>
+    <style>
+      /* Standalone copy of the looped design tokens, mirroring connect.html
+         — this window is plain file:// HTML too, no Tailwind/daisyUI build.
+         Keep in sync with apps/web/src/styles/themes.css. */
+      @font-face {
+        font-family: "Mona Sans";
+        font-weight: 200 900;
+        font-display: block;
+        font-style: normal;
+        font-stretch: 125%;
+        src: url("./fonts/Mona-Sans.woff2") format("woff2");
+      }
+
+      :root {
+        color-scheme: light dark;
+        --color-base-100: #ffffff;
+        --color-base-300: #e5e5e5;
+        --color-base-content: oklch(10% 0.01 280);
+        --color-primary: oklch(58% 0.22 280);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --color-base-100: oklch(15% 0.01 270);
+          --color-base-300: oklch(32% 0.01 270);
+          --color-base-content: oklch(98.2% 0.00411 91.4);
+        }
+      }
+
+      body {
+        font-family: "Mona Sans", ui-sans-serif, system-ui, sans-serif;
+        font-stretch: 125%;
+        background: var(--color-base-100);
+        color: var(--color-base-content);
+        display: flex; flex-direction: column; align-items: center;
+        justify-content: center; height: 100vh; margin: 0; gap: 18px;
+        /* Undraggable by default; only the frameless title bar area needs
+           this, but the whole splash is a fine drag target too since there
+           is nothing interactive on it. */
+        -webkit-app-region: drag;
+      }
+      h1 { font-size: 1.125rem; font-weight: 600; margin: 0; }
+
+      .spinner {
+        width: 22px; height: 22px;
+        border-radius: 50%;
+        border: 2.5px solid var(--color-base-300);
+        border-top-color: var(--color-primary);
+        animation: spin 0.8s linear infinite;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="spinner"></div>
+    <h1>Looped Meet</h1>
+  </body>
+</html>

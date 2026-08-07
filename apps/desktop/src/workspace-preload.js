@@ -6,3 +6,7 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   notifyMessage: (payload) =>
     ipcRenderer.send("show-message-notification", payload),
 })
+
+contextBridge.exposeInMainWorld("meetDesktop", {
+  ready: () => ipcRenderer.send("workspace-ready"),
+})

@@ -4,6 +4,7 @@ import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
 import { AppShell } from "@/components/shell/AppShell"
 import { MobileSidebarToggle } from "@/components/shell/MobileSidebarToggle"
 import { authMode } from "@/lib/server/authMode"
+import { isElectronRequest } from "@/lib/server/desktop"
 import { getSessionUser } from "@/lib/server/session"
 
 /**
@@ -20,6 +21,7 @@ export default async function AppLayout({
 }) {
   if (authMode() === "none") notFound()
   const dragStrip = <DesktopDragStrip />
+  const isElectron = await isElectronRequest()
 
   const user = await getSessionUser()
   // Room/pane components size to their parent, so the bare branch still
@@ -48,6 +50,7 @@ export default async function AppLayout({
           role: user.role,
         }}
         serverName={settings?.name ?? "looped meet"}
+        isElectron={isElectron}
       >
         {children}
       </AppShell>
