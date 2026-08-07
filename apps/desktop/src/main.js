@@ -106,6 +106,12 @@ const CLIENT_PROTOCOL = 1
 const MIN_SERVER_PROTOCOL = 1
 const SERVICE_ID = "looped-meet"
 
+/** How long the loading splash waits for the workspace to report itself
+ * ready (see workspace-preload.js) before showing the window regardless.
+ * The backstop for servers that predate the ready signal, or routes (the
+ * signed-out shell) that never send it — the window must never hang. */
+const STARTUP_READY_TIMEOUT_MS = 6000
+
 /**
  * Probe a server and check we can actually talk to it. Every failure mode
  * returns a message naming the side at fault and the action that fixes it —
@@ -284,13 +290,13 @@ async function needsSignIn() {
   }
 }
 
-function createMainWindow(url) {
+/** Branded splash shown the instant a workspace window starts loading —
+ * same dimensions as the main window so the swap doesn't visibly jump. */
+function createLoadingWindow() {
   const win = new BrowserWindow({
     width: 1280,
     height: 840,
     icon: APP_ICON,
-    // Frameless-feeling chrome: the web app's sidebar header is the drag
-    // region (it detects the Electron UA and pads for the traffic lights).
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
@@ -298,7 +304,48 @@ function createMainWindow(url) {
       nodeIntegration: false,
     },
   })
+  void win.loadFile(path.join(__dirname, "loading.html"))
+  return win
+}
+
+function createMainWindow(url) {
+  const loading = createLoadingWindow()
+
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 840,
+    icon: APP_ICON,
+    show: false,
+    // Frameless-feeling chrome: the web app's sidebar header is the drag
+    // region (it detects the Electron UA and pads for the traffic lights).
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 12, y: 12 },
+    webPreferences: {
+      preload: path.join(__dirname, "workspace-preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  })
   void win.loadURL(url)
+
+  // Swap from the splash to the real window once the workspace reports
+  // itself ready (see workspace-preload.js / apps/web's $desktopReady
+  // store), or after the timeout, whichever comes first. Guarded so it
+  // only ever runs once — the ready signal and the timer both call it.
+  let settled = false
+  const finish = () => {
+    if (settled) return
+    settled = true
+    clearTimeout(readyTimer)
+    ipcMain.removeListener("workspace-ready", finish)
+    if (win.isDestroyed()) return
+    win.show()
+    win.focus()
+    if (!loading.isDestroyed()) loading.destroy()
+  }
+  const readyTimer = setTimeout(finish, STARTUP_READY_TIMEOUT_MS)
+  ipcMain.on("workspace-ready", finish)
+
   // A server that can't be reached leaves an empty window with no
   // explanation and no way out — the shell has no chrome of its own to
   // report through. Fall back to the connect screen, which can at least say
@@ -309,6 +356,10 @@ function createMainWindow(url) {
     // ABORTED, which fires on ordinary navigation away from a page.
     if (!isMainFrame || code === -3) return
     console.warn(`workspace load failed (${code} ${description}): ${failedUrl}`)
+    settled = true
+    clearTimeout(readyTimer)
+    ipcMain.removeListener("workspace-ready", finish)
+    if (!loading.isDestroyed()) loading.destroy()
     win.destroy()
     createConnectWindow("failed", { reason: description, url: failedUrl })
   })
@@ -323,6 +374,7 @@ function createMainWindow(url) {
   })
   win.on("closed", () => {
     if (mainWindow === win) mainWindow = null
+    if (!loading.isDestroyed()) loading.destroy()
   })
   return win
 }
