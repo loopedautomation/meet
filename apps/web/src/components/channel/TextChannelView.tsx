@@ -22,6 +22,11 @@ import { AttachmentCard } from "./AttachmentCard"
 import { type LinkPreview, LinkPreviewCard } from "./LinkPreviewCard"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
+// How close two consecutive messages from the same sender have to be to
+// share a header — same convention as Slack/Discord, so a message sent
+// minutes or hours after the last one always gets its own visible time
+// instead of silently joining a much older group.
+const GROUP_WINDOW_MS = 5 * 60 * 1000
 
 /** Hover-revealed send time for a grouped message — the header line (name +
  * timestamp) only renders for the first message in a run from the same
@@ -312,7 +317,10 @@ export function TextChannelView({
         ) : (
           messages.map((m, i) => {
             const grouped =
-              i > 0 && messages[i - 1].from === m.from && !m.replyToId
+              i > 0 &&
+              messages[i - 1].from === m.from &&
+              !m.replyToId &&
+              m.at - messages[i - 1].at < GROUP_WINDOW_MS
             const parent = m.replyToId ? byId.get(m.replyToId) : undefined
             return (
               <li
