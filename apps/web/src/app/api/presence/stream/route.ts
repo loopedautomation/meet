@@ -1,7 +1,12 @@
 import { createPgClient } from "@meet/db"
 import { NextResponse } from "next/server"
 import { authMode } from "@/lib/server/authMode"
-import { channelRoomName, listChannelsForUser } from "@/lib/server/channels"
+import {
+  canAccessChannel,
+  channelRoomName,
+  getChannelBySlug,
+  listChannelsForUser,
+} from "@/lib/server/channels"
 import { onlineConnect, onlineDisconnect } from "@/lib/server/onlineRegistry"
 import {
   MESSAGE_NOTIFY_CHANNEL,
@@ -62,18 +67,38 @@ export async function GET() {
         }
       }
 
+      // Forward a chat_message_posted payload only if this viewer can see
+      // the channel it came from — same rule listChannelsForUser applies
+      // (public channels, or private/DM channels you're a member of).
+      const forwardMessageIfVisible = async (raw: string) => {
+        try {
+          const { channelSlug } = JSON.parse(raw) as { channelSlug?: string }
+          if (!channelSlug) return
+          const channel = await getChannelBySlug(channelSlug)
+          if (!channel || !(await canAccessChannel(channel, user.id))) return
+          if (closed) return
+          controller.enqueue(
+            encoder.encode(`event: chat-message\ndata: ${raw}\n\n`),
+          )
+        } catch {
+          // Malformed payload or a stream that closed mid-lookup — dropping
+          // one notification is strictly better than leaking or throwing.
+        }
+      }
+
       onlineConnect(user.id)
       try {
         await listener.connect()
         listener.on("notification", (msg) => {
-          // Chat messages forward straight through as their own SSE event —
-          // no debounce, no re-query — distinct from the presence channel
-          // list refresh below, which batches bursts of joins/leaves.
+          // Chat messages get their own SSE event — no debounce, no channel
+          // list re-read — distinct from the presence refresh below, which
+          // batches bursts of joins/leaves. pg_notify fans out to *every*
+          // stream, so this one has to gate on the viewer's own access
+          // before forwarding: the payload carries a message snippet, and
+          // DMs and private channels must not reach a non-member.
           if (msg.channel === MESSAGE_NOTIFY_CHANNEL) {
             if (closed || !msg.payload) return
-            controller.enqueue(
-              encoder.encode(`event: chat-message\ndata: ${msg.payload}\n\n`),
-            )
+            void forwardMessageIfVisible(msg.payload)
             return
           }
           if (debounce) return

@@ -17,6 +17,7 @@ declare global {
         title: string
         body: string
         channelSlug: string
+        viewingChannel: boolean
       }) => void
     }
   }
@@ -67,10 +68,15 @@ export function handleIncomingMessage(
   }
 
   if (window.desktopBridge?.notifyMessage) {
+    // `viewingChannel` travels with the payload so main's own focus re-check
+    // stays scoped to the channel on screen. Without it, main would suppress
+    // on window focus alone and a message in *any other* channel would go
+    // unannounced while the app is in the foreground.
     window.desktopBridge.notifyMessage({
       title,
       body: msg.snippet,
       channelSlug: msg.channelSlug,
+      viewingChannel: viewingThisChannel,
     })
     return
   }
