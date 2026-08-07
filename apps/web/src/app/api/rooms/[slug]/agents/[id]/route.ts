@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 import { bridgeFetch } from "@/lib/server/bridge"
+import { bridgeAgentBody } from "@/lib/server/externalAgents"
 import { canManageAgents, HOST_KEY_HEADER } from "@/lib/server/host"
 import { isKicked } from "@/lib/server/kicked"
 import { verifyParticipant } from "@/lib/server/participantAuth"
@@ -33,10 +34,23 @@ async function forward(
     return NextResponse.json({ error: "not authorized" }, { status: 403 })
   }
   try {
+    // The client's body carries only overrides (mode/voice); for external
+    // ("ext-…") agents the server attaches the decrypted dial spec here —
+    // the browser never sees agent URLs or tokens.
+    let forwarded = body
+    let hasBody = Boolean(body)
+    if (method === "POST" && id.startsWith("ext-")) {
+      let overrides: Record<string, unknown> = {}
+      try {
+        overrides = body ? JSON.parse(body) : {}
+      } catch {}
+      forwarded = JSON.stringify(await bridgeAgentBody(id, overrides))
+      hasBody = true
+    }
     const res = await bridgeFetch(`/rooms/${slug}/agents/${id}`, {
       method,
-      ...(body
-        ? { body, headers: { "content-type": "application/json" } }
+      ...(hasBody && forwarded
+        ? { body: forwarded, headers: { "content-type": "application/json" } }
         : {}),
     })
     return NextResponse.json(await res.json(), { status: res.status })

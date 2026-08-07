@@ -4,7 +4,7 @@ import {
   createHash,
   randomBytes,
 } from "node:crypto"
-import { eq, getDb, schema } from "@meet/db"
+import { eq, getDb, hasDatabase, schema } from "@meet/db"
 import { bridgeFetch } from "./bridge"
 
 // External (looped-af) agents registered with this server: their TTY bearer
@@ -143,4 +143,21 @@ export async function getExternalAgentSpec(
     ...(row.description ? { description: row.description } : {}),
     ...(row.voice ? { voice: row.voice } : {}),
   }
+}
+
+/**
+ * Bridge request body for dispatching/invoking an agent: for external
+ * ("ext-…") agents the decrypted spec rides along, since the bridge's
+ * dynamic store is a cache and this database is the source of truth. For
+ * every other agent id (registry, dyn-) the body passes through unchanged.
+ * Best-effort — a lookup failure just omits the spec and the bridge answers
+ * with its own "unknown agent".
+ */
+export async function bridgeAgentBody(
+  agentId: string,
+  body: Record<string, unknown> = {},
+): Promise<Record<string, unknown>> {
+  if (!agentId.startsWith("ext-") || !hasDatabase()) return body
+  const spec = await getExternalAgentSpec(agentId).catch(() => null)
+  return spec ? { ...body, spec } : body
 }

@@ -1,6 +1,7 @@
 import { eq, getDb, schema, uuidv7 } from "@meet/db"
 import { bridgeFetch } from "./bridge"
 import type { Channel } from "./channels"
+import { bridgeAgentBody } from "./externalAgents"
 
 /**
  * The text half of "agents are members": when a message lands in a channel
@@ -44,10 +45,14 @@ export async function respondAsAgents(
         const res = await bridgeFetch(`/agents/${agentId}/text`, {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            conversationId: channel.publicId,
-            text: `${fromName}: ${text}`,
-          }),
+          // External ("ext-…") agents carry their decrypted dial spec along
+          // — the bridge's dynamic store is only a cache of the database.
+          body: JSON.stringify(
+            await bridgeAgentBody(agentId, {
+              conversationId: channel.publicId,
+              text: `${fromName}: ${text}`,
+            }),
+          ),
           signal: AbortSignal.timeout(120_000),
         })
         if (!res.ok) return

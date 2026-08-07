@@ -36,18 +36,28 @@ export async function POST(request: Request) {
   if (!body.success)
     return NextResponse.json({ error: "agentId required" }, { status: 400 })
   // Must exist in the bridge's registry — the invite snapshots its name.
+  // External ("ext-…") agents live in this database, not the registry.
   let name: string | null = null
-  try {
-    const res = await bridgeFetch("/agents")
-    const roster = (await res.json()) as {
-      agents?: { id: string; name?: string }[]
-    }
-    const entry = roster.agents?.find((a) => a.id === body.data.agentId)
-    if (!entry)
+  if (body.data.agentId.startsWith("ext-")) {
+    const external = await getDb().query.externalAgents.findFirst({
+      where: eq(schema.externalAgents.id, body.data.agentId),
+    })
+    if (!external)
       return NextResponse.json({ error: "unknown agent" }, { status: 404 })
-    name = entry.name ?? null
-  } catch {
-    return NextResponse.json({ error: "bridge unavailable" }, { status: 502 })
+    name = external.name
+  } else {
+    try {
+      const res = await bridgeFetch("/agents")
+      const roster = (await res.json()) as {
+        agents?: { id: string; name?: string }[]
+      }
+      const entry = roster.agents?.find((a) => a.id === body.data.agentId)
+      if (!entry)
+        return NextResponse.json({ error: "unknown agent" }, { status: 404 })
+      name = entry.name ?? null
+    } catch {
+      return NextResponse.json({ error: "bridge unavailable" }, { status: 502 })
+    }
   }
   await getDb()
     .insert(schema.serverAgents)
