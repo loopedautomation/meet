@@ -11,12 +11,14 @@ import {
   Shield,
   UserPlus,
   Volume2,
+  X,
 } from "lucide-react"
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Avatar } from "@/components/ui/Avatar"
 import { $activeCall } from "@/stores/activeCall"
+import { $mobileSidebarOpen } from "@/stores/mobileSidebar"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
 import { DmStart } from "./DmStart"
@@ -78,6 +80,7 @@ export function AppSidebar({
   const router = useRouter()
   const pathname = usePathname()
   const activeCall = useStore($activeCall)
+  const mobileOpen = useStore($mobileSidebarOpen)
   const canCreate = user.role !== "member"
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -121,6 +124,23 @@ export function AppSidebar({
       pollTimer.current = null
     }
   }, [load])
+
+  // The drawer covers the page it navigated to below md — close it once
+  // the route it was opened for has changed. pathname itself is unused
+  // in the body; it's here purely to retrigger the effect on navigation.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is an intentional retrigger, not a value the effect reads
+  useEffect(() => {
+    $mobileSidebarOpen.set(false)
+  }, [pathname])
+
+  useEffect(() => {
+    if (!mobileOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") $mobileSidebarOpen.set(false)
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [mobileOpen])
 
   const mintInvite = async () => {
     const res = await fetch("/api/invites", {
@@ -195,273 +215,305 @@ export function AppSidebar({
     }`
 
   return (
-    <aside className="hidden h-full shrink-0 md:flex">
-      {/* Fixed rail: DMs, then this server (Discord-style) */}
-      <div className="flex h-full w-16 shrink-0 flex-col items-center gap-2 border-base-300 border-r bg-base-300/30 py-3">
-        <button
-          type="button"
-          className={railButton(panel === "dms")}
-          title="Direct messages"
-          onClick={() => setRailChoice("dms")}
-        >
-          <MessageCircle className="size-5" />
-          {dmUnread && panel !== "dms" && (
-            <span className="absolute top-0 right-0 size-2.5 rounded-full bg-primary ring-2 ring-base-100" />
-          )}
-        </button>
-        <div className="h-px w-8 bg-base-300" />
-        <button
-          type="button"
-          className={railButton(panel === "server")}
-          title={serverName}
-          onClick={() => setRailChoice("server")}
-        >
-          <span className="font-semibold text-sm">
-            {serverName.slice(0, 2).toUpperCase()}
-          </span>
-          {serverUnread && panel !== "server" && (
-            <span className="absolute top-0 right-0 size-2.5 rounded-full bg-primary ring-2 ring-base-100" />
-          )}
-        </button>
-      </div>
-
-      {/* Swappable panel + shared footer */}
-      <div
-        className="relative flex h-full flex-col border-base-300 border-r bg-base-200/40"
-        style={{ width: panelWidth }}
+    <>
+      {/* Backdrop — mobile only, dims the page behind the slid-in drawer. */}
+      {mobileOpen && (
+        // biome-ignore lint/a11y/noStaticElementInteractions: click-away affordance; Escape closes the drawer for keyboard users
+        <div
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+          onClick={() => $mobileSidebarOpen.set(false)}
+        />
+      )}
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex h-full shrink-0 transition-transform duration-200 md:static md:z-auto md:translate-x-0 ${
+          mobileOpen ? "translate-x-0" : "-translate-x-full"
+        }`}
       >
-        {panel === "server" ? (
-          <>
-            {/* Server header — the server-level menu (admin, invites) */}
-            <div className="border-base-300 border-b">
-              <div className="dropdown w-full">
-                <button
-                  type="button"
-                  tabIndex={0}
-                  className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-base-200"
-                >
-                  <span className="truncate font-semibold">{serverName}</span>
-                  <ChevronDown className="size-4 shrink-0 text-base-content/50" />
-                </button>
-                <div className="dropdown-content z-20 mx-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+        <button
+          type="button"
+          className="btn btn-circle btn-ghost btn-sm absolute top-2 right-2 z-10 bg-base-100/80 backdrop-blur md:hidden"
+          aria-label="Close sidebar"
+          title="Close sidebar"
+          onClick={() => $mobileSidebarOpen.set(false)}
+        >
+          <X className="size-4" />
+        </button>
+        {/* Fixed rail: DMs, then this server (Discord-style). Opaque below
+            md — translucent-on-base-100 only reads right when the sidebar
+            sits statically beside the page, not stacked as a mobile
+            overlay on top of it, where translucency just lets the page
+            underneath show through. */}
+        <div className="flex h-full w-16 shrink-0 flex-col items-center gap-2 border-base-300 border-r bg-base-300 py-3 md:bg-base-300/30">
+          <button
+            type="button"
+            className={railButton(panel === "dms")}
+            title="Direct messages"
+            onClick={() => setRailChoice("dms")}
+          >
+            <MessageCircle className="size-5" />
+            {dmUnread && panel !== "dms" && (
+              <span className="absolute top-0 right-0 size-2.5 rounded-full bg-primary ring-2 ring-base-100" />
+            )}
+          </button>
+          <div className="h-px w-8 bg-base-300" />
+          <button
+            type="button"
+            className={railButton(panel === "server")}
+            title={serverName}
+            onClick={() => setRailChoice("server")}
+          >
+            <span className="font-semibold text-sm">
+              {serverName.slice(0, 2).toUpperCase()}
+            </span>
+            {serverUnread && panel !== "server" && (
+              <span className="absolute top-0 right-0 size-2.5 rounded-full bg-primary ring-2 ring-base-100" />
+            )}
+          </button>
+        </div>
+
+        {/* Swappable panel + shared footer. Capped to a fraction of the
+          viewport (not just MAX_PANEL) so a width resized wide on a
+          desktop screen — panelWidth is shared/persisted across every
+          screen size — can't blow the mobile drawer past the viewport
+          it's sliding into; harmless on desktop, where 88vw always
+          exceeds MAX_PANEL anyway. */}
+        <div
+          className="relative flex h-full flex-col border-base-300 border-r bg-base-200 md:bg-base-200/40"
+          style={{ width: `min(${panelWidth}px, calc(88vw - 4rem))` }}
+        >
+          {panel === "server" ? (
+            <>
+              {/* Server header — the server-level menu (admin, invites) */}
+              <div className="border-base-300 border-b">
+                <div className="dropdown w-full">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
-                    onClick={() => router.push("/home")}
+                    tabIndex={0}
+                    className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-base-200"
                   >
-                    Server home
+                    <span className="truncate font-semibold">{serverName}</span>
+                    <ChevronDown className="size-4 shrink-0 text-base-content/50" />
                   </button>
-                  {canCreate && (
+                  <div className="dropdown-content z-20 mx-2 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
                     <button
                       type="button"
                       className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
-                      onClick={() => void mintInvite()}
+                      onClick={() => router.push("/home")}
                     >
-                      <UserPlus className="size-4" />
-                      Invite people
+                      Server home
                     </button>
-                  )}
+                    {canCreate && (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
+                        onClick={() => void mintInvite()}
+                      >
+                        <UserPlus className="size-4" />
+                        Invite people
+                      </button>
+                    )}
+                    {canCreate && (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
+                        onClick={() => router.push("/admin")}
+                      >
+                        <Shield className="size-4" />
+                        Server admin
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="px-3 pt-3">
+                <SearchBox />
+              </div>
+
+              <nav className="flex-1 overflow-y-auto px-3 py-2">
+                <div className="flex items-center justify-between px-1 pt-1 pb-1">
+                  <span className="font-medium text-base-content/50 text-xs uppercase tracking-wide">
+                    Channels
+                  </span>
                   {canCreate && (
                     <button
                       type="button"
-                      className="flex w-full items-center gap-2 rounded-btn px-2 py-1.5 text-left text-sm hover:bg-base-200"
-                      onClick={() => router.push("/admin")}
+                      className="btn btn-ghost btn-xs"
+                      title="Create channel"
+                      onClick={() => setShowCreate((v) => !v)}
                     >
-                      <Shield className="size-4" />
-                      Server admin
+                      <Plus className="size-3.5" />
                     </button>
                   )}
                 </div>
-              </div>
-            </div>
-
-            <div className="px-3 pt-3">
-              <SearchBox />
-            </div>
-
-            <nav className="flex-1 overflow-y-auto px-3 py-2">
-              <div className="flex items-center justify-between px-1 pt-1 pb-1">
-                <span className="font-medium text-base-content/50 text-xs uppercase tracking-wide">
-                  Channels
-                </span>
-                {canCreate && (
-                  <button
-                    type="button"
-                    className="btn btn-ghost btn-xs"
-                    title="Create channel"
-                    onClick={() => setShowCreate((v) => !v)}
-                  >
-                    <Plus className="size-3.5" />
-                  </button>
+                {channels === null ? (
+                  <span className="loading loading-spinner loading-sm mx-2" />
+                ) : (
+                  <ul className="flex flex-col gap-0.5">
+                    {regular.length === 0 && (
+                      <li className="px-2 py-1 text-base-content/50 text-xs">
+                        No channels yet{canCreate ? " — create one" : ""}
+                      </li>
+                    )}
+                    {regular.map((c) => {
+                      const active = pathname === `/c/${c.slug}`
+                      return (
+                        <li key={c.slug} className="group/item relative">
+                          <button
+                            type="button"
+                            className={itemClass(active)}
+                            // Voice channels open chat-first, same as text
+                            // channels — joining the call is an explicit
+                            // action from that page (see #241).
+                            onClick={() => router.push(`/c/${c.slug}`)}
+                          >
+                            {c.kind === "voice" ? (
+                              activeCall?.room === c.room ? (
+                                <span title="You're connected to this call">
+                                  <PhoneCall className="size-4 shrink-0 text-success" />
+                                </span>
+                              ) : (
+                                <Volume2 className="size-4 shrink-0 text-base-content/50" />
+                              )
+                            ) : (
+                              <Hash className="size-4 shrink-0 text-base-content/50" />
+                            )}
+                            <span className="min-w-0 flex-1 truncate">
+                              {c.slug}
+                            </span>
+                            {c.unread && !active && (
+                              <span className="size-2 shrink-0 rounded-full bg-primary" />
+                            )}
+                            {c.occupants > 0 && (
+                              <span className="badge badge-soft badge-primary badge-xs">
+                                {c.occupants}
+                              </span>
+                            )}
+                          </button>
+                          {canCreate && (
+                            <span className="absolute top-1 right-1 opacity-0 transition-opacity group-hover/item:opacity-100">
+                              <AgentAssign room={c.room} />
+                            </span>
+                          )}
+                          {c.occupantList.length > 0 && (
+                            <div className="flex flex-wrap gap-x-2 gap-y-0.5 pb-1 pl-8 text-base-content/50 text-xs">
+                              {c.occupantList.map((o) => (
+                                <span
+                                  key={o.identity}
+                                  className="flex items-center gap-1"
+                                >
+                                  {o.kind === "agent" && (
+                                    <Bot className="size-3" />
+                                  )}
+                                  {o.name ?? "someone"}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </li>
+                      )
+                    })}
+                  </ul>
                 )}
+              </nav>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center justify-between border-base-300 border-b px-4 py-3">
+                <span className="font-semibold">Direct messages</span>
+                <DmStart />
               </div>
-              {channels === null ? (
-                <span className="loading loading-spinner loading-sm mx-2" />
-              ) : (
+              <div className="px-3 pt-3">
+                <SearchBox />
+              </div>
+              <nav className="flex-1 overflow-y-auto px-3 py-2">
                 <ul className="flex flex-col gap-0.5">
-                  {regular.length === 0 && (
+                  {channels !== null && dms.length === 0 && (
                     <li className="px-2 py-1 text-base-content/50 text-xs">
-                      No channels yet{canCreate ? " — create one" : ""}
+                      No conversations yet — start one with +
                     </li>
                   )}
-                  {regular.map((c) => {
+                  {dms.map((c) => {
                     const active = pathname === `/c/${c.slug}`
+                    const peers = c.dmPeers
                     return (
-                      <li key={c.slug} className="group/item relative">
+                      <li key={c.slug}>
                         <button
                           type="button"
                           className={itemClass(active)}
-                          // Voice channels open chat-first, same as text
-                          // channels — joining the call is an explicit
-                          // action from that page (see #241).
                           onClick={() => router.push(`/c/${c.slug}`)}
                         >
-                          {c.kind === "voice" ? (
-                            activeCall?.room === c.room ? (
-                              <span title="You're connected to this call">
-                                <PhoneCall className="size-4 shrink-0 text-success" />
-                              </span>
-                            ) : (
-                              <Volume2 className="size-4 shrink-0 text-base-content/50" />
-                            )
+                          {peers.length > 1 ? (
+                            // Group DM: an overlapping cluster, Discord-style
+                            // — individual presence doesn't fit at this size.
+                            <span className="-space-x-2 flex shrink-0">
+                              {peers.slice(0, 3).map((p) => (
+                                <span
+                                  key={p.id}
+                                  className="rounded-full ring-2 ring-base-200"
+                                >
+                                  <Avatar
+                                    name={p.name}
+                                    image={p.image}
+                                    isAgent={p.isAgent}
+                                    size="xs"
+                                  />
+                                </span>
+                              ))}
+                            </span>
+                          ) : peers.length === 1 ? (
+                            <Avatar
+                              name={peers[0].name}
+                              image={peers[0].image}
+                              isAgent={peers[0].isAgent}
+                              online={peers[0].online}
+                              presence={peers[0].presence}
+                              size="sm"
+                            />
                           ) : (
-                            <Hash className="size-4 shrink-0 text-base-content/50" />
+                            <MessageCircle className="size-4 shrink-0 text-base-content/50" />
                           )}
                           <span className="min-w-0 flex-1 truncate">
-                            {c.slug}
+                            {peers.map((p) => p.name).join(", ") ||
+                              "Direct message"}
                           </span>
                           {c.unread && !active && (
                             <span className="size-2 shrink-0 rounded-full bg-primary" />
                           )}
                           {c.occupants > 0 && (
                             <span className="badge badge-soft badge-primary badge-xs">
-                              {c.occupants}
+                              huddling
                             </span>
                           )}
                         </button>
-                        {canCreate && (
-                          <span className="absolute top-1 right-1 opacity-0 transition-opacity group-hover/item:opacity-100">
-                            <AgentAssign room={c.room} />
-                          </span>
-                        )}
-                        {c.occupantList.length > 0 && (
-                          <div className="flex flex-wrap gap-x-2 gap-y-0.5 pb-1 pl-8 text-base-content/50 text-xs">
-                            {c.occupantList.map((o) => (
-                              <span
-                                key={o.identity}
-                                className="flex items-center gap-1"
-                              >
-                                {o.kind === "agent" && (
-                                  <Bot className="size-3" />
-                                )}
-                                {o.name ?? "someone"}
-                              </span>
-                            ))}
-                          </div>
-                        )}
                       </li>
                     )
                   })}
                 </ul>
-              )}
-            </nav>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center justify-between border-base-300 border-b px-4 py-3">
-              <span className="font-semibold">Direct messages</span>
-              <DmStart />
-            </div>
-            <div className="px-3 pt-3">
-              <SearchBox />
-            </div>
-            <nav className="flex-1 overflow-y-auto px-3 py-2">
-              <ul className="flex flex-col gap-0.5">
-                {channels !== null && dms.length === 0 && (
-                  <li className="px-2 py-1 text-base-content/50 text-xs">
-                    No conversations yet — start one with +
-                  </li>
-                )}
-                {dms.map((c) => {
-                  const active = pathname === `/c/${c.slug}`
-                  const peers = c.dmPeers
-                  return (
-                    <li key={c.slug}>
-                      <button
-                        type="button"
-                        className={itemClass(active)}
-                        onClick={() => router.push(`/c/${c.slug}`)}
-                      >
-                        {peers.length > 1 ? (
-                          // Group DM: an overlapping cluster, Discord-style
-                          // — individual presence doesn't fit at this size.
-                          <span className="-space-x-2 flex shrink-0">
-                            {peers.slice(0, 3).map((p) => (
-                              <span
-                                key={p.id}
-                                className="rounded-full ring-2 ring-base-200"
-                              >
-                                <Avatar
-                                  name={p.name}
-                                  image={p.image}
-                                  isAgent={p.isAgent}
-                                  size="xs"
-                                />
-                              </span>
-                            ))}
-                          </span>
-                        ) : peers.length === 1 ? (
-                          <Avatar
-                            name={peers[0].name}
-                            image={peers[0].image}
-                            isAgent={peers[0].isAgent}
-                            online={peers[0].online}
-                            presence={peers[0].presence}
-                            size="sm"
-                          />
-                        ) : (
-                          <MessageCircle className="size-4 shrink-0 text-base-content/50" />
-                        )}
-                        <span className="min-w-0 flex-1 truncate">
-                          {peers.map((p) => p.name).join(", ") ||
-                            "Direct message"}
-                        </span>
-                        {c.unread && !active && (
-                          <span className="size-2 shrink-0 rounded-full bg-primary" />
-                        )}
-                        {c.occupants > 0 && (
-                          <span className="badge badge-soft badge-primary badge-xs">
-                            huddling
-                          </span>
-                        )}
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </nav>
-          </>
-        )}
+              </nav>
+            </>
+          )}
 
-        {/* User footer — profile card with presence + call defaults */}
-        <div className="border-base-300 border-t bg-base-200/60 px-2 py-2">
-          <ProfileCard
-            user={{
-              name: user.name,
-              email: user.email,
-              image: user.image,
-              presence: user.presence,
-            }}
+          {/* User footer — profile card with presence + call defaults */}
+          <div className="border-base-300 border-t bg-base-200/60 px-2 py-2">
+            <ProfileCard
+              user={{
+                name: user.name,
+                email: user.email,
+                image: user.image,
+                presence: user.presence,
+              }}
+            />
+          </div>
+
+          {/* Drag handle — resize the panel within [MIN_PANEL, MAX_PANEL] */}
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only resize affordance; keyboard users can't need it — width is cosmetic */}
+          <div
+            className="absolute inset-y-0 -right-1 z-10 hidden w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40 md:block"
+            onPointerDown={startResize}
           />
         </div>
-
-        {/* Drag handle — resize the panel within [MIN_PANEL, MAX_PANEL] */}
-        {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only resize affordance; keyboard users can't need it — width is cosmetic */}
-        <div
-          className="absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize hover:bg-primary/30 active:bg-primary/40"
-          onPointerDown={startResize}
-        />
-      </div>
+      </aside>
 
       <CreateChannelModal
         isOpen={showCreate}
@@ -471,6 +523,6 @@ export function AppSidebar({
           router.push(`/c/${slug}`)
         }}
       />
-    </aside>
+    </>
   )
 }
