@@ -1,6 +1,79 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest"
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { WebSocketServer } from "ws"
-import { normalizeAgentUrl, probeAgent } from "./dynamic.js"
+import { isExternalId, normalizeAgentUrl, probeAgent } from "./dynamic.js"
+
+describe("isExternalId", () => {
+  it("recognizes ext- ids and nothing else", () => {
+    expect(isExternalId("ext-1a2b3c4d")).toBe(true)
+    expect(isExternalId("dyn-1a2b3c4d")).toBe(false)
+    expect(isExternalId("scout")).toBe(false)
+  })
+})
+
+describe("dynamic agent store", () => {
+  // The store file path is read at module load, so each test gets a fresh
+  // module instance pointed at its own temp file.
+  let dyn: typeof import("./dynamic.js")
+  let file: string
+
+  beforeEach(async () => {
+    file = path.join(mkdtempSync(path.join(tmpdir(), "dyn-test-")), "dyn.json")
+    process.env.DYNAMIC_AGENTS_FILE = file
+    vi.resetModules()
+    dyn = await import("./dynamic.js")
+  })
+
+  afterEach(() => {
+    delete process.env.DYNAMIC_AGENTS_FILE
+    vi.resetModules()
+  })
+
+  const spec = (name: string) => ({
+    url: "wss://bot.example.com/tty",
+    token: "secret",
+    name,
+  })
+
+  it("upserts under a stable caller-chosen id", () => {
+    dyn.putDynamicAgent("ext-1a2b3c4d", spec("Scout"))
+    expect(dyn.getDynamicAgent("ext-1a2b3c4d")?.name).toBe("Scout")
+    dyn.putDynamicAgent("ext-1a2b3c4d", spec("Scout v2"))
+    expect(dyn.getDynamicAgent("ext-1a2b3c4d")?.name).toBe("Scout v2")
+    // Still exactly one entry — the id never changed.
+    expect(Object.keys(JSON.parse(readFileSync(file, "utf8")))).toEqual([
+      "ext-1a2b3c4d",
+    ])
+  })
+
+  it("refreshes the timestamp on every put", () => {
+    dyn.putDynamicAgent("ext-1a2b3c4d", spec("Scout"))
+    const first = JSON.parse(readFileSync(file, "utf8"))["ext-1a2b3c4d"].at
+    vi.useFakeTimers()
+    vi.setSystemTime(Date.now() + 60_000)
+    dyn.putDynamicAgent("ext-1a2b3c4d", spec("Scout"))
+    vi.useRealTimers()
+    const second = JSON.parse(readFileSync(file, "utf8"))["ext-1a2b3c4d"].at
+    expect(second).toBeGreaterThan(first)
+  })
+
+  it("sweeps expired dyn- entries but never ext- entries", () => {
+    const stale = Date.now() - 25 * 60 * 60 * 1000
+    writeFileSync(
+      file,
+      JSON.stringify({
+        "dyn-old": { ...spec("Old"), at: stale },
+        "ext-1a2b3c4d": { ...spec("Durable"), at: stale },
+      }),
+    )
+    // Any write triggers the sweep.
+    dyn.registerDynamicAgent(spec("Fresh"))
+    expect(dyn.getDynamicAgent("dyn-old")).toBeNull()
+    expect(dyn.getDynamicAgent("ext-1a2b3c4d")?.name).toBe("Durable")
+  })
+})
 
 describe("normalizeAgentUrl", () => {
   it("turns a bare domain into a wss tty url", () => {
