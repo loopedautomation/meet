@@ -64,6 +64,13 @@
       "when": 1786108872921,
       "tag": "0008_stale_fixer",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786116957493,
+      "tag": "0009_add_server_id_to_agent_registration_tokens",
+      "breakpoints": true
     }
   ]
 }

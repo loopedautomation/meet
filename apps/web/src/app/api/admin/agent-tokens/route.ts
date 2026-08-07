@@ -1,4 +1,4 @@
-import { desc, eq, getDb, schema, sql } from "@meet/db"
+import { and, desc, eq, getDb, schema, sql } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -18,14 +18,14 @@ export const dynamic = "force-dynamic"
 async function requireAdmin() {
   if (authMode() === "none") return null
   const user = await getMemberUser()
-  if (!user || user.role === "member") return null
+  if (!user || !user.serverId || user.role === "member") return null
   return user
 }
 
 /** Mint a token. The response is the only time the plaintext exists. */
 export async function POST(request: Request) {
   const user = await requireAdmin()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   const body = z
     .object({ label: z.string().max(120).optional() })
@@ -36,6 +36,7 @@ export async function POST(request: Request) {
   const [row] = await getDb()
     .insert(schema.agentRegistrationTokens)
     .values({
+      serverId: user.serverId,
       tokenHash: sha256Hex(token),
       label: body.data.label ?? null,
       createdBy: user.id,
@@ -47,7 +48,7 @@ export async function POST(request: Request) {
 /** List tokens with the agent each one registered — never any hashes. */
 export async function GET() {
   const user = await requireAdmin()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   const rows = await getDb()
     .select({
@@ -67,6 +68,7 @@ export async function GET() {
         schema.agentRegistrationTokens.id,
       ),
     )
+    .where(eq(schema.agentRegistrationTokens.serverId, user.serverId))
     .orderBy(desc(schema.agentRegistrationTokens.createdAt))
   return NextResponse.json({
     tokens: rows.map((r) => ({
@@ -84,7 +86,7 @@ export async function GET() {
  * revocation only stops future registrations and messages. */
 export async function DELETE(request: Request) {
   const user = await requireAdmin()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   const body = z
     .object({ id: z.string().uuid() })
@@ -94,6 +96,11 @@ export async function DELETE(request: Request) {
   await getDb()
     .update(schema.agentRegistrationTokens)
     .set({ revokedAt: sql`now()` })
-    .where(eq(schema.agentRegistrationTokens.id, body.data.id))
+    .where(
+      and(
+        eq(schema.agentRegistrationTokens.id, body.data.id),
+        eq(schema.agentRegistrationTokens.serverId, user.serverId),
+      ),
+    )
   return NextResponse.json({ ok: true })
 }

@@ -1,4 +1,4 @@
-import { eq, getDb, schema, sql } from "@meet/db"
+import { and, eq, getDb, schema, sql } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -27,7 +27,7 @@ const createSchema = z.object({
 async function requireAdmin() {
   if (authMode() === "none") return null
   const user = await getMemberUser()
-  if (!user || user.role === "member") return null
+  if (!user || !user.serverId || user.role === "member") return null
   return user
 }
 
@@ -58,7 +58,7 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const user = await requireAdmin()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   const body = createSchema.safeParse(await request.json().catch(() => null))
   if (!body.success)
@@ -91,7 +91,12 @@ export async function POST(request: Request) {
     .returning()
   await db
     .insert(schema.serverAgents)
-    .values({ agentId: agent.id, name, addedBy: user.id })
+    .values({
+      serverId: user.serverId,
+      agentId: agent.id,
+      name,
+      addedBy: user.id,
+    })
     .onConflictDoNothing()
   return NextResponse.json({ ok: true, agentId: agent.id, name })
 }
@@ -101,7 +106,7 @@ export async function POST(request: Request) {
  * agent. */
 export async function DELETE(request: Request) {
   const user = await requireAdmin()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   const body = z
     .object({ id: z.string().regex(/^ext-[0-9a-f]+$/) })
@@ -114,6 +119,11 @@ export async function DELETE(request: Request) {
     .where(eq(schema.externalAgents.id, body.data.id))
   await db
     .delete(schema.serverAgents)
-    .where(eq(schema.serverAgents.agentId, body.data.id))
+    .where(
+      and(
+        eq(schema.serverAgents.serverId, user.serverId),
+        eq(schema.serverAgents.agentId, body.data.id),
+      ),
+    )
   return NextResponse.json({ ok: true })
 }

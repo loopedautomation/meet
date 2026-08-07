@@ -290,6 +290,9 @@ export const externalAgents = pgTable("external_agents", {
 // one to POST /api/agents/register. Only the sha256 of the token is stored.
 export const agentRegistrationTokens = pgTable("agent_registration_tokens", {
   id: uuid("id").primaryKey().defaultRandom(),
+  serverId: uuid("server_id")
+    .notNull()
+    .references(() => servers.id, { onDelete: "cascade" }),
   tokenHash: text("token_hash").notNull().unique(),
   label: text("label"),
   createdBy: uuid("created_by").references(() => users.id, {
