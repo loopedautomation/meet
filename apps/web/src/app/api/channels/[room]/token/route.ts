@@ -139,6 +139,7 @@ export async function POST(request: Request, { params }: Params) {
     ...(isHost ? { isHost: true } : {}),
     userId: user.id,
     role: user.role ?? undefined,
+    image: user.image ?? undefined,
   }
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()

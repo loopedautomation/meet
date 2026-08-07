@@ -236,7 +236,13 @@ export async function POST(request: Request, { params }: Params) {
   const meta: ParticipantMeta = {
     kind: waiting ? "waiting" : "human",
     ...(isHost && !waiting ? { isHost: true } : {}),
-    ...(member ? { userId: member.id, role: member.role ?? undefined } : {}),
+    ...(member
+      ? {
+          userId: member.id,
+          role: member.role ?? undefined,
+          image: member.image ?? undefined,
+        }
+      : {}),
   }
   const token = new AccessToken(apiKey, apiSecret, {
     identity,

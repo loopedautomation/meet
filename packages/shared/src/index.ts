@@ -172,6 +172,10 @@ export const participantMetaSchema = z.object({
   // role. Guests carry neither — additive, old clients parse fine.
   userId: z.string().optional(),
   role: z.enum(["owner", "admin", "member"]).optional(),
+  // The member's profile picture (users.image, originally the IdP's
+  // `picture`), so a tile can lead with the face instead of the full name.
+  // Guests and agents have none and fall back to the initial circle.
+  image: z.string().optional(),
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
 

@@ -51,6 +51,12 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
   const sendControl = useSendAgentControl()
   const { canControl } = useAgentPermissions()
   const name = participant.name || participant.identity
+  // Tiles lead with the face, not the full name — long names crowd small
+  // cells at higher participant counts. Guests and agents carry no image and
+  // keep the initial circle. The name is never dropped, only demoted: it
+  // stays in the tooltip, the accessible name, and the participants panel.
+  const [imageBroken, setImageBroken] = useState(false)
+  const avatarUrl = imageBroken ? undefined : meta?.image
   const hasVideo = isTrackReference(trackRef) && !trackRef.publication.isMuted
   // A phone in portrait publishes a taller-than-wide track; cropping it into
   // a landscape card cuts heads off. Measure the actual video element (the
@@ -121,15 +127,13 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
         />
       ) : (
         <div className="flex size-full items-center justify-center">
-          <div
-            className={`flex items-center justify-center rounded-full font-medium ${
-              participant.isLocal
-                ? "bg-secondary text-secondary-content"
-                : "bg-primary text-primary-content"
-            } ${compact ? "size-10 text-base" : "size-16 text-2xl"}`}
-          >
-            {name.charAt(0).toUpperCase()}
-          </div>
+          <Avatar
+            name={name}
+            src={avatarUrl}
+            onError={() => setImageBroken(true)}
+            isLocal={participant.isLocal}
+            className={compact ? "size-10 text-base" : "size-16 text-2xl"}
+          />
         </div>
       )}
 
@@ -179,18 +183,77 @@ export function ParticipantTile({ trackRef, compact }: ParticipantTileProps) {
       )}
 
       <div className="absolute bottom-2 left-2 flex items-center gap-1.5">
-        <span className="badge badge-sm gap-1 bg-base-100/80 text-base-content backdrop-blur">
+        <span
+          className="badge badge-sm gap-1 bg-base-100/80 pl-0.5 text-base-content backdrop-blur"
+          // Hover/focus surfaces the name the avatar replaced.
+          title={participant.isLocal ? `${name} (you)` : name}
+        >
+          <Avatar
+            name={name}
+            src={avatarUrl}
+            onError={() => setImageBroken(true)}
+            isLocal={participant.isLocal}
+            className="size-4 text-[0.6rem]"
+          />
+          {/* The tile's accessible name: screen readers still get the person,
+              not a bare row of status icons. */}
+          <span className="sr-only">
+            {participant.isLocal ? `${name} (you)` : name}
+          </span>
           {meta?.isHost && (
             <Crown className="size-3 text-warning" aria-label="Host" />
           )}
-          {micMuted && <MicOff className="size-3 text-error" />}
-          {participant.isLocal ? `${name} (you)` : name}
-          {isAway && <span className="text-base-content/60">· away</span>}
+          {micMuted && (
+            <MicOff className="size-3 text-error" aria-label="Muted" />
+          )}
+          {isAway && <span className="text-base-content/60">away</span>}
         </span>
         <QualityBars quality={quality} />
         {isAgent && meta?.agentId && <AgentBadge participant={participant} />}
       </div>
     </div>
+  )
+}
+
+/**
+ * A participant's profile picture, falling back to the initial circle when
+ * there is no image (guests, agents) or the URL fails to load. Decorative
+ * throughout: the tile carries the accessible name once, in the badge.
+ */
+function Avatar({
+  name,
+  src,
+  onError,
+  isLocal,
+  className,
+}: {
+  name: string
+  src: string | undefined
+  onError: () => void
+  isLocal: boolean
+  className: string
+}) {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        onError={onError}
+        className={`shrink-0 rounded-full object-cover ${className}`}
+      />
+    )
+  }
+  return (
+    <span
+      aria-hidden="true"
+      className={`flex shrink-0 items-center justify-center rounded-full font-medium ${
+        isLocal
+          ? "bg-secondary text-secondary-content"
+          : "bg-primary text-primary-content"
+      } ${className}`}
+    >
+      {name.charAt(0).toUpperCase()}
+    </span>
   )
 }
 
