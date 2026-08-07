@@ -4,7 +4,7 @@ import { useParticipants } from "@livekit/components-react"
 import { parseParticipantMeta } from "@meet/shared"
 import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
-import { roomAuthHeaders } from "@/lib/roomAuth"
+import { decideAdmission } from "@/lib/admit"
 
 /**
  * Make waiting-room knocks unmissable: a doorbell-ish chime plus a persistent
@@ -71,19 +71,12 @@ function KnockToast({
 
   const decide = async (action: "admit" | "deny") => {
     setBusy(true)
-    try {
-      await fetch(`/api/rooms/${slug}/admit`, {
-        method: "POST",
-        // The server derives who's admitting from the verified token.
-        headers: {
-          "content-type": "application/json",
-          ...roomAuthHeaders(slug),
-        },
-        body: JSON.stringify({ identity, action }),
-      })
-    } finally {
-      toast.dismiss(`knock-${identity}`)
-    }
+    const result = await decideAdmission(slug, identity, action)
+    // Dismissing regardless made a rejected admit look like it worked; keep
+    // the toast up so the knock can be retried.
+    if (result.ok) toast.dismiss(`knock-${identity}`)
+    else toast.error(result.message)
+    setBusy(false)
   }
 
   return (

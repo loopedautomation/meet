@@ -196,6 +196,54 @@ export const channelAgents = pgTable(
   (t) => [primaryKey({ columns: [t.channelId, t.agentId] })],
 )
 
+// Durable external agents: looped-af agents that registered themselves (via
+// a registration token) or were pasted by an admin. They behave like registry
+// agents — usable in server_agents/channel_agents/DMs — but their TTY spec
+// lives here instead of agent-registry.yaml. The bearer token is encrypted at
+// rest (AES-256-GCM under AGENT_TOKEN_ENC_KEY); plaintext never lands in the
+// database or leaves the server.
+export const externalAgents = pgTable("external_agents", {
+  // "ext-<8hex>" — stable across re-registrations, so channel/server
+  // assignments survive an agent redeploying under a new URL.
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Normalized wss TTY URL (see the bridge's normalizeAgentUrl).
+  url: text("url").notNull(),
+  // "v1:<iv b64>:<tag b64>:<data b64>" — AES-256-GCM.
+  tokenCiphertext: text("token_ciphertext").notNull(),
+  voice: text("voice"),
+  // The registration token that owns this agent; re-registering with the
+  // same token updates this row in place. Null for admin-pasted agents.
+  registrationTokenId: uuid("registration_token_id").unique(),
+  createdBy: uuid("created_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }),
+})
+
+// Registration tokens ("lreg_<32hex>") minted by admins; an agent presents
+// one to POST /api/agents/register. Only the sha256 of the token is stored.
+export const agentRegistrationTokens = pgTable("agent_registration_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tokenHash: text("token_hash").notNull().unique(),
+  label: text("label"),
+  createdBy: uuid("created_by").references(() => users.id, {
+    onDelete: "set null",
+  }),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+})
+
 // Designed now, written from Phase 2 (text channels) and the Phase 1 text
 // sidecar. Ids are supplied by the app as UUIDv7 so pagination follows time.
 export const messages = pgTable(

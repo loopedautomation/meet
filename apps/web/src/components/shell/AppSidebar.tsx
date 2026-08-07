@@ -1,10 +1,12 @@
 "use client"
 
+import { useStore } from "@nanostores/react"
 import {
   Bot,
   ChevronDown,
   Hash,
   MessageCircle,
+  PhoneCall,
   Plus,
   Shield,
   UserPlus,
@@ -13,6 +15,8 @@ import {
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { Avatar } from "@/components/ui/Avatar"
+import { $activeCall } from "@/stores/activeCall"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
 import { DmStart } from "./DmStart"
@@ -25,6 +29,17 @@ type Occupant = {
   kind: string | null
 }
 
+/** Mirrors the server's DmPeer shape (apps/web/src/lib/server/channels.ts) —
+ * enough to render an avatar with a presence dot for a DM's other side. */
+type DmPeer = {
+  id: string
+  name: string
+  image: string | null
+  isAgent: boolean
+  online: boolean
+  presence: string | null
+}
+
 export type ChannelRow = {
   slug: string
   name: string
@@ -32,7 +47,7 @@ export type ChannelRow = {
   topic: string | null
   isPrivate: boolean
   isDm: boolean
-  dmPeers: string[]
+  dmPeers: DmPeer[]
   unread: boolean
   room: string
   occupants: number
@@ -62,6 +77,7 @@ export function AppSidebar({
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  const activeCall = useStore($activeCall)
   const canCreate = user.role !== "member"
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -295,12 +311,19 @@ export function AppSidebar({
                         <button
                           type="button"
                           className={itemClass(active)}
-                          // Clicking a voice channel IS joining the call —
-                          // RoomClient auto-joins channel rooms.
+                          // Voice channels open chat-first, same as text
+                          // channels — joining the call is an explicit
+                          // action from that page (see #241).
                           onClick={() => router.push(`/c/${c.slug}`)}
                         >
                           {c.kind === "voice" ? (
-                            <Volume2 className="size-4 shrink-0 text-base-content/50" />
+                            activeCall?.room === c.room ? (
+                              <span title="You're connected to this call">
+                                <PhoneCall className="size-4 shrink-0 text-success" />
+                              </span>
+                            ) : (
+                              <Volume2 className="size-4 shrink-0 text-base-content/50" />
+                            )
                           ) : (
                             <Hash className="size-4 shrink-0 text-base-content/50" />
                           )}
@@ -361,6 +384,7 @@ export function AppSidebar({
                 )}
                 {dms.map((c) => {
                   const active = pathname === `/c/${c.slug}`
+                  const peers = c.dmPeers
                   return (
                     <li key={c.slug}>
                       <button
@@ -368,9 +392,39 @@ export function AppSidebar({
                         className={itemClass(active)}
                         onClick={() => router.push(`/c/${c.slug}`)}
                       >
-                        <MessageCircle className="size-4 shrink-0 text-base-content/50" />
+                        {peers.length > 1 ? (
+                          // Group DM: an overlapping cluster, Discord-style
+                          // — individual presence doesn't fit at this size.
+                          <span className="-space-x-2 flex shrink-0">
+                            {peers.slice(0, 3).map((p) => (
+                              <span
+                                key={p.id}
+                                className="rounded-full ring-2 ring-base-200"
+                              >
+                                <Avatar
+                                  name={p.name}
+                                  image={p.image}
+                                  isAgent={p.isAgent}
+                                  size="xs"
+                                />
+                              </span>
+                            ))}
+                          </span>
+                        ) : peers.length === 1 ? (
+                          <Avatar
+                            name={peers[0].name}
+                            image={peers[0].image}
+                            isAgent={peers[0].isAgent}
+                            online={peers[0].online}
+                            presence={peers[0].presence}
+                            size="sm"
+                          />
+                        ) : (
+                          <MessageCircle className="size-4 shrink-0 text-base-content/50" />
+                        )}
                         <span className="min-w-0 flex-1 truncate">
-                          {c.dmPeers.join(", ") || "Direct message"}
+                          {peers.map((p) => p.name).join(", ") ||
+                            "Direct message"}
                         </span>
                         {c.unread && !active && (
                           <span className="size-2 shrink-0 rounded-full bg-primary" />

@@ -39,16 +39,37 @@ function load(): Record<string, Stored> {
   }
 }
 
+/** Durable external agents ("ext-…") get their specs pushed here by the web
+ * app; they never expire from this store — the database is their source of
+ * truth and every dispatch/text turn re-puts a fresh copy. */
+export function isExternalId(id: string): boolean {
+  return id.startsWith("ext-")
+}
+
+function sweepAndWrite(all: Record<string, Stored>): void {
+  const now = Date.now()
+  for (const [key, value] of Object.entries(all)) {
+    // External agents are durable (backed by the web app's database) and
+    // exempt from the TTL sweep; ad-hoc dyn- invites still age out.
+    if (!isExternalId(key) && now - value.at > MAX_AGE_MS) delete all[key]
+  }
+  writeFileSync(FILE, JSON.stringify(all), { mode: 0o600 })
+}
+
 export function registerDynamicAgent(spec: DynamicAgentSpec): string {
   const id = `dyn-${randomBytes(4).toString("hex")}`
   const all = load()
-  const now = Date.now()
-  for (const [key, value] of Object.entries(all)) {
-    if (now - value.at > MAX_AGE_MS) delete all[key]
-  }
-  all[id] = { ...spec, at: now }
-  writeFileSync(FILE, JSON.stringify(all), { mode: 0o600 })
+  all[id] = { ...spec, at: Date.now() }
+  sweepAndWrite(all)
   return id
+}
+
+/** Explicit-id upsert for external agents: the caller owns the id (the web
+ * app's stable "ext-<8hex>") and every put refreshes `at`. */
+export function putDynamicAgent(id: string, spec: DynamicAgentSpec): void {
+  const all = load()
+  all[id] = { ...spec, at: Date.now() }
+  sweepAndWrite(all)
 }
 
 export function getDynamicAgent(id: string): DynamicAgentSpec | null {
@@ -143,10 +164,11 @@ export async function assertPublicAgentUrl(
  * validation and internally when the worker actually dials. Passed to the
  * `ws` client for dynamic (pasted-URL) agents.
  */
-// biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
 export function publicOnlyLookup(
   hostname: string,
+  // biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
   options: any,
+  // biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
   callback: any,
 ): void {
   lookupCb(hostname, { ...options, all: true }, (err, addresses) => {

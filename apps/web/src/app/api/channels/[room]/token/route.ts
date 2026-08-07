@@ -10,6 +10,7 @@ import {
   channelRoomName,
   getChannelByRoomName,
 } from "@/lib/server/channels"
+import { bridgeAgentBody } from "@/lib/server/externalAgents"
 import { livekitEnv, roomService } from "@/lib/server/livekit"
 import { getMemberUser } from "@/lib/server/session"
 import { deriveHostKey } from "@/lib/server/slug"
@@ -28,9 +29,13 @@ async function dispatchAssignedAgents(
       .from(schema.channelAgents)
       .where(eq(schema.channelAgents.channelId, channelId))
     await Promise.allSettled(
-      assigned.map(({ agentId }) =>
+      assigned.map(async ({ agentId }) =>
         bridgeFetch(`/rooms/${roomName}/agents/${agentId}`, {
           method: "POST",
+          headers: { "content-type": "application/json" },
+          // External ("ext-…") agents carry their decrypted dial spec — the
+          // bridge's dynamic store is only a cache of this database.
+          body: JSON.stringify(await bridgeAgentBody(agentId)),
           signal: AbortSignal.timeout(10_000),
         }),
       ),
@@ -139,6 +144,7 @@ export async function POST(request: Request, { params }: Params) {
     ...(isHost ? { isHost: true } : {}),
     userId: user.id,
     role: user.role ?? undefined,
+    image: user.image ?? undefined,
   }
 
   const { apiKey, apiSecret, publicUrl } = livekitEnv()

@@ -8,7 +8,7 @@ import { Track } from "livekit-client"
 import { Bot, Check, Crown, Mic, MicOff, User, UserX, X } from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
-import { roomAuthHeaders } from "@/lib/roomAuth"
+import { decideAdmission } from "@/lib/admit"
 import { $isHost } from "@/stores/host"
 
 export function ParticipantsPanel({ slug }: { slug: string }) {
@@ -51,23 +51,9 @@ export function ParticipantsPanel({ slug }: { slug: string }) {
 
   const decide = async (identity: string, action: "admit" | "deny") => {
     setBusy(identity)
-    try {
-      const res = await fetch(`/api/rooms/${slug}/admit`, {
-        method: "POST",
-        // The server derives who's admitting from the verified token in the
-        // Authorization header — a claimed identity would be spoofable.
-        headers: {
-          "content-type": "application/json",
-          ...roomAuthHeaders(slug),
-        },
-        body: JSON.stringify({ identity, action }),
-      })
-      if (!res.ok) throw new Error(`could not ${action} participant`)
-    } catch (err) {
-      toast.error((err as Error).message)
-    } finally {
-      setBusy(null)
-    }
+    const result = await decideAdmission(slug, identity, action)
+    if (!result.ok) toast.error(result.message)
+    setBusy(null)
   }
 
   return (

@@ -12,9 +12,12 @@ import {
   Users,
   X,
 } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
+import { Modal } from "@/components/ui/Modal"
+import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
 
@@ -35,24 +38,40 @@ type ChannelMessage = {
 }
 
 /**
- * A text channel or DM: the persistent conversation is the room. History,
- * sends, edits, deletes, reactions and pins all go through the channel
- * messages API (Postgres); a light poll keeps the view fresh. "Start a
- * huddle" flips into the channel's own voice room — every text channel and
- * DM owns one, so the Slack-huddle escalation is just opening it.
+ * A text channel, DM, or voice channel: the persistent conversation is the
+ * room. History, sends, edits, deletes, reactions and pins all go through
+ * the channel messages API (Postgres); a light poll keeps the view fresh —
+ * none of this depends on being in the room's call, so it's the default
+ * view for every channel kind, voice included. "Start a huddle" (DMs) and
+ * "Join call" (voice channels) are the opt-in escalations into that
+ * channel's own voice room.
  */
 export function TextChannelView({
   room,
   slug,
   label,
+  kind,
   canModerate,
 }: {
   room: string
   slug: string
   /** Display label — #slug for channels, peer names for DMs. */
   label: string
+  kind: "text" | "voice"
   canModerate: boolean
 }) {
+  const router = useRouter()
+  // Chat is the default view for a voice channel, but a reload/revisit
+  // while genuinely mid-call (a fresh rejoin proof left by RoomClient)
+  // must resume the call, not strand the user on chat — mirrors
+  // RoomClient's own rejoin-freshness check.
+  const [resumingCall] = useState(() => {
+    if (kind !== "voice" || typeof window === "undefined") return false
+    return isRejoinFresh(readRejoin(room))
+  })
+  useEffect(() => {
+    if (resumingCall) router.replace(`/c/${slug}?call=1`)
+  }, [resumingCall, router, slug])
   const [messages, setMessages] = useState<ChannelMessage[] | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
@@ -65,6 +84,10 @@ export function TextChannelView({
   const [pending, setPending] = useState<Attachment[]>([])
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [lightbox, setLightbox] = useState<{
+    url: string
+    name: string
+  } | null>(null)
 
   useEffect(() => {
     void fetch("/api/me")
@@ -199,6 +222,14 @@ export function TextChannelView({
   const byId = new Map((messages ?? []).map((m) => [m.id, m]))
   const pinned = (messages ?? []).filter((m) => m.pinned)
 
+  if (resumingCall) {
+    return (
+      <main className="flex h-full items-center justify-center">
+        <span className="loading loading-spinner" />
+      </main>
+    )
+  }
+
   return (
     <main className="mx-auto flex h-full max-w-3xl flex-col px-4">
       <header className="flex items-center justify-between gap-3 border-base-300 border-b py-3">
@@ -210,18 +241,30 @@ export function TextChannelView({
           )}
           {label.replace(/^#/, "")}
         </span>
-        {/* Huddles are a DM escalation only — text channels stay text;
-            voice belongs in voice channels. */}
-        {!label.startsWith("#") && (
+        {kind === "voice" ? (
           <button
             type="button"
             className="btn btn-primary btn-sm"
-            // The huddle opens in its own tab so the conversation stays put.
-            onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+            // Same tab: the call is this page's other state, not a side
+            // conversation to escalate into (unlike a DM huddle).
+            onClick={() => router.push(`/c/${slug}?call=1`)}
           >
             <PhoneCall className="size-4" />
-            Start a huddle
+            Join call
           </button>
+        ) : (
+          // Huddles are a DM escalation only — text channels stay text.
+          !label.startsWith("#") && (
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              // The huddle opens in its own tab so the conversation stays put.
+              onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+            >
+              <PhoneCall className="size-4" />
+              Start a huddle
+            </button>
+          )
         )}
       </header>
 
@@ -285,12 +328,23 @@ export function TextChannelView({
                     {m.text && <Markdown text={m.text} className="text-sm" />}
                     {m.attachments?.map((a) =>
                       a.type.startsWith("image/") ? (
-                        <img
+                        <button
                           key={a.key}
-                          src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                          alt={a.name}
-                          className="mt-1 max-h-64 max-w-full rounded-box"
-                        />
+                          type="button"
+                          className="mt-1 block cursor-zoom-in"
+                          onClick={() =>
+                            setLightbox({
+                              url: `/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`,
+                              name: a.name,
+                            })
+                          }
+                        >
+                          <img
+                            src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                            alt={a.name}
+                            className="max-h-64 max-w-full rounded-box"
+                          />
+                        </button>
                       ) : (
                         <a
                           key={a.key}
@@ -410,7 +464,15 @@ export function TextChannelView({
         <div className="flex flex-wrap gap-2 pt-2">
           {pending.map((a) => (
             <span key={a.key} className="badge badge-ghost gap-1">
-              <Paperclip className="size-3" />
+              {a.type.startsWith("image/") ? (
+                <img
+                  src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                  alt=""
+                  className="size-4 rounded object-cover"
+                />
+              ) : (
+                <Paperclip className="size-3" />
+              )}
               {a.name}
               <button
                 type="button"
@@ -474,6 +536,20 @@ export function TextChannelView({
           )}
         </button>
       </form>
+      <Modal
+        isOpen={lightbox !== null}
+        onClose={() => setLightbox(null)}
+        className="max-w-none bg-transparent p-0 shadow-none"
+      >
+        {lightbox && (
+          <img
+            src={lightbox.url}
+            alt={lightbox.name}
+            className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-box"
+            onClick={() => setLightbox(null)}
+          />
+        )}
+      </Modal>
     </main>
   )
 }

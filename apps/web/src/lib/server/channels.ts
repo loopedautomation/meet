@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { and, asc, eq, getDb, inArray, isNull, schema, sql } from "@meet/db"
 import { customAlphabet } from "nanoid"
+import { onlineUserIds } from "./onlineRegistry"
 
 // Lowercase alphanumeric so the LiveKit room name ch-<publicId> passes
 // isValidRoomSlug and survives every code path that sees room names.
@@ -180,11 +181,22 @@ export type Occupant = {
   kind: string | null
 }
 
+/** A DM's other participant, human or agent — enough to render an avatar
+ * with a presence dot in the sidebar without a second round-trip. */
+export type DmPeer = {
+  id: string
+  name: string
+  image: string | null
+  isAgent: boolean
+  online: boolean
+  presence: string | null
+}
+
 export type ChannelWithPresence = Channel & {
   occupants: number
   occupantList: Occupant[]
-  /** Names of the other people in a DM — the conversation's label. */
-  dmPeers: string[]
+  /** The other people (and agents) in a DM — the conversation's label. */
+  dmPeers: DmPeer[]
   /** A message newer than the viewer's last read exists. */
   unread: boolean
 }
@@ -224,13 +236,15 @@ export async function listChannelsForUser(
       .select()
       .from(schema.roomPresence)
       .where(inArray(schema.roomPresence.roomName, roomNames)),
-    // DM labels: the other members' names.
+    // DM labels: the other members' names, avatars and presence.
     db
       .select({
         channelId: schema.channelMembers.channelId,
         userId: schema.channelMembers.userId,
         name: schema.users.name,
         email: schema.users.email,
+        image: schema.users.image,
+        presence: schema.users.presence,
       })
       .from(schema.channelMembers)
       .innerJoin(
@@ -277,16 +291,31 @@ export async function listChannelsForUser(
     list.push({ identity: p.identity, name: p.displayName, kind: p.kind })
     byRoom.set(p.roomName, list)
   }
-  const peersByChannel = new Map<string, string[]>()
+  const online = onlineUserIds()
+  const peersByChannel = new Map<string, DmPeer[]>()
   for (const row of dmPeerRows) {
     if (row.userId === userId) continue
     const list = peersByChannel.get(row.channelId) ?? []
-    list.push(row.name ?? row.email ?? "someone")
+    list.push({
+      id: row.userId,
+      name: row.name ?? row.email ?? "someone",
+      image: row.image,
+      isAgent: false,
+      online: online.has(row.userId),
+      presence: row.presence,
+    })
     peersByChannel.set(row.channelId, list)
   }
   for (const row of agentRows) {
     const list = peersByChannel.get(row.channelId) ?? []
-    list.push(row.agentName ?? row.agentId)
+    list.push({
+      id: row.agentId,
+      name: row.agentName ?? row.agentId,
+      image: null,
+      isAgent: true,
+      online: true,
+      presence: null,
+    })
     peersByChannel.set(row.channelId, list)
   }
   const lastActivity = new Map(

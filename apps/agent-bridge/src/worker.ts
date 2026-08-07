@@ -78,6 +78,7 @@ import {
 import {
   dynamicAgentsPublicOnly,
   getDynamicAgent,
+  isExternalId,
   publicOnlyLookup,
 } from "./dynamic.js"
 import { endCallWhenEmpty } from "./end-when-empty.js"
@@ -207,7 +208,7 @@ function applyVoice(entry: ResolvedEntry, voice?: string): ResolvedEntry {
 
 function entryFromMetadata(metadata: string): ResolvedEntry {
   const { agentId, mode, voice } = JSON.parse(metadata) as DispatchMeta
-  if (agentId.startsWith("dyn-")) {
+  if (agentId.startsWith("dyn-") || isExternalId(agentId)) {
     const spec = getDynamicAgent(agentId)
     if (!spec) throw new Error(`unknown dynamic agent: ${agentId}`)
     const dyn = applyMode(
@@ -275,7 +276,8 @@ export default defineAgent({
       // refuses private addresses at dial time — the invite-time SSRF check
       // alone is bypassable by a rebinding domain. Registry agents come
       // from the operator's own config and may legitimately be internal.
-      ...(entry.id.startsWith("dyn-") && dynamicAgentsPublicOnly()
+      ...((entry.id.startsWith("dyn-") || isExternalId(entry.id)) &&
+      dynamicAgentsPublicOnly()
         ? { lookup: publicOnlyLookup }
         : {}),
     }

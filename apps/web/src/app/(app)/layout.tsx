@@ -1,7 +1,7 @@
 import { getDb } from "@meet/db"
-import { headers } from "next/headers"
 import { notFound } from "next/navigation"
-import { AppSidebar } from "@/components/shell/AppSidebar"
+import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
+import { AppShell } from "@/components/shell/AppShell"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
 
@@ -18,17 +18,7 @@ export default async function AppLayout({
   children: React.ReactNode
 }) {
   if (authMode() === "none") notFound()
-  // The desktop shell hides the window chrome (hiddenInset); serve it a
-  // full-width draggable header strip that clears the traffic lights.
-  const inElectron = ((await headers()).get("user-agent") ?? "").includes(
-    "Electron",
-  )
-  const dragStrip = inElectron ? (
-    <div
-      className="h-9 shrink-0 border-base-300 border-b bg-base-200/60"
-      style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-    />
-  ) : null
+  const dragStrip = <DesktopDragStrip />
 
   const user = await getSessionUser()
   // Room/pane components size to their parent, so the bare branch still
@@ -46,19 +36,18 @@ export default async function AppLayout({
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       {dragStrip}
-      <div className="flex min-h-0 flex-1">
-        <AppSidebar
-          user={{
-            name: user.name,
-            email: user.email,
-            image: user.image,
-            presence: (user.presence as "active" | "away" | "dnd") ?? "active",
-            role: user.role,
-          }}
-          serverName={settings?.name ?? "looped meet"}
-        />
-        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-      </div>
+      <AppShell
+        user={{
+          name: user.name,
+          email: user.email,
+          image: user.image,
+          presence: (user.presence as "active" | "away" | "dnd") ?? "active",
+          role: user.role,
+        }}
+        serverName={settings?.name ?? "looped meet"}
+      >
+        {children}
+      </AppShell>
     </div>
   )
 }

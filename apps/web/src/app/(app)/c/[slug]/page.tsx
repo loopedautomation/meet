@@ -1,34 +1,37 @@
 import { eq, getDb, inArray, schema } from "@meet/db"
 import { notFound } from "next/navigation"
 import { TextChannelView } from "@/components/channel/TextChannelView"
-import { RoomClient } from "@/components/room/RoomClient"
+import { JoinChannelCall } from "@/components/shell/JoinChannelCall"
 import { authMode } from "@/lib/server/authMode"
 import { channelRoomName, getChannelBySlug } from "@/lib/server/channels"
 import { getSessionUser } from "@/lib/server/session"
 
 type Props = {
   params: Promise<{ slug: string }>
-  searchParams: Promise<{ huddle?: string }>
+  searchParams: Promise<{ huddle?: string; call?: string }>
 }
 
 /**
- * A channel address: /c/standup. Voice channels open the room UI directly;
- * text channels and DMs open the conversation, with ?huddle=1 flipping into
- * the channel's own voice room (every text channel has one — the escalation
- * is just opening it). The human slug resolves to the LiveKit room name
- * (ch-<publicId>) so every in-room feature operates on the room name
- * exactly as meetings do. Access control happens in the channel APIs; this
- * page stays renderable so the login round-trip has somewhere to return to.
+ * A channel address: /c/standup. Every channel opens chat-first — text
+ * channels, DMs, and voice channels alike — so chat is always readable and
+ * usable without joining a call. ?huddle=1 flips a DM into its own voice
+ * room (every DM has one — the escalation is just opening it); ?call=1 does
+ * the same for a voice channel's own call. The human slug resolves to the
+ * LiveKit room name (ch-<publicId>) so every in-room feature operates on
+ * the room name exactly as meetings do. Access control happens in the
+ * channel APIs; this page stays renderable so the login round-trip has
+ * somewhere to return to.
  */
 export default async function ChannelPage({ params, searchParams }: Props) {
   if (authMode() === "none") notFound()
-  const [{ slug }, { huddle }] = await Promise.all([params, searchParams])
+  const [{ slug }, { huddle, call }] = await Promise.all([params, searchParams])
   const channel = await getChannelBySlug(slug)
   if (!channel || channel.archivedAt) notFound()
   const room = channelRoomName(channel)
   // Huddles are a DM escalation only — a plain text channel ignores the
   // huddle flag (voice belongs in voice channels).
   const huddleAllowed = channel.isDm && huddle === "1"
+  const callAllowed = channel.kind === "voice" && call === "1"
   if (channel.kind === "text" && !huddleAllowed) {
     const user = await getSessionUser()
     let label = `#${channel.slug}`
@@ -56,9 +59,22 @@ export default async function ChannelPage({ params, searchParams }: Props) {
         room={room}
         slug={channel.slug}
         label={label}
+        kind="text"
         canModerate={user?.role === "owner" || user?.role === "admin"}
       />
     )
   }
-  return <RoomClient slug={room} mode="channel" />
+  if (channel.kind === "voice" && !callAllowed) {
+    const user = await getSessionUser()
+    return (
+      <TextChannelView
+        room={room}
+        slug={channel.slug}
+        label={`#${channel.slug}`}
+        kind="voice"
+        canModerate={user?.role === "owner" || user?.role === "admin"}
+      />
+    )
+  }
+  return <JoinChannelCall room={room} channelSlug={channel.slug} />
 }

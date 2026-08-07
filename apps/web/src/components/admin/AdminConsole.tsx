@@ -4,6 +4,7 @@ import { Copy, Download, ShieldCheck, Trash2, UserMinus } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "react-toastify"
 import { copyToClipboard } from "@/lib/clipboard"
+import { ExternalAgents } from "./ExternalAgents"
 
 type Member = {
   id: string
@@ -320,6 +321,8 @@ export function AdminConsole({
           )}
         </div>
       </section>
+
+      <ExternalAgents />
 
       <section className="card card-border bg-base-200/20">
         <div className="card-body gap-2">
