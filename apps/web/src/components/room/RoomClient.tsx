@@ -12,6 +12,7 @@ import { WaitingRoom } from "@/components/room/WaitingRoom"
 import { readVoiceIsolationPref } from "@/hooks/useVoiceIsolation"
 import { clearRoomContext, setRoomContext, track } from "@/lib/analytics"
 import { consumeExplicitLeave } from "@/lib/leaveIntent"
+import { $activeCall } from "@/stores/activeCall"
 import { $channelRoom } from "@/stores/channelContext"
 import { readDevicePref } from "@/stores/devicePrefs"
 import { $isHost } from "@/stores/host"
@@ -541,6 +542,10 @@ export function RoomClient({
         try {
           sessionStorage.removeItem(`msession:${slug}`)
         } catch {}
+        // A real leave (not a transient drop mid-retry) ends the
+        // background-call state too, so the persistent call bar/overlay
+        // disappears — see #236.
+        if ($activeCall.get()?.room === slug) $activeCall.set(null)
         const involuntaryMessage = involuntaryLeaveMessage(reason)
         if (involuntaryMessage) toast.info(involuntaryMessage)
         return
@@ -554,6 +559,7 @@ export function RoomClient({
         try {
           sessionStorage.removeItem(`msession:${slug}`)
         } catch {}
+        if ($activeCall.get()?.room === slug) $activeCall.set(null)
         const involuntaryMessage = involuntaryLeaveMessage(reason)
         if (involuntaryMessage) toast.info(involuntaryMessage)
         return

@@ -1,7 +1,7 @@
 import { eq, getDb, inArray, schema } from "@meet/db"
 import { notFound } from "next/navigation"
 import { TextChannelView } from "@/components/channel/TextChannelView"
-import { RoomClient } from "@/components/room/RoomClient"
+import { JoinChannelCall } from "@/components/shell/JoinChannelCall"
 import { authMode } from "@/lib/server/authMode"
 import { channelRoomName, getChannelBySlug } from "@/lib/server/channels"
 import { getSessionUser } from "@/lib/server/session"
@@ -76,5 +76,5 @@ export default async function ChannelPage({ params, searchParams }: Props) {
       />
     )
   }
-  return <RoomClient slug={room} mode="channel" />
+  return <JoinChannelCall room={room} channelSlug={channel.slug} />
 }

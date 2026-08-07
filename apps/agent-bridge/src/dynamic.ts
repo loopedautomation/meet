@@ -143,10 +143,11 @@ export async function assertPublicAgentUrl(
  * validation and internally when the worker actually dials. Passed to the
  * `ws` client for dynamic (pasted-URL) agents.
  */
-// biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
 export function publicOnlyLookup(
   hostname: string,
+  // biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
   options: any,
+  // biome-ignore lint/suspicious/noExplicitAny: matches node's LookupFunction callback shape
   callback: any,
 ): void {
   lookupCb(hostname, { ...options, all: true }, (err, addresses) => {

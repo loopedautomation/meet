@@ -1,7 +1,7 @@
 import { getDb } from "@meet/db"
 import { notFound } from "next/navigation"
 import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
-import { AppSidebar } from "@/components/shell/AppSidebar"
+import { AppShell } from "@/components/shell/AppShell"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
 
@@ -36,19 +36,18 @@ export default async function AppLayout({
   return (
     <div className="flex h-dvh flex-col overflow-hidden">
       {dragStrip}
-      <div className="flex min-h-0 flex-1">
-        <AppSidebar
-          user={{
-            name: user.name,
-            email: user.email,
-            image: user.image,
-            presence: (user.presence as "active" | "away" | "dnd") ?? "active",
-            role: user.role,
-          }}
-          serverName={settings?.name ?? "looped meet"}
-        />
-        <main className="min-w-0 flex-1 overflow-hidden">{children}</main>
-      </div>
+      <AppShell
+        user={{
+          name: user.name,
+          email: user.email,
+          image: user.image,
+          presence: (user.presence as "active" | "away" | "dnd") ?? "active",
+          role: user.role,
+        }}
+        serverName={settings?.name ?? "looped meet"}
+      >
+        {children}
+      </AppShell>
     </div>
   )
 }

@@ -1,10 +1,12 @@
 "use client"
 
+import { useStore } from "@nanostores/react"
 import {
   Bot,
   ChevronDown,
   Hash,
   MessageCircle,
+  PhoneCall,
   Plus,
   Shield,
   UserPlus,
@@ -13,6 +15,7 @@ import {
 import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { $activeCall } from "@/stores/activeCall"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
 import { DmStart } from "./DmStart"
@@ -62,6 +65,7 @@ export function AppSidebar({
 }) {
   const router = useRouter()
   const pathname = usePathname()
+  const activeCall = useStore($activeCall)
   const canCreate = user.role !== "member"
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [showCreate, setShowCreate] = useState(false)
@@ -301,7 +305,13 @@ export function AppSidebar({
                           onClick={() => router.push(`/c/${c.slug}`)}
                         >
                           {c.kind === "voice" ? (
-                            <Volume2 className="size-4 shrink-0 text-base-content/50" />
+                            activeCall?.room === c.room ? (
+                              <span title="You're connected to this call">
+                                <PhoneCall className="size-4 shrink-0 text-success" />
+                              </span>
+                            ) : (
+                              <Volume2 className="size-4 shrink-0 text-base-content/50" />
+                            )
                           ) : (
                             <Hash className="size-4 shrink-0 text-base-content/50" />
                           )}
