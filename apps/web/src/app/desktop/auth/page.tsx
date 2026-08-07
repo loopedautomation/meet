@@ -29,9 +29,9 @@ export default async function DesktopAuthPage({ searchParams }: SearchParams) {
   }
 
   return (
-    <>
+    <div className="flex h-dvh flex-col overflow-hidden">
       <DesktopDragStrip />
-      <main className="mx-auto flex min-h-dvh max-w-lg flex-col px-6">
+      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col overflow-y-auto px-6">
         <header className="py-6">
           <Wordmark />
         </header>
@@ -49,7 +49,7 @@ export default async function DesktopAuthPage({ searchParams }: SearchParams) {
           )}
         </section>
       </main>
-    </>
+    </div>
   )
 }
 
