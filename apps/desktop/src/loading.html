@@ -43,16 +43,19 @@
       }
       h1 { font-size: 1.125rem; font-weight: 600; margin: 0; }
 
-      /* Pulses in place rather than spinning — the mark isn't radially
-         symmetric, so a 360deg rotation reads as tumbling, not loading. */
+      /* Rotates around the vertical (Y) axis rather than flat (Z) — the
+         mark is taller than it is wide, so a flat 360deg rotation swings
+         it into a wide sideways silhouette at 90/270deg. Rotating around
+         the axis running through its tall dimension instead narrows it
+         toward edge-on at the midpoint and widens back out, staying
+         visually "tall" throughout. */
       .brandmark {
         width: 40px;
         height: auto;
-        animation: pulse 1.4s ease-in-out infinite;
+        animation: flip 1.6s linear infinite;
       }
-      @keyframes pulse {
-        0%, 100% { transform: scale(0.92); opacity: 0.75; }
-        50% { transform: scale(1.05); opacity: 1; }
+      @keyframes flip {
+        to { transform: perspective(300px) rotateY(360deg); }
       }
     </style>
   </head>
