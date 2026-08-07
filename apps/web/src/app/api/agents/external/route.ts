@@ -31,6 +31,31 @@ async function requireAdmin() {
   return user
 }
 
+/** List external agents for the admin console. URL host only — the full
+ * URL path may embed secrets, and tokens (even encrypted) never leave. */
+export async function GET() {
+  const user = await requireAdmin()
+  if (!user)
+    return NextResponse.json({ error: "admin required" }, { status: 403 })
+  const rows = await getDb().select().from(schema.externalAgents)
+  return NextResponse.json({
+    agents: rows.map((a) => {
+      let urlHost = ""
+      try {
+        urlHost = new URL(a.url).host
+      } catch {}
+      return {
+        id: a.id,
+        name: a.name,
+        description: a.description,
+        urlHost,
+        registered: Boolean(a.registrationTokenId),
+        lastSeenAt: a.lastSeenAt?.getTime() ?? null,
+      }
+    }),
+  })
+}
+
 export async function POST(request: Request) {
   const user = await requireAdmin()
   if (!user)
