@@ -1,14 +1,5 @@
+import type { ChatMessagePosted } from "@meet/shared"
 import { $activeChannelSlug } from "@/stores/activeChannel"
-
-export type ChatMessagePosted = {
-  channelSlug: string
-  channelName: string
-  isDm: boolean
-  senderId: string
-  senderName: string
-  messageId: string
-  snippet: string
-}
 
 declare global {
   interface Window {

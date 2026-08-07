@@ -1,4 +1,5 @@
 import { and, eq, getDb, pgErrorCode, schema, sql } from "@meet/db"
+import type { ChatMessagePosted } from "@meet/shared"
 
 // room_presence is written here and nowhere else, fed by LiveKit webhooks.
 // room_finished clears the whole room, so the table self-heals from any
@@ -16,16 +17,6 @@ async function notifyPresenceChanged(roomName: string): Promise<void> {
   await getDb()
     .execute(sql`select pg_notify(${PRESENCE_NOTIFY_CHANNEL}, ${roomName})`)
     .catch(() => undefined)
-}
-
-export type ChatMessagePosted = {
-  channelSlug: string
-  channelName: string
-  isDm: boolean
-  senderId: string
-  senderName: string
-  messageId: string
-  snippet: string
 }
 
 export async function notifyMessagePosted(

@@ -1,5 +1,6 @@
 "use client"
 
+import type { ChatMessagePosted } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import {
   Bot,
@@ -16,7 +17,6 @@ import { usePathname, useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Avatar } from "@/components/ui/Avatar"
-import type { ChatMessagePosted } from "@/lib/messageNotifications"
 import { handleIncomingMessage } from "@/lib/messageNotifications"
 import { $activeCall } from "@/stores/activeCall"
 import { AgentAssign } from "./AgentAssign"
