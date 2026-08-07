@@ -1,3 +1,8 @@
+import {
+  dynamicAgentsPublicOnly,
+  isExternalId,
+  publicOnlyLookup,
+} from "./dynamic.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type AgentEntry, brainToken } from "./registry.js"
 
@@ -29,7 +34,14 @@ setInterval(() => {
   }
 }, 60_000).unref?.()
 
-function clientFor(entry: AgentEntry, conversationId: string): LoopedTtyClient {
+/** A registry entry plus, for dynamic/external agents, its bearer token —
+ * mirrors the worker's ResolvedEntry. */
+type ResolvedEntry = AgentEntry & { directToken?: string }
+
+function clientFor(
+  entry: ResolvedEntry,
+  conversationId: string,
+): LoopedTtyClient {
   if (entry.brain.kind !== "tty") {
     throw new Error(
       `agent "${entry.id}" has a ${entry.brain.kind} brain — text chat needs tty`,
@@ -43,7 +55,14 @@ function clientFor(entry: AgentEntry, conversationId: string): LoopedTtyClient {
   }
   const client = new LoopedTtyClient({
     url: entry.brain.url,
-    token: brainToken(entry),
+    // Dynamic/external agents carry their token directly (there is no
+    // token_env for them); registry agents resolve theirs from the env.
+    token: entry.directToken ?? brainToken(entry),
+    // Same rebinding-proof lookup the worker uses for pasted-URL agents.
+    ...((entry.id.startsWith("dyn-") || isExternalId(entry.id)) &&
+    dynamicAgentsPublicOnly()
+      ? { lookup: publicOnlyLookup }
+      : {}),
     // Namespaced so a text conversation never collides with a meeting's
     // transcript conversation for the same brain.
     conversationId: `meet-text-${conversationId}`,
@@ -60,7 +79,7 @@ function clientFor(entry: AgentEntry, conversationId: string): LoopedTtyClient {
  * conversation by the client's own turn queue.
  */
 export async function textTurn(
-  entry: AgentEntry,
+  entry: ResolvedEntry,
   conversationId: string,
   input: string,
 ): Promise<string> {

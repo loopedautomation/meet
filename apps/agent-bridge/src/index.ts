@@ -19,11 +19,14 @@ import { AgentDispatchClient, RoomServiceClient } from "livekit-server-sdk"
 import {
   assertPublicAgentUrl,
   type DynamicAgentSpec,
+  getDynamicAgent,
+  isExternalId,
   normalizeAgentUrl,
   probeAgent,
+  putDynamicAgent,
   registerDynamicAgent,
 } from "./dynamic.js"
-import { loadRegistry } from "./registry.js"
+import { type AgentEntry, loadRegistry } from "./registry.js"
 import { textTurn } from "./text-chat.js"
 import { acceptTranscriberRequest } from "./transcriber-worker.js"
 import { acceptRequest } from "./worker.js"
@@ -128,19 +131,105 @@ app.get("/agents", (c) => {
   return c.json({ agents })
 })
 
-// Room-less text turn: DMs and text channels talk to an agent's brain
-// directly, keyed by conversation for continuity. Same bearer gate as
-// everything else on this API.
-app.post("/agents/:id/text", async (c) => {
-  const id = c.req.param("id")
-  const entry = loadRegistry().find((a) => a.id === id)
-  if (!entry) return c.json({ error: "unknown agent" }, 404)
-  let body: { conversationId?: string; text?: string }
+// Validate a pasted/registered agent URL on the web app's behalf: the web
+// tier never dials agent URLs itself, so SSRF policy and the TTY handshake
+// live in one place. Returns the normalized URL plus the agent's hello
+// identity, or 422 with a human-readable reason.
+app.post("/agents/probe", async (c) => {
+  let body: { url?: string; token?: string }
   try {
     body = await c.req.json()
   } catch {
     return c.json({ error: "invalid body" }, 400)
   }
+  if (!body.url || typeof body.url !== "string") {
+    return c.json({ error: "url required" }, 400)
+  }
+  const url = normalizeAgentUrl(body.url)
+  if (!url) return c.json({ error: "invalid url" }, 422)
+  const ssrfError = await assertPublicAgentUrl(url)
+  if (ssrfError) return c.json({ error: ssrfError }, 422)
+  const probe = await probeAgent(url, body.token ?? "")
+  if ("error" in probe) return c.json({ error: probe.error }, 422)
+  return c.json({ url, name: probe.name, description: probe.description })
+})
+
+/**
+ * The web app threads the current spec of a durable external ("ext-…")
+ * agent alongside dispatch/text requests, since the database of record lives
+ * on the web tier. Upserted into the dynamic store so the worker processes
+ * can resolve it. Returns an error message, or null when stored/absent.
+ */
+function acceptExternalSpec(
+  id: string,
+  spec?: {
+    url?: string
+    token?: string
+    name?: string
+    description?: string
+    voice?: string
+  },
+): string | null {
+  if (!spec) return null
+  if (!spec.url || typeof spec.url !== "string") return "spec.url required"
+  const url = normalizeAgentUrl(spec.url)
+  if (!url) return "invalid spec.url"
+  putDynamicAgent(id, {
+    url,
+    token: spec.token ?? "",
+    name: spec.name?.trim() || id,
+    ...(spec.description ? { description: spec.description } : {}),
+    ...(spec.voice ? { voice: spec.voice } : {}),
+  })
+  return null
+}
+
+/** An external agent's spec shaped as a registry entry for text turns; the
+ * token rides as directToken exactly like the worker's ResolvedEntry. */
+type ResolvedTextEntry = AgentEntry & { directToken?: string }
+
+function externalTextEntry(
+  id: string,
+  spec: DynamicAgentSpec,
+): ResolvedTextEntry {
+  return {
+    id,
+    name: spec.name,
+    description: spec.description,
+    turn_policy: "open",
+    chattiness: "quiet",
+    brain: { kind: "tty", url: spec.url, token_env: "" },
+    stt: { provider: "openai", model: "gpt-4o-mini-transcribe" },
+    tts: { provider: "openai", model: "gpt-4o-mini-tts", voice: "alloy" },
+    directToken: spec.token,
+  }
+}
+
+// Room-less text turn: DMs and text channels talk to an agent's brain
+// directly, keyed by conversation for continuity. Same bearer gate as
+// everything else on this API.
+app.post("/agents/:id/text", async (c) => {
+  const id = c.req.param("id")
+  let body: {
+    conversationId?: string
+    text?: string
+    spec?: DynamicAgentSpec
+  }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "invalid body" }, 400)
+  }
+  let entry: ResolvedTextEntry | undefined
+  if (isExternalId(id)) {
+    const specError = acceptExternalSpec(id, body.spec)
+    if (specError) return c.json({ error: specError }, 400)
+    const spec = getDynamicAgent(id)
+    if (spec) entry = externalTextEntry(id, spec)
+  } else {
+    entry = loadRegistry().find((a) => a.id === id)
+  }
+  if (!entry) return c.json({ error: "unknown agent" }, 404)
   const conversationId = body.conversationId
   const text = body.text
   if (
@@ -163,13 +252,20 @@ app.post("/agents/:id/text", async (c) => {
 
 app.post("/rooms/:room/agents/:id", async (c) => {
   const { room, id } = c.req.param()
-  const entry = loadRegistry().find((a) => a.id === id)
-  if (!entry) return c.json({ error: "unknown agent" }, 404)
   // Optional per-invite overrides (interaction mode and voice); the worker
-  // applies them when resolving the dispatch.
+  // applies them when resolving the dispatch. External ("ext-…") agents may
+  // also carry their current spec, which is stored before dispatching.
   const body = (await c.req.json().catch(() => ({}))) as {
     mode?: string
     voice?: string
+    spec?: DynamicAgentSpec
+  }
+  if (isExternalId(id)) {
+    const specError = acceptExternalSpec(id, body.spec)
+    if (specError) return c.json({ error: specError }, 400)
+    if (!getDynamicAgent(id)) return c.json({ error: "unknown agent" }, 404)
+  } else if (!loadRegistry().some((a) => a.id === id)) {
+    return c.json({ error: "unknown agent" }, 404)
   }
   const overrideError = validateOverrides(body)
   if (overrideError) return c.json({ error: overrideError }, 400)

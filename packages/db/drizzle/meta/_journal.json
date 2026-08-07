@@ -50,6 +50,13 @@
       "when": 1785705613791,
       "tag": "0006_warm_cammi",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786108871921,
+      "tag": "0007_heavy_puck",
+      "breakpoints": true
     }
   ]
 }
