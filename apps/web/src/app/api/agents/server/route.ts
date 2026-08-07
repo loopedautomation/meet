@@ -1,4 +1,4 @@
-import { eq, getDb, schema } from "@meet/db"
+import { and, eq, getDb, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -14,9 +14,12 @@ export async function GET() {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
-  const agents = await getDb().select().from(schema.serverAgents)
+  const agents = await getDb()
+    .select()
+    .from(schema.serverAgents)
+    .where(eq(schema.serverAgents.serverId, user.serverId))
   return NextResponse.json({
     agents: agents.map((a) => ({ id: a.agentId, name: a.name ?? a.agentId })),
   })
@@ -29,7 +32,7 @@ export async function POST(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user || user.role === "member") {
+  if (!user || !user.serverId || user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   }
   const body = agentIdSchema.safeParse(await request.json().catch(() => null))
@@ -61,7 +64,12 @@ export async function POST(request: Request) {
   }
   await getDb()
     .insert(schema.serverAgents)
-    .values({ agentId: body.data.agentId, name, addedBy: user.id })
+    .values({
+      serverId: user.serverId,
+      agentId: body.data.agentId,
+      name,
+      addedBy: user.id,
+    })
     .onConflictDoNothing()
   return NextResponse.json({ ok: true })
 }
@@ -72,7 +80,7 @@ export async function DELETE(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user || user.role === "member") {
+  if (!user || !user.serverId || user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
   }
   const body = agentIdSchema.safeParse(await request.json().catch(() => null))
@@ -80,6 +88,11 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ error: "agentId required" }, { status: 400 })
   await getDb()
     .delete(schema.serverAgents)
-    .where(eq(schema.serverAgents.agentId, body.data.agentId))
+    .where(
+      and(
+        eq(schema.serverAgents.serverId, user.serverId),
+        eq(schema.serverAgents.agentId, body.data.agentId),
+      ),
+    )
   return NextResponse.json({ ok: true })
 }

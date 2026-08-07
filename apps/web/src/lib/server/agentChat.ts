@@ -29,7 +29,10 @@ export async function respondAsAgents(
     if (!channel.isDm) {
       // Shared channels: only @mentioned agents answer. Names come from the
       // server-agent snapshot, ids always work.
-      const invited = await db.select().from(schema.serverAgents)
+      const invited = await db
+        .select()
+        .from(schema.serverAgents)
+        .where(eq(schema.serverAgents.serverId, channel.serverId))
       const nameById = new Map(invited.map((a) => [a.agentId, a.name]))
       const lower = text.toLowerCase()
       responders = responders.filter((id) => {

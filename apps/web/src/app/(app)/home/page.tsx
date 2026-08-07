@@ -1,4 +1,4 @@
-import { getDb, isNull, schema } from "@meet/db"
+import { and, eq, getDb, isNull, schema } from "@meet/db"
 import { MessagesSquare } from "lucide-react"
 import { notFound, redirect } from "next/navigation"
 import { InviteButton } from "@/components/shell/InviteButton"
@@ -13,10 +13,13 @@ export default async function WorkspaceHomePage() {
   if (authMode() === "none") notFound()
   const user = await getSessionUser()
   if (!user) redirect("/auth/login?returnTo=/home")
-  if (!user.role) redirect("/")
+  if (!user.role || !user.serverId) redirect("/")
 
   const anyChannel = await getDb().query.channels.findFirst({
-    where: isNull(schema.channels.archivedAt),
+    where: and(
+      eq(schema.channels.serverId, user.serverId),
+      isNull(schema.channels.archivedAt),
+    ),
   })
   const isAdmin = user.role !== "member"
 

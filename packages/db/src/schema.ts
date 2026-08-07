@@ -12,9 +12,42 @@ import {
   uuid,
 } from "drizzle-orm/pg-core"
 
-// Schema v1 — the instance IS the team. Membership is instance-level (no
-// teams table); guests never become rows here, they stay room-scoped LiveKit
-// identities exactly as before accounts existed.
+// Schema v2 — an instance hosts multiple servers (Discord-style teams).
+// Membership, channels, invites and agents are all server-scoped; guests
+// never become rows here, they stay room-scoped LiveKit identities exactly
+// as before accounts existed.
+
+// A server is a self-contained team/workspace: its own channels, members
+// and agents. The first-ever server on a fresh instance is seeded from the
+// old singleton instance_settings row (see migration 0007) so existing
+// deployments keep working unchanged after the multi-server upgrade.
+export const servers = pgTable(
+  "servers",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Short stable handle used in /s/<slug> URLs.
+    slug: text("slug").notNull().unique(),
+    name: text("name").notNull(),
+    iconUrl: text("icon_url"),
+    registration: text("registration").notNull().default("invite"),
+    // Message retention in days; null keeps everything forever.
+    retentionDays: integer("retention_days"),
+    createdBy: uuid("created_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    // 'open' (public servers) is accepted by the schema but not offered by
+    // the app until Phase 3 — private/invite-only is the only launch mode.
+    check(
+      "servers_registration_check",
+      sql`${t.registration} in ('invite', 'open')`,
+    ),
+  ],
+)
 
 export const users = pgTable("users", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -36,11 +69,17 @@ export const users = pgTable("users", {
     .defaultNow(),
 })
 
+// Per-server membership — a user has one row per server they belong to,
+// with a role scoped to that server (owner/admin on one server may be a
+// plain member, or absent entirely, on another).
 export const memberships = pgTable(
   "memberships",
   {
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id, { onDelete: "cascade" }),
     userId: uuid("user_id")
-      .primaryKey()
+      .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true })
@@ -48,6 +87,7 @@ export const memberships = pgTable(
       .defaultNow(),
   },
   (t) => [
+    primaryKey({ columns: [t.serverId, t.userId] }),
     check(
       "memberships_role_check",
       sql`${t.role} in ('owner', 'admin', 'member')`,
@@ -59,6 +99,9 @@ export const invites = pgTable(
   "invites",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id, { onDelete: "cascade" }),
     code: text("code").notNull().unique(),
     role: text("role").notNull().default("member"),
     createdBy: uuid("created_by").references(() => users.id, {
@@ -119,9 +162,15 @@ export const channels = pgTable(
   "channels",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id, { onDelete: "cascade" }),
     // Short stable id that becomes the LiveKit room name ("ch-<publicId>").
     publicId: text("public_id").notNull().unique(),
-    // Human handle shown in the sidebar and used in /c/<slug> URLs.
+    // Human handle shown in the sidebar and used in /c/<slug> URLs. Globally
+    // unique (not per-server) — URLs stay /c/<slug> without a server
+    // segment, so two servers can't both claim the same slug; createChannel
+    // disambiguates default channel names on collision.
     slug: text("slug").notNull().unique(),
     name: text("name").notNull(),
     kind: text("kind").notNull().default("voice"),
@@ -165,16 +214,25 @@ export const channelMembers = pgTable(
 // the directory. agent_id references the bridge's registry. Meeting rooms
 // keep offering the full registry roster regardless — this table gates the
 // text surfaces.
-export const serverAgents = pgTable("server_agents", {
-  agentId: text("agent_id").primaryKey(),
-  // Snapshot of the registry name at invite time — labels (DM lists) read
-  // it without a bridge roundtrip.
-  name: text("name"),
-  addedBy: uuid("added_by").references(() => users.id, {
-    onDelete: "set null",
-  }),
-  addedAt: timestamp("added_at", { withTimezone: true }).notNull().defaultNow(),
-})
+export const serverAgents = pgTable(
+  "server_agents",
+  {
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => servers.id, { onDelete: "cascade" }),
+    agentId: text("agent_id").notNull(),
+    // Snapshot of the registry name at invite time — labels (DM lists) read
+    // it without a bridge roundtrip.
+    name: text("name"),
+    addedBy: uuid("added_by").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    addedAt: timestamp("added_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.serverId, t.agentId] })],
+)
 
 // Agents assigned to a channel: auto-dispatched when the first human joins,
 // parked when the room empties (end-when-empty tears the room down and the
@@ -340,7 +398,10 @@ export const roomPresence = pgTable(
   (t) => [primaryKey({ columns: [t.roomName, t.identity] })],
 )
 
-// Single-row table (id always 1) for per-instance settings.
+// Legacy — pre-multi-server single-row instance config. No longer read or
+// written by the app (see servers.registration/retentionDays); kept only
+// so migration 0007's backfill has something to seed the first server
+// from. Safe to drop in a later migration once every deployment is past it.
 export const instanceSettings = pgTable(
   "instance_settings",
   {

@@ -24,9 +24,9 @@ export async function GET() {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
-  const channels = await listChannelsForUser(user.id)
+  const channels = await listChannelsForUser(user.serverId, user.id)
   return NextResponse.json({
     channels: channels.map((c) => ({
       slug: c.slug,
@@ -49,7 +49,7 @@ export async function POST(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
   if (user.role === "member") {
     return NextResponse.json({ error: "admin required" }, { status: 403 })
@@ -74,6 +74,7 @@ export async function POST(request: Request) {
   }
   try {
     const channel = await createChannel({
+      serverId: user.serverId,
       slug: body.data.slug,
       name: body.data.name ?? `#${body.data.slug}`,
       kind: body.data.kind,

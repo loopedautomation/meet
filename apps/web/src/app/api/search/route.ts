@@ -14,7 +14,7 @@ export async function GET(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
   if (rateLimited(`search:${clientKey(request)}`, 30, 60 * 1000)) {
     return NextResponse.json({ error: "slow down" }, { status: 429 })
@@ -32,6 +32,7 @@ export async function GET(request: Request) {
     left join users u on u.id = m.author_user_id
     where m.deleted_at is null
       and c.archived_at is null
+      and c.server_id = ${user.serverId}
       and (not c.is_private or exists (
         select 1 from channel_members cm
         where cm.channel_id = c.id and cm.user_id = ${user.id}
