@@ -4,6 +4,7 @@ import { z } from "zod"
 import { respondAsAgents } from "@/lib/server/agentChat"
 import { authMode } from "@/lib/server/authMode"
 import { canAccessChannel, getChannelByRoomName } from "@/lib/server/channels"
+import { extractFirstUrl, fetchLinkPreview } from "@/lib/server/linkPreview"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import { getMemberUser } from "@/lib/server/session"
 
@@ -49,6 +50,7 @@ export async function GET(_request: Request, { params }: Params) {
       content: schema.messages.content,
       replyToId: schema.messages.replyToId,
       attachments: schema.messages.attachments,
+      linkPreview: schema.messages.linkPreview,
       pinnedAt: schema.messages.pinnedAt,
       createdAt: schema.messages.createdAt,
       editedAt: schema.messages.editedAt,
@@ -100,6 +102,7 @@ export async function GET(_request: Request, { params }: Params) {
       ...(r.editedAt ? { editedAt: r.editedAt.getTime() } : {}),
       ...(r.replyToId ? { replyToId: r.replyToId } : {}),
       ...(r.attachments ? { attachments: r.attachments } : {}),
+      ...(r.linkPreview ? { linkPreview: r.linkPreview } : {}),
       ...(r.pinnedAt ? { pinned: true } : {}),
       reactions: reactionsFor.get(r.id) ?? {},
       own: r.authorUserId === user.id,
@@ -153,5 +156,19 @@ export async function POST(request: Request, { params }: Params) {
     body.data.text,
     user.name ?? user.email ?? "someone",
   )
+  // OG metadata for the message's first link, if any — fetched after the
+  // fact so a slow/unreachable link never delays the send; the client
+  // picks up the result on its next poll. Never blocks, never surfaces an
+  // error to the sender.
+  const previewUrl = extractFirstUrl(body.data.text)
+  if (previewUrl) {
+    void fetchLinkPreview(previewUrl).then((preview) => {
+      if (!preview) return
+      void getDb()
+        .update(schema.messages)
+        .set({ linkPreview: preview })
+        .where(eq(schema.messages.id, id))
+    })
+  }
   return NextResponse.json({ ok: true, id })
 }

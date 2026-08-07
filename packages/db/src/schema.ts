@@ -264,6 +264,12 @@ export const messages = pgTable(
     // (R2 for the hosted offering); the key is served through the
     // membership-checked attachments route, never directly.
     attachments: jsonb("attachments"),
+    // { url, title?, description?, image?, siteName? } — OG metadata for
+    // the message's first link, fetched fire-and-forget after the message
+    // is persisted (see apps/web/src/lib/server/linkPreview.ts) and picked
+    // up by the client on its next poll. Null until fetched, and stays
+    // null forever if the link had no OG data or the fetch failed.
+    linkPreview: jsonb("link_preview"),
     pinnedAt: timestamp("pinned_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()

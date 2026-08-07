@@ -18,8 +18,25 @@ import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
 import { Modal } from "@/components/ui/Modal"
 import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
+import { AttachmentCard } from "./AttachmentCard"
+import { type LinkPreview, LinkPreviewCard } from "./LinkPreviewCard"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
+
+/** Hover-revealed send time for a grouped message — the header line (name +
+ * timestamp) only renders for the first message in a run from the same
+ * sender, so later messages in that run have no visible time otherwise. */
+function GroupedTimestamp({ grouped, at }: { grouped: boolean; at: number }) {
+  if (!grouped) return null
+  return (
+    <span className="-left-12 invisible absolute w-10 text-right text-[10px] text-base-content/40 group-hover:visible">
+      {new Date(at).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}
+    </span>
+  )
+}
 
 type Attachment = { key: string; name: string; type: string; size: number }
 
@@ -33,6 +50,7 @@ type ChannelMessage = {
   replyToId?: string
   pinned?: boolean
   attachments?: Attachment[]
+  linkPreview?: LinkPreview
   reactions: Record<string, { count: number; mine: boolean }>
   own: boolean
 }
@@ -297,7 +315,11 @@ export function TextChannelView({
               i > 0 && messages[i - 1].from === m.from && !m.replyToId
             const parent = m.replyToId ? byId.get(m.replyToId) : undefined
             return (
-              <li key={m.id} className={`group ${grouped ? "mt-0.5" : "mt-3"}`}>
+              <li
+                key={m.id}
+                className={`group relative pl-12 ${grouped ? "mt-0.5" : "mt-3"}`}
+              >
+                <GroupedTimestamp grouped={grouped} at={m.at} />
                 {parent && (
                   <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
                     <span className="font-medium">{parent.fromName}</span>:{" "}
@@ -326,6 +348,7 @@ export function TextChannelView({
                 <div className="flex items-start justify-between gap-2">
                   <span className="min-w-0">
                     {m.text && <Markdown text={m.text} className="text-sm" />}
+                    <LinkPreviewCard preview={m.linkPreview} />
                     {m.attachments?.map((a) =>
                       a.type.startsWith("image/") ? (
                         <button
@@ -346,18 +369,11 @@ export function TextChannelView({
                           />
                         </button>
                       ) : (
-                        <a
+                        <AttachmentCard
                           key={a.key}
+                          attachment={a}
                           href={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                          className="link mt-1 flex items-center gap-1 text-sm"
-                          download={a.name}
-                        >
-                          <Paperclip className="size-3.5" />
-                          {a.name}
-                          <span className="text-base-content/40 text-xs">
-                            ({Math.max(1, Math.round(a.size / 1024))} KB)
-                          </span>
-                        </a>
+                        />
                       ),
                     )}
                   </span>

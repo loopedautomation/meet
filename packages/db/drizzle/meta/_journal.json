@@ -57,6 +57,13 @@
       "when": 1786108871921,
       "tag": "0007_heavy_puck",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786121347977,
+      "tag": "0008_spicy_saracen",
+      "breakpoints": true
     }
   ]
 }
