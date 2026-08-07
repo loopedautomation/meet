@@ -179,6 +179,26 @@ export const participantMetaSchema = z.object({
 })
 export type ParticipantMeta = z.infer<typeof participantMetaSchema>
 
+/**
+ * The chat_message_posted pg_notify payload, forwarded verbatim to the
+ * browser as the SSE "chat-message" event so a client can raise a desktop
+ * notification. Lives here because the writer is server-side and the reader
+ * is client-side: two hand-kept copies of one wire format is how the rejoin
+ * proof's reader and writer drifted apart (#259).
+ *
+ * `snippet` is a truncated message body, so the stream must only forward
+ * this to a viewer who can access the channel — see the presence route.
+ */
+export type ChatMessagePosted = {
+  channelSlug: string
+  channelName: string
+  isDm: boolean
+  senderId: string
+  senderName: string
+  messageId: string
+  snippet: string
+}
+
 export function parseParticipantMeta(
   raw: string | undefined,
 ): ParticipantMeta | null {

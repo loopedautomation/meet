@@ -38,6 +38,7 @@ export default async function AppLayout({
       {dragStrip}
       <AppShell
         user={{
+          id: user.id,
           name: user.name,
           email: user.email,
           image: user.image,

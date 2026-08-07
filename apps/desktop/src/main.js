@@ -296,6 +296,7 @@ function createMainWindow(url) {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      preload: path.join(__dirname, "workspace-preload.js"),
     },
   })
   void win.loadURL(url)
@@ -567,6 +568,21 @@ function notifyJoins(channels) {
     lastOccupancy.set(c.slug, c.occupants)
   }
 }
+
+/** New-message notification, requested by the workspace page's own
+ * suppression logic (self-sent, actively-viewed-and-focused). Focus is
+ * re-checked here since renderer and main can race on it — but only for the
+ * channel already on screen, so a message in a *different* channel still
+ * notifies while the window is focused. */
+ipcMain.on("show-message-notification", (_e, payload) => {
+  if (!payload) return
+  if (payload.viewingChannel && mainWindow?.isFocused()) return
+  const { title, body, channelSlug } = payload
+  if (!title || !channelSlug) return
+  new Notification({ title: String(title), body: String(body ?? ""), silent: true })
+    .on("click", () => showWorkspace(`/c/${channelSlug}`))
+    .show()
+})
 
 async function pollPresence() {
   const channels = await fetchChannels()
