@@ -21,6 +21,7 @@ import { ScreenShareTile } from "@/components/room/ScreenShareTile"
 import { WhiteboardStage } from "@/components/room/WhiteboardStage"
 import { useAgentControlToasts } from "@/hooks/useAgentControlToasts"
 import { useAwayOnHidden } from "@/hooks/useAwayOnHidden"
+import { useElementSize } from "@/hooks/useElementSize"
 import { useIOSSpeakerBias } from "@/hooks/useIOSSpeakerBias"
 import { useJoinLeaveSounds } from "@/hooks/useJoinLeaveSounds"
 import { useKnockAlerts } from "@/hooks/useKnockAlerts"
@@ -93,6 +94,8 @@ export function MeetingView({
       ? [...remoteTracks, localTrack]
       : remoteTracks
   const stageRef = useRef<HTMLDivElement>(null)
+  const gridRef = useRef<HTMLDivElement>(null)
+  const { width: gridWidth, height: gridHeight } = useElementSize(gridRef)
   const connectionState = useConnectionState()
   const openPanel = useStore($openPanel)
   const whiteboardOpen = useStore($canvasOpen)
@@ -150,11 +153,12 @@ export function MeetingView({
           // Phones in portrait stack tiles vertically; rotating to landscape
           // (or any md+ screen) switches to the computed grid.
           <div
+            ref={gridRef}
             className="grid min-h-0 min-w-0 flex-1 auto-rows-fr grid-cols-1 gap-3 landscape:[grid-template-columns:var(--cols)] landscape:[grid-template-rows:var(--rows)] md:[grid-template-columns:var(--cols)] md:[grid-template-rows:var(--rows)]"
             style={
               {
-                "--cols": `repeat(${gridColumns(stageTracks.length)}, minmax(0, 1fr))`,
-                "--rows": `repeat(${gridRows(stageTracks.length)}, minmax(0, 1fr))`,
+                "--cols": `repeat(${gridColumns(stageTracks.length, gridWidth, gridHeight)}, minmax(0, 1fr))`,
+                "--rows": `repeat(${gridRows(stageTracks.length, gridWidth, gridHeight)}, minmax(0, 1fr))`,
               } as React.CSSProperties
             }
           >
@@ -352,13 +356,56 @@ function SelfGridToggle({ inGrid }: { inGrid: boolean }) {
   )
 }
 
-function gridColumns(count: number): number {
+function defaultGridColumns(count: number): number {
   if (count <= 1) return 1
   if (count <= 4) return 2
   if (count <= 9) return 3
   return 4
 }
 
-function gridRows(count: number): number {
-  return Math.max(1, Math.ceil(count / gridColumns(count)))
+// A row of 2-up tiles is naturally squarish, not 16:9 — the grid's height
+// alone (minus header/controls) is often nearly as large as its width, so
+// requiring a fully landscape tile here would override the default even on
+// an ordinary wide window. 0.6 targets only a visibly broken, noticeably
+// stretched tile (the desktop app's default window with a side panel open
+// measures well below this), while every normal browser session already
+// clears it and keeps today's exact layout.
+const BROKEN_TILE_ASPECT = 0.6
+
+/**
+ * The count-based default is right for a normal wide window, but a narrow
+ * container (the desktop app's small default window, a resized/split
+ * browser window) can turn that default into badly stretched, too-tall
+ * tiles — `ParticipantTile` has no aspect-ratio floor, it just fills its
+ * grid cell. Only deviate from the default when it would currently produce
+ * a visibly broken tile; a wide-enough container always returns the same
+ * column count as before, so normal browser usage is unaffected. Fewer
+ * columns always pushes a tile's aspect ratio up (more width per tile, less
+ * height per row), so walking down from the default monotonically improves
+ * and stops as soon as it clears the bar.
+ */
+function gridColumns(
+  count: number,
+  containerWidth: number,
+  containerHeight: number,
+): number {
+  const start = defaultGridColumns(count)
+  if (!containerWidth || !containerHeight) return start
+  for (let cols = start; cols > 1; cols--) {
+    const rows = Math.ceil(count / cols)
+    const tileAspect = containerWidth / cols / (containerHeight / rows)
+    if (tileAspect >= BROKEN_TILE_ASPECT) return cols
+  }
+  return 1
+}
+
+function gridRows(
+  count: number,
+  containerWidth: number,
+  containerHeight: number,
+): number {
+  return Math.max(
+    1,
+    Math.ceil(count / gridColumns(count, containerWidth, containerHeight)),
+  )
 }
