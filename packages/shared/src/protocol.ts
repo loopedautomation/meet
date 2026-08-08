@@ -63,6 +63,8 @@ export interface HandshakeResponse {
   minClientProtocol: number
   /** Human-facing build version, for support and diagnostics only. */
   version: string
+  /** Optional capability advertisement — additive, ignored by older clients. */
+  capabilities?: string[]
 }
 
 export type CompatibilityResult =
@@ -109,6 +111,9 @@ export function checkCompatibility(
     protocol: server.protocol,
     minClientProtocol: server.minClientProtocol,
     version: typeof server.version === "string" ? server.version : "unknown",
+    ...(Array.isArray((server as Record<string, unknown>).capabilities)
+      ? { capabilities: (server as Record<string, unknown>).capabilities as string[] }
+      : {}),
   }
 
   // Checked before "server too old": when the windows don't overlap at all,

@@ -11,6 +11,7 @@ Bring your own TLS reverse proxy (Coolify/Traefik/Caddy/nginx — anything that 
 |---|---|---|
 | `meet.example.com` | `web:3000` | the app |
 | `lk.example.com` | `livekit:7880` (WebSocket) | LiveKit signaling |
+| `meet.example.com:8093` or proxied path | `agent-bridge:8093` (WebSocket) | Local agent gateway (ticket-authed) |
 
 In `.env`:
 
@@ -22,6 +23,7 @@ LIVEKIT_API_SECRET=<strong secret>
 ```
 
 - WebRTC media does NOT go through the proxy: expose `7881/tcp` and `7882/udp` directly on the host.
+- **Local agent gateway `:8093` needs TLS in front** (same reverse proxy as `:3000`): proxy `wss://meet.example.com:8093` to `agent-bridge:8093`. For local dev, `ws://` is fine; set `AGENT_GATEWAY_PUBLIC_URL` (e.g. `wss://meet.example.com:8093`) so the desktop knows where to dial.
 - **Set `"userland-proxy": false` in `/etc/docker/daemon.json`** (then restart Docker) on any host running the LiveKit container. With the default userland proxy, Docker's proxy process occupies the published UDP media port, server-initiated ICE traffic gets source-NAT'd to random ports, and calls degrade into reconnect loops and garbled audio. This applies host-wide, so plan the Docker restart around other workloads:
 
   ```json

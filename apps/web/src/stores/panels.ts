@@ -9,12 +9,16 @@ export type Panel =
   | "chat"
   | "participants"
   | "settings"
+  | "review"
   | null
 
 export const $openPanel = atom<Panel>(null)
 
 /** Whether the meeting doc owns the local stage (like the whiteboard does). */
 export const $docOnStage = atom<boolean>(false)
+
+/** Whether the review diff owns the stage. Mutually exclusive with doc and whiteboard. */
+export const $reviewOnStage = atom<boolean>(false)
 
 /**
  * Below Tailwind's `md` the side panel renders as a full-screen overlay
@@ -32,8 +36,13 @@ export function togglePanel(panel: Exclude<Panel, null>) {
   if (opening) track("panel_opened", { panel })
   if (panel === "doc" && opening) {
     $docOnStage.set(false)
+    $reviewOnStage.set(false)
     if (panelOverlaysStage()) $canvasOpen.set(false)
     track("doc_panel_opened")
+  }
+  if (panel === "review" && opening) {
+    $reviewOnStage.set(false)
+    if (panelOverlaysStage()) $canvasOpen.set(false)
   }
   $openPanel.set(opening ? panel : null)
 }
@@ -43,9 +52,20 @@ export function openWhiteboard() {
   $canvasUnseen.set(false)
   // The stage holds one takeover at a time.
   $docOnStage.set(false)
+  $reviewOnStage.set(false)
+  $reviewOnStage.set(false)
   // On phones the doc panel would cover the whiteboard entirely — switch.
   if (panelOverlaysStage() && $openPanel.get() === "doc") $openPanel.set(null)
+  if (panelOverlaysStage() && $openPanel.get() === "review") $openPanel.set(null)
   track("whiteboard_opened")
+}
+
+export function openReviewOnStage() {
+  $reviewOnStage.set(true)
+  $docOnStage.set(false)
+  $canvasOpen.set(false)
+  if (panelOverlaysStage() && $openPanel.get() === "review") $openPanel.set(null)
+  if (panelOverlaysStage() && $openPanel.get() === "doc") $openPanel.set(null)
 }
 
 export function toggleWhiteboard() {

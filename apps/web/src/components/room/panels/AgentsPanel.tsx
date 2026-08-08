@@ -13,7 +13,7 @@ import {
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
 import { Bot, Brain, ChevronDown, Plus } from "lucide-react"
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "react-toastify"
 import { AgentControls } from "@/components/room/AgentControls"
 import { Select } from "@/components/ui/Select"
@@ -25,6 +25,7 @@ import { useAgents } from "@/hooks/queries/useAgents"
 import { useAgentPermissions } from "@/hooks/useRoomSettings"
 import { useSendAgentControl } from "@/hooks/useSendAgentControl"
 import { properCase } from "@/lib/casing"
+import type {} from "@/types/meet-shell"
 import { readHostKey } from "@/lib/hostKey"
 import { roomAuthHeaders } from "@/lib/roomAuth"
 import { $agentActivity, $agentStats } from "@/stores/roomData"
@@ -184,6 +185,8 @@ export function AgentsPanel({ slug }: { slug: string }) {
     // Without this the h-full column inside the panel's own scroll container
     // pinned to viewport height and neither section scrolled properly.
     <div className="flex h-full flex-col">
+      {/* Local agent — desktop only */}
+      <LocalAgentSection slug={slug} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <ul className="space-y-2 p-4">
           {isLoading && (
@@ -721,3 +724,98 @@ function ActivityItem({
     </li>
   )
 }
+
+// ---- Local agent section (desktop shell) ---------------------------------
+function LocalAgentSection({ slug }: { slug: string }) {
+  const [status, setStatus] = useState<Record<string, { state: string; error?: string; repoName?: string }>>({})
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const hasShell = typeof window !== "undefined" && !!window.meetShell
+
+  useEffect(() => {
+    if (!hasShell) return
+    const shell = window.meetShell!
+    shell.agent.status().then(setStatus).catch(() => {})
+    const off = shell.agent.onStatus(setStatus)
+    return () => { try { off() } catch {} }
+  }, [hasShell])
+
+  if (!hasShell) {
+    return (
+      <div className="border-b px-4 py-3">
+        <h3 className="text-sm font-semibold">Coding agent</h3>
+        <p className="text-base-content/60 mt-1 text-xs">
+          Open this room in the looped meet desktop app to bring your local coding agent.
+        </p>
+      </div>
+    )
+  }
+
+  const cur = status[slug]
+
+  const handleConnect = async () => {
+    const shell = window.meetShell!
+    setBusy(true)
+    setError(null)
+    try {
+      const repos = await shell.agent.recentRepos().catch(() => [])
+      let repoId: string | null = null
+      if (repos.length > 0) {
+        // For now pick via native dialog; recent list is just for display
+      }
+      const picked = await shell.agent.pickRepo()
+      if (!picked) {
+        setBusy(false)
+        return
+      }
+      const res = await shell.agent.start({ roomSlug: slug, repoId: picked.id })
+      if (!res.ok) setError((res as { error: string }).error ?? "failed to connect")
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleStop = async () => {
+    setBusy(true)
+    try {
+      await window.meetShell!.agent.stop({ roomSlug: slug })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="border-b px-4 py-3">
+      <h3 className="text-sm font-semibold">Coding agent</h3>
+      {cur ? (
+        <div className="mt-2 space-y-2">
+          <p className="text-xs">
+            <span className="font-medium">{cur.repoName ?? "repo"}</span> — {cur.state}
+            {cur.error ? <span className="text-error"> · {cur.error}</span> : null}
+          </p>
+          {cur.state !== "stopped" && cur.state !== "idle" ? (
+            <button type="button" className="btn btn-sm btn-ghost" disabled={busy} onClick={handleStop}>
+              Stop
+            </button>
+          ) : (
+            <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={handleConnect}>
+              {busy ? "Connecting…" : "Connect my coding agent"}
+            </button>
+          )}
+          {error ? <p className="text-error text-xs">{error}</p> : null}
+        </div>
+      ) : (
+        <div className="mt-2 space-y-2">
+          <button type="button" className="btn btn-sm btn-primary" disabled={busy} onClick={handleConnect}>
+            {busy ? "Connecting…" : "Connect my coding agent"}
+          </button>
+          {error ? <p className="text-error text-xs">{error}</p> : null}
+        </div>
+      )}
+    </div>
+  )
+}
+

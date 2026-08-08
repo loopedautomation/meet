@@ -138,6 +138,7 @@ describe("parseRoomSettings", () => {
     expect(parseRoomSettings(raw)).toEqual({
       participantsCanControlAgents: false,
       participantsCanInviteAgents: false,
+      participantsCanResolveReviews: true,
     })
   })
 
@@ -148,6 +149,7 @@ describe("parseRoomSettings", () => {
     expect(parseRoomSettings(raw)).toEqual({
       participantsCanControlAgents: true,
       participantsCanInviteAgents: false,
+      participantsCanResolveReviews: true,
     })
   })
 

@@ -9,7 +9,8 @@ import { ParticipantsPanel } from "@/components/room/panels/ParticipantsPanel"
 import { SettingsPanel } from "@/components/room/panels/SettingsPanel"
 import { TranscriptPanel } from "@/components/room/panels/TranscriptPanel"
 import { $canvasOpen } from "@/stores/canvas"
-import { $docOnStage, $openPanel } from "@/stores/panels"
+import { $docOnStage, $openPanel, $reviewOnStage } from "@/stores/panels"
+import { ReviewPanel } from "@/components/room/panels/ReviewPanel"
 
 const titles = {
   agents: "Agents",
@@ -18,6 +19,7 @@ const titles = {
   doc: "Meeting Notes",
   participants: "Participants",
   settings: "Settings",
+  review: "Review",
 } as const
 
 export function PanelHost({ slug }: { slug: string }) {
@@ -38,6 +40,23 @@ export function PanelHost({ slug }: { slug: string }) {
                 // The stage holds one takeover at a time.
                 $canvasOpen.set(false)
                 $docOnStage.set(true)
+                $reviewOnStage.set(false)
+                $openPanel.set(null)
+              }}
+              aria-label="Open on stage"
+              title="Open on stage"
+            >
+              <Maximize2 className="size-4" />
+            </button>
+          )}
+          {openPanel === "review" && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-circle btn-sm"
+              onClick={() => {
+                $canvasOpen.set(false)
+                $docOnStage.set(false)
+                $reviewOnStage.set(true)
                 $openPanel.set(null)
               }}
               aria-label="Open on stage"
@@ -63,6 +82,7 @@ export function PanelHost({ slug }: { slug: string }) {
         {openPanel === "doc" && <DocPanel slug={slug} />}
         {openPanel === "participants" && <ParticipantsPanel slug={slug} />}
         {openPanel === "settings" && <SettingsPanel slug={slug} />}
+        {openPanel === "review" && <ReviewPanel slug={slug} />}
       </div>
     </aside>
   )

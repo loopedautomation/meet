@@ -9,6 +9,9 @@ directories:
 files:
   - src/**
   - package.json
+asarUnpack:
+  - "**/node_modules/@anthropic-ai/**"
+  - "**/node_modules/.pnpm/**"
 
 # Publish to GitHub Releases. electron-builder only uploads when invoked with
 # `--publish`, so local packaging never touches the remote.

@@ -21,6 +21,7 @@ const {
   Tray,
 } = require("electron")
 const { autoUpdater } = require("electron-updater")
+const { AgentManager } = require("./agent/manager")
 
 // Brand icon; electron-builder derives the packaged icns/ico from the same
 // file, this path covers dev runs and Linux/Windows windows.
@@ -42,6 +43,8 @@ function saveSettings(patch) {
   fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(next, null, 2))
   return next
 }
+
+const agentManager = new AgentManager()
 
 /** @type {BrowserWindow | null} */
 let mainWindow = null
@@ -249,6 +252,12 @@ const TRAY_ICON = nativeImage.createFromDataURL(
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAcElEQVR4nKWTwQ3AIAwDL1U3yJhs1jHTR6WCQoWa4Bd62TgWmNkFYGYXtRoAVb2f8xNJPCFXm3AEwMx2YFmA1t3rIN45CKMYm4gzmJcirD5AJZFEHRJTBBRoS8T2H4hOsWXQfSjRJdpv7B/pE2Y/0w3IlUbBB6NC1QAAAABJRU5ErkJggg==",
 )
 
+ipcMain.handle("agent:pickRepo", () => agentManager.pickRepo())
+ipcMain.handle("agent:recentRepos", () => agentManager.recentRepos())
+ipcMain.handle("agent:start", (_e, opts) => agentManager.start(opts))
+ipcMain.handle("agent:stop", (_e, opts) => agentManager.stop(opts))
+ipcMain.handle("agent:status", () => agentManager.status())
+
 function createConnectWindow(step) {
   const win = new BrowserWindow({
     width: 460,
@@ -295,9 +304,20 @@ function createMainWindow(url) {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
+      preload: path.join(__dirname, "workspace-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
+  })
+  // Only allow navigation within the configured server origin (preload safety)
+  const allowedOrigin = (() => { try { return new URL(url).origin } catch { return null } })()
+  win.webContents.on("will-navigate", (event, navUrl) => {
+    try {
+      if (allowedOrigin && new URL(navUrl).origin !== allowedOrigin) {
+        event.preventDefault()
+        shell.openExternal(navUrl)
+      }
+    } catch {}
   })
   void win.loadURL(url)
   // Links that leave the instance open in the default browser, not in the
@@ -588,6 +608,7 @@ app.on("window-all-closed", (e) => {
 })
 
 app.on("will-quit", () => {
+  try { agentManager.cleanup() } catch {}
   globalShortcut.unregisterAll()
   if (presenceTimer) clearInterval(presenceTimer)
   if (updateTimer) clearInterval(updateTimer)

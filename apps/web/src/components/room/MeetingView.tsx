@@ -32,8 +32,18 @@ import { useRoomTelemetry } from "@/hooks/useRoomTelemetry"
 import { useScreenShareTakeover } from "@/hooks/useScreenShareTakeover"
 import { useScreenShareVisionNotice } from "@/hooks/useScreenShareVisionNotice"
 import { $canvasOpen } from "@/stores/canvas"
-import { $docOnStage, $openPanel } from "@/stores/panels"
+import { $docOnStage, $openPanel, $reviewOnStage } from "@/stores/panels"
 import { $selfInGrid, setSelfInGrid } from "@/stores/preferences"
+import dynamic from "next/dynamic"
+
+const ReviewTakeover = dynamic(() => import("@/components/room/review/ReviewTakeover"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center rounded-box border border-base-300 bg-base-100">
+      <span className="loading loading-spinner loading-lg" />
+    </div>
+  ),
+})
 
 export function MeetingView({
   slug,
@@ -95,6 +105,7 @@ export function MeetingView({
   const openPanel = useStore($openPanel)
   const whiteboardOpen = useStore($canvasOpen)
   const docOnStage = useStore($docOnStage)
+  const reviewOnStage = useStore($reviewOnStage)
 
   return (
     // overflow-hidden + overscroll-none: the meeting is an app surface, not
@@ -120,7 +131,9 @@ export function MeetingView({
         ref={stageRef}
         className="relative flex min-h-0 flex-1 flex-col gap-3 p-3 md:flex-row"
       >
-        {docOnStage ? (
+        {reviewOnStage ? (
+          <ReviewTakeover slug={slug} tracks={stageTracks} focused={focused} />
+        ) : docOnStage ? (
           <DocTakeover slug={slug} tracks={stageTracks} focused={focused} />
         ) : whiteboardOpen ? (
           <WhiteboardTakeover
@@ -192,7 +205,7 @@ export function MeetingView({
             // scroll/pan, which was fighting the gesture. Rounding + shadow
             // live together here so the shadow follows the rounded corners.
             className={`group absolute z-10 w-32 cursor-grab touch-none rounded-box shadow-lg transition-[right] duration-200 active:cursor-grabbing sm:w-56 ${
-              focused || whiteboardOpen || docOnStage ? "top-6" : "bottom-6"
+              focused || whiteboardOpen || docOnStage || reviewOnStage ? "top-6" : "bottom-6"
             } ${openPanel ? "right-[22.25rem]" : "right-6"}`}
           >
             <ParticipantTile trackRef={localTrack} compact />

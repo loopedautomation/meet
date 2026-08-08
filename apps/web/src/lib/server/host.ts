@@ -82,3 +82,30 @@ export async function canManageAgents(
   if (!hostKey) return false
   return (await authorizeHost(slug, hostKey)).ok
 }
+
+/**
+ * Whether this request may decide, dispatch revisions, or verify in a code
+ * review. Same shape and same fail-closed rule as canManageAgents; raising
+ * concerns is never gated here — capturing worries is everyone's job.
+ */
+export async function canResolveReviews(
+  slug: string,
+  hostKey: string | null,
+): Promise<boolean> {
+  const rooms = await roomService()
+    .listRooms([slug])
+    .catch(() => null)
+  let settings: RoomSettings | null = null
+  if (rooms?.[0]) {
+    try {
+      settings = roomSettingsSchema.parse(
+        parseRoomMetadata(rooms[0].metadata).settings ?? {},
+      )
+    } catch {
+      settings = null
+    }
+  }
+  if (settings?.participantsCanResolveReviews) return true
+  if (!hostKey) return false
+  return (await authorizeHost(slug, hostKey)).ok
+}

@@ -14,11 +14,16 @@ import { NextResponse } from "next/server"
  * reachability test only look at the status code and this field.
  */
 export function GET() {
+  const capabilities: string[] = []
+  if (process.env.AGENT_GATEWAY_PUBLIC_URL) {
+    capabilities.push("local-agents")
+  }
   return NextResponse.json({
     ok: true,
     service: SERVICE_ID,
     protocol: PROTOCOL_VERSION,
     minClientProtocol: MIN_CLIENT_PROTOCOL,
     version: process.env.npm_package_version ?? "0.1.0",
+    ...(capabilities.length ? { capabilities } : {}),
   })
 }

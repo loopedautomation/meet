@@ -136,6 +136,7 @@ services:
       # every host interface. Other containers reach it via the compose
       # network; override the bind explicitly if a remote client needs it.
       - "127.0.0.1:8090:8090"
+      - "8093:8093"
     <<: *local-env
     # All app config and secrets come from Infisical in production, or from
     # the root .env locally. AGENTS_CONFIG is set in the image — it points at

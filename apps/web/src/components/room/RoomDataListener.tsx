@@ -12,6 +12,7 @@ import {
   docPresenceSchema,
   docSyncMessageSchema,
   parseParticipantMeta,
+  reviewSyncMessageSchema,
   TYPING_STALE_MS,
 } from "@meet/shared"
 import { RoomEvent } from "livekit-client"
@@ -45,6 +46,14 @@ import {
   updateChatMessage,
 } from "@/stores/roomData"
 import { claimAgentReplyLatency } from "@/stores/roomTelemetry"
+import {
+  $review,
+  fetchReviewState,
+  resetReview,
+  setReviewSlug,
+  $followReview,
+  setReviewFocus,
+} from "@/stores/review"
 
 /** Always-mounted subscriber: chat and agent activity survive panel toggling. */
 export function RoomDataListener({ slug }: { slug: string }) {
@@ -393,12 +402,75 @@ export function RoomDataListener({ slug }: { slug: string }) {
     }
   }, [slug])
 
+  // Review: subscribe to DataTopic.Review for sync + focus, plus fetch-on-join
+  useEffect(() => {
+    setReviewSlug(slug)
+  }, [slug])
+
+  useDataChannel(DataTopic.Review, (msg) => {
+    try {
+      const raw = JSON.parse(new TextDecoder().decode(msg.payload))
+      const parsed = reviewSyncMessageSchema.safeParse(raw)
+      if (!parsed.success) return
+      const data = parsed.data
+      if (data.type === "review-sync") {
+        const curRev = $review.get()?.rev ?? -1
+        if (data.rev > curRev) {
+          // Debounced 300ms
+          setTimeout(() => {
+            const latest = $review.get()?.rev ?? -1
+            if (data.rev > latest) {
+              void fetchReviewState().then(() => {
+                if (data.opKind === "push-snapshot") toast.info("New revision pushed — diff updated")
+                else if (data.opKind === "revision-result") toast.success("Agent finished revision")
+                else if (data.opKind === "dispatch-revision") toast.info("Revision dispatched")
+              })
+            }
+          }, 300)
+        }
+      } else if (data.type === "review-focus") {
+        setReviewFocus({ path: data.path, line: data.line, side: data.side, at: data.at })
+        if ($followReview.get()) {
+          // Follow is on — stage will auto-scroll via effect in ReviewTakeover
+        }
+      }
+    } catch {}
+  })
+
+  // Fetch review state on join + reconnect
+  useEffect(() => {
+    let cancelled = false
+    let retryTimer: ReturnType<typeof setTimeout> | null = null
+    const fetchReviewSnapshot = (attempt = 0) => {
+      const retry = () => {
+        if (cancelled || attempt >= 5) return
+        retryTimer = setTimeout(() => fetchReviewSnapshot(attempt + 1), 500 * 2 ** attempt)
+      }
+      setReviewSlug(slug)
+      fetchReviewState()
+        .then(() => {
+          // fetchReviewState updates $review via nanostore; no return value to check
+          // retry only on network error (caught below), not on empty state
+        })
+        .catch(retry)
+    }
+    fetchReviewSnapshot()
+    const onReconnected = () => fetchReviewSnapshot(0)
+    room.on(RoomEvent.Reconnected, onReconnected)
+    return () => {
+      cancelled = true
+      if (retryTimer) clearTimeout(retryTimer)
+      room.off(RoomEvent.Reconnected, onReconnected)
+    }
+  }, [slug, room])
+
   useEffect(
     () => () => {
       resetRoomData()
       resetDoc()
       resetDocPresence()
       resetCanvas()
+      resetReview()
     },
     [],
   )

@@ -22,6 +22,7 @@ import {
   ChevronDown,
   EllipsisVertical,
   FileText,
+  GitPullRequest,
   Hand,
   Link as LinkIcon,
   LogOut,
@@ -53,7 +54,8 @@ import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
-import { $openPanel, togglePanel, toggleWhiteboard } from "@/stores/panels"
+import { $openPanel, $reviewOnStage, togglePanel, toggleWhiteboard, openReviewOnStage } from "@/stores/panels"
+import { $review } from "@/stores/review"
 import { $pipWindow, closePip, openPip } from "@/stores/pip"
 import {
   $autoDataSaver,
@@ -91,6 +93,10 @@ export function ControlBar({
   const whiteboardOpen = useStore($canvasOpen)
   const canvasUnseen = useStore($canvasUnseen)
   const agentDrawing = useStore($agentDrawing)
+  const review = useStore($review)
+  const reviewOnStage = useStore($reviewOnStage)
+  const openConcernCount = (review?.concerns ?? []).filter((c) => c.status === "open").length
+  const hasReviewSnapshot = !!review?.pr
   const participants = useParticipants()
   const waitingCount = participants.filter(
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
@@ -553,6 +559,22 @@ export function ControlBar({
             <PenLine className="size-5" />
           </button>
         </div>
+        {hasReviewSnapshot && (
+          <div className="tooltip tooltip-bottom" data-tip="Review">
+            <button
+              type="button"
+              className={`btn btn-circle indicator ${openPanel === "review" || reviewOnStage ? "btn-primary" : "btn-ghost"}`}
+              onClick={() => {
+                if (reviewOnStage) $reviewOnStage.set(false)
+                else togglePanel("review")
+              }}
+              aria-label="Review"
+            >
+              {openConcernCount > 0 && <span className="badge indicator-item badge-warning badge-xs">{openConcernCount}</span>}
+              <GitPullRequest className="size-5" />
+            </button>
+          </div>
+        )}
         <div className="tooltip tooltip-bottom" data-tip="Settings">
           <button
             type="button"
@@ -598,6 +620,7 @@ export function ControlBar({
               ["transcript", "Transcript", ScrollText],
               ["chat", "Chat", MessageSquare],
               ["doc", "Doc", FileText],
+              ...(hasReviewSnapshot ? [["review", "Review", GitPullRequest] as const] : []),
               ["settings", "Settings", Settings],
             ] as const
           ).map(([panel, label, Icon]) => (

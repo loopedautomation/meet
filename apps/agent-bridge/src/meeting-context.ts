@@ -11,7 +11,13 @@ import {
   type Y,
 } from "@meet/shared"
 import { describeCanvas } from "./canvas-records.js"
+import { REVIEW_PROTOCOL_NOTE } from "./review-blocks.js"
 import type { Brain } from "./looped-webhook.js"
+import {
+  reviewStateSchema,
+  type ReviewState,
+  type ReviewOpEnvelope,
+} from "@meet/shared/review"
 
 // Meeting context shared with agent brains: who is in the room, and what has
 // been said so far. Transcript segments live in the control API process (the
@@ -181,6 +187,90 @@ export function formatCanvas(
   if (!description) return ""
   return `The meeting's shared whiteboard currently shows:\n${description}`
 }
+
+/** Fetch the room's review state. Null on any failure. */
+export async function fetchReviewState(room: string): Promise<ReviewState | null> {
+  try {
+    const res = await fetch(
+      `${CONTROL_URL}/rooms/${encodeURIComponent(room)}/review`,
+      {
+        headers: { authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}` },
+      },
+    )
+    if (!res.ok) return null
+    const parsed = reviewStateSchema.safeParse(await res.json())
+    return parsed.success ? parsed.data : null
+  } catch {
+    return null
+  }
+}
+
+/** Post a stamped review op envelope to the store. */
+export async function postReviewOp(
+  room: string,
+  envelope: ReviewOpEnvelope,
+): Promise<{ ok: boolean; rev?: number; error?: string }> {
+  try {
+    const res = await fetch(
+      `${CONTROL_URL}/rooms/${encodeURIComponent(room)}/review/ops`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}`,
+        },
+        body: JSON.stringify(envelope),
+      },
+    )
+    const body = (await res.json().catch(() => ({}))) as {
+      ok?: boolean
+      rev?: number
+      error?: string
+    }
+    if (!res.ok) return { ok: false, error: body.error ?? `http ${res.status}` }
+    return { ok: true, rev: body.rev }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "network error" }
+  }
+}
+
+/** The review ledger as brain-readable context; "" when no PR is loaded. */
+export function formatReview(state: ReviewState | null, maxChars = 4000): string {
+  if (!state || !state.pr) return ""
+  const pr = state.pr
+  const lines: string[] = []
+  lines.push(`PR #${pr.number} ${pr.repo} "${pr.title}" by ${pr.author} — ${pr.baseRef} ← ${pr.headRef}@${pr.headSha.slice(0, 7)} (${pr.files.length} files)`)
+  if (pr.checks) {
+    lines.push(`Checks: ${pr.checks.summary} (${pr.checks.items.map((i) => `${i.name}:${i.status}`).join(", ")})`)
+  }
+  const counts: Record<string, number> = {}
+  for (const c of state.concerns) counts[c.status] = (counts[c.status] ?? 0) + 1
+  if (state.concerns.length) {
+    lines.push(
+      `Concerns (${state.concerns.length}): ${Object.entries(counts)
+        .map(([k, v]) => `${k} ${v}`)
+        .join(", ")}`,
+    )
+    for (const c of state.concerns.slice(0, 10)) {
+      const anchor = c.anchor ? `${c.anchor.path}:${c.anchor.line}` : "PR-level"
+      lines.push(`- [${c.status}] ${c.id} @${anchor} by ${c.raisedBy.name}: ${c.body.slice(0, 120)}`)
+    }
+    if (state.concerns.length > 10) lines.push(`…and ${state.concerns.length - 10} more concerns`)
+  } else {
+    lines.push("No concerns yet.")
+  }
+  if (state.revisions.length) {
+    lines.push(
+      `Revisions (${state.revisions.length}): ${state.revisions
+        .map((r) => `${r.id}:${r.status}${r.agentId ? ` → ${r.agentId}` : ""}`)
+        .join(", ")}`,
+    )
+  }
+  const text = lines.join("\n")
+  return text.length > maxChars ? `${text.slice(0, maxChars)}\n…(truncated)` : text
+}
+
+export { REVIEW_PROTOCOL_NOTE }
 
 /** The shared document as brain-readable context, bounded like the transcript. */
 export function formatSharedDoc(doc: SharedDoc, maxChars = 6000): string {

@@ -23,6 +23,13 @@ import {
   probeAgent,
   registerDynamicAgent,
 } from "./dynamic.js"
+import {
+  attachRelayUpgrade,
+  handleMintRequest,
+  initAgentGateway,
+  startAgentGateway,
+} from "./agent-gateway.js"
+import { applyReviewOp, getReviewSnapshot, getReviewState } from "./review-store.js"
 import { loadRegistry } from "./registry.js"
 import { textTurn } from "./text-chat.js"
 import { acceptTranscriberRequest } from "./transcriber-worker.js"
@@ -60,6 +67,9 @@ initializeLogger({ pretty: false, level: process.env.LOG_LEVEL ?? "info" })
 
 const dispatch = new AgentDispatchClient(httpUrl)
 const rooms = new RoomServiceClient(httpUrl)
+
+initAgentGateway({ dispatch, rooms })
+startAgentGateway()
 
 const app = new Hono()
 
@@ -282,6 +292,24 @@ app.post("/rooms/:room/agents", async (c) => {
   })
 })
 
+// ---- local agent mint ------------------------------------------------------
+// Ticket that authorizes one wss://:8093 gateway socket. The desktop obtains it
+// via the web app's server-side bridgeFetch, so no client ever sees BRIDGE_TOKEN.
+app.post("/rooms/:room/local-agents", async (c) => {
+  const { room } = c.req.param()
+  let body: { userId?: string; userName?: string }
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ error: "invalid body" }, 400)
+  }
+  if (!inviteAllowed(room)) {
+    return c.json({ error: "too many agent invites, slow down" }, 429)
+  }
+  const result = handleMintRequest(room, body)
+  return c.json(result.body, result.status as 200)
+})
+
 // ---- transcript store ------------------------------------------------------
 // Every room's finalized utterances, posted by the transcriber worker and
 // read back by agent workers on join so agents get meeting context. Memory
@@ -480,6 +508,31 @@ app.post("/rooms/:room/canvas/diff", async (c) => {
   return c.json({ ok: true })
 })
 
+// ---- review store ------------------------------------------------------
+// Working memory for the PR review loop. Like doc/canvas, but PR-shaped.
+app.get("/rooms/:room/review", (c) => {
+  const { room } = c.req.param()
+  return c.json(getReviewState(room))
+})
+
+app.get("/rooms/:room/review/pr", (c) => {
+  const { room } = c.req.param()
+  const sha = c.req.query("sha")
+  if (!sha) return c.json({ error: "sha required" }, 400)
+  const snap = getReviewSnapshot(room, sha)
+  if (!snap) return c.json({ error: "not found" }, 404)
+  return c.json({ snapshot: snap })
+})
+
+app.post("/rooms/:room/review/ops", async (c) => {
+  const { room } = c.req.param()
+  let body: unknown
+  try { body = await c.req.json() } catch { return c.json({ error: "invalid body" }, 400) }
+  const res = applyReviewOp(room, body as never)
+  if (!res.ok) return c.json({ error: res.error }, res.status as 400)
+  return c.json({ ok: true, rev: res.rev })
+})
+
 // ---- debug access ----------------------------------------------------------
 // First-class observability for anyone holding the BRIDGE_TOKEN (a person
 // with curl, or Claude debugging a deployment): live room state and a
@@ -570,9 +623,10 @@ app.delete("/rooms/:room/agents/:id", async (c) => {
   return c.json({ ok: true })
 })
 
-serve({ fetch: app.fetch, port: PORT }, (info) => {
+const httpServer = serve({ fetch: app.fetch, port: PORT }, (info) => {
   console.log(`agent-bridge control API on :${info.port}`)
 })
+attachRelayUpgrade(httpServer as unknown as ReturnType<typeof import("node:http").createServer>)
 
 // The LiveKit Agents worker: hosts the voice pipeline for dispatched agents.
 const server = new AgentServer(

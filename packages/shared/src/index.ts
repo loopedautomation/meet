@@ -19,6 +19,13 @@ export const DataTopic = {
   Chat: "chat",
   Doc: "doc",
   DocPresence: "doc-presence",
+  /**
+   * Review notifications only — never bulk. Review state and PR snapshots
+   * live in the bridge review store and are fetched over HTTP; this topic
+   * carries tiny "state changed, refetch" pings and presenter focus events
+   * (reviewSyncMessageSchema), so payloads always fit a reliable packet.
+   */
+  Review: "review",
   ScreenShare: "screen-share",
 } as const
 
@@ -336,13 +343,45 @@ export type AgentControl = z.infer<typeof agentControlSchema>
 export const roomSettingsSchema = z.object({
   participantsCanControlAgents: z.boolean().default(true),
   participantsCanInviteAgents: z.boolean().default(true),
+  /**
+   * Whether non-hosts may decide, dispatch revisions, and verify in a code
+   * review. Raising concerns is never host-reserved — capturing worries is
+   * everyone's job.
+   */
+  participantsCanResolveReviews: z.boolean().default(true),
 })
 export type RoomSettings = z.infer<typeof roomSettingsSchema>
 
 export const defaultRoomSettings: RoomSettings = {
   participantsCanControlAgents: true,
   participantsCanInviteAgents: true,
+  participantsCanResolveReviews: true,
 }
+
+// ---- review sync (DataTopic.Review payloads) --------------------------------
+// Notification-only: bulk review state rides HTTP (bridge review store), and
+// these messages just tell the room to refetch or where to look.
+
+export const reviewSyncMessageSchema = z.discriminatedUnion("type", [
+  // "state changed, refetch if rev > yours"
+  z.object({
+    type: z.literal("review-sync"),
+    rev: z.number().int().min(0),
+    /** Hint for toasts / targeted behavior (e.g. worker reacts to dispatch). */
+    opKind: z.string().max(32).optional(),
+    revisionId: z.string().max(64).optional(),
+    agentId: z.string().max(64).optional(),
+  }),
+  // presenter navigation: "everyone look here"
+  z.object({
+    type: z.literal("review-focus"),
+    path: z.string().max(1024),
+    line: z.number().int().positive().optional(),
+    side: z.enum(["old", "new"]).optional(),
+    at: z.number(),
+  }),
+])
+export type ReviewSyncMessage = z.infer<typeof reviewSyncMessageSchema>
 
 /**
  * Room metadata, which is where settings live: unlike a data message it
