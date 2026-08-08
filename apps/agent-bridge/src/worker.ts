@@ -80,9 +80,9 @@ import {
   getDynamicAgent,
   publicOnlyLookup,
 } from "./dynamic.js"
-import { getLocalAgent } from "./local-agent-store.js"
 import { endCallWhenEmpty } from "./end-when-empty.js"
 import { GEMINI_LIVE_DEFAULT_MODEL } from "./gemini-live-session.js"
+import { getLocalAgent } from "./local-agent-store.js"
 import { LoopedTtyClient } from "./looped-tty.js"
 import { type Brain, LoopedWebhookClient } from "./looped-webhook.js"
 import {
@@ -99,24 +99,28 @@ import {
   postDebugEvent,
   postReviewOp,
   pushBounded,
+  REVIEW_PROTOCOL_NOTE,
   requestAgentRemoval,
   seedSharedDoc,
   withMeetingContext,
-  REVIEW_PROTOCOL_NOTE,
 } from "./meeting-context.js"
-import {
-  parseReviewBlock,
-  ReviewBlockExtractor,
-} from "./review-blocks.js"
 import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
+import { parseReviewBlock, ReviewBlockExtractor } from "./review-blocks.js"
 import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
+import { runTextAgent } from "./text-agent.js"
 
 type DispatchMeta = {
   agentId: string
   // "pipeline" is the OpenAI STT/TTS pipeline; "elevenlabs" the same
   // pipeline speaking through ElevenLabs. "text" is the local-agent review mode.
-  mode?: "realtime" | "realtime-mini" | "gemini" | "pipeline" | "elevenlabs" | "text"
+  mode?:
+    | "realtime"
+    | "realtime-mini"
+    | "gemini"
+    | "pipeline"
+    | "elevenlabs"
+    | "text"
   voice?: string
   turnTimeoutMs?: number
 }
@@ -332,67 +336,13 @@ export default defineAgent({
     endCallWhenEmpty(ctx)
 
     // ---- local text-mode agent (no voice pipeline) ------------------------
-    // The connectivity transport is identical (TTY frames), but for text mode
-    // we skip voice.AgentSession / realtime and just join, set attributes,
-    // and wire the brain turns to chat + review context. This keeps the brain
-    // abstraction unchanged; voice later is mode pipeline on same connection.
+    // The connectivity transport is identical (TTY frames), but a local
+    // agent's body is text-only: chat turns, review blocks, and revision
+    // dispatches, with full meeting context — no voice.AgentSession or
+    // realtime stack. Lives in text-agent.ts; voice later is a mode flip
+    // on the same brain connection.
     if (entry.id.startsWith("local-")) {
-      const textState: import("@meet/shared").AgentState = "listening"
-      await local.setAttributes({ "agent.state": textState } as Record<string, string>).catch(() => undefined)
-      await local.setAttributes({ "agent.chattiness": entry.chattiness } as Record<string, string>).catch(() => undefined)
-      // Publish a simple activity feed from tool_call/tool_result frames — reuse same DataTopic.AgentActivity
-      const publishTextActivity = (event: import("@meet/shared").AgentActivityEvent) => {
-        local.publishData(new TextEncoder().encode(JSON.stringify(event)), {
-          reliable: true,
-          topic: DataTopic.AgentActivity,
-        }).catch(() => undefined)
-      }
-      // Text-mode loop: each incoming chat / data message drives a TTY turn.
-      // We reuse meeting-context helpers to seed transcript/doc/canvas so the brain has full context.
-      const transcript = await fetchTranscript(roomName)
-      const sharedDoc = await fetchCanvas(roomName) // placeholder: doc fetched via readSharedDoc
-      // Minimal text-mode: wire rawBrain turns to DataTopic.Chat
-      // Room chat -> brain
-      const chatHandler = async (payload: Uint8Array, participantIdentity: string) => {
-        try {
-          const msg = JSON.parse(new TextDecoder().decode(payload))
-          if (!msg.text || typeof msg.text !== "string") return
-          if (participantIdentity === local.identity) return
-          // Decide if this turn should run (mentions / direct chat etc.)
-          const input = msg.text as string
-          publishTextActivity({ type: "typing", agentId: entry.id, typing: true, at: Date.now() })
-          try {
-            for await (const frame of (rawBrain as unknown as LoopedTtyClient).runTurn(input)) {
-              if (frame.type === "assistant" && (frame as { content: string }).content) {
-                const text = (frame as { content: string }).content
-                const chatMsg: ChatMessage = { id: `${entry.id}-${Date.now()}`, from: `agent-${entry.id}`, fromName: entry.name, text, at: Date.now() }
-                await local.publishData(new TextEncoder().encode(JSON.stringify(chatMsg)), { reliable: true, topic: DataTopic.Chat }).catch(() => undefined)
-              }
-              if (frame.type === "tool_call") {
-                publishTextActivity({ type: "tool", agentId: entry.id, tool: (frame as { name: string }).name, at: Date.now() })
-              }
-            }
-          } finally {
-            publishTextActivity({ type: "typing", agentId: entry.id, typing: false, at: Date.now() })
-          }
-        } catch {}
-      }
-      ctx.room.on("dataReceived", (payload, _info, _kind, topic) => {
-        if (topic === DataTopic.Chat) {
-          const sender = (_info as unknown as { identity: string })?.identity ?? ""
-          void chatHandler(payload, sender)
-        }
-      })
-      // Also handle direct input via DataTopic for review ops (workstream 02 will add marker handling)
-      // Keep the worker alive until the room closes
-      await new Promise<void>((resolve) => {
-        ctx.room.on("disconnected", () => resolve())
-        // Also resolve if agent is removed
-        const interval = setInterval(() => {
-          if (ctx.room.state !== "connected") { clearInterval(interval); resolve() }
-        }, 5000)
-        interval.unref?.()
-      })
+      await runTextAgent(ctx, entry, rawBrain, roomName)
       return
     }
 
@@ -491,7 +441,11 @@ export default defineAgent({
     // ---- review dispatch handling (workstream 02) ------------------------
     // DataTopic.Review with review-sync containing dispatch-revision for this agent triggers a revision turn.
     ctx.room.on("dataReceived", (payload, _info, _kind, topic) => {
-      if (topic !== (DataTopic as unknown as Record<string,string>).Review && topic !== DataTopic.Review) return
+      if (
+        topic !== (DataTopic as unknown as Record<string, string>).Review &&
+        topic !== DataTopic.Review
+      )
+        return
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload)) as {
           type?: string
@@ -500,49 +454,117 @@ export default defineAgent({
           revisionId?: string
           rev?: number
         }
-        if (msg?.type !== "review-sync" || msg?.opKind !== "dispatch-revision" || !msg?.agentId) return
+        if (
+          msg?.type !== "review-sync" ||
+          msg?.opKind !== "dispatch-revision" ||
+          !msg?.agentId
+        )
+          return
         const targetId = String(msg.agentId)
         if (targetId !== entry.id && targetId !== `agent-${entry.id}`) return
         void (async () => {
           const CONTROL_URL = process.env.CONTROL_URL ?? "http://localhost:8090"
-          const agentActor = { identity: `agent-${entry.id}`, name: entry.name, kind: "agent" as const }
-          const broadcastSync = (rev: number, opKind: string, revisionId?: string, agentId?: string) => {
-            const payload = JSON.stringify({ type: "review-sync", rev, opKind, ...(revisionId ? { revisionId } : {}), ...(agentId ? { agentId } : {}) })
-            local.publishData(new TextEncoder().encode(payload), { reliable: true, topic: DataTopic.Review }).catch(() => undefined)
+          const agentActor = {
+            identity: `agent-${entry.id}`,
+            name: entry.name,
+            kind: "agent" as const,
+          }
+          const broadcastSync = (
+            rev: number,
+            opKind: string,
+            revisionId?: string,
+            agentId?: string,
+          ) => {
+            const payload = JSON.stringify({
+              type: "review-sync",
+              rev,
+              opKind,
+              ...(revisionId ? { revisionId } : {}),
+              ...(agentId ? { agentId } : {}),
+            })
+            local
+              .publishData(new TextEncoder().encode(payload), {
+                reliable: true,
+                topic: DataTopic.Review,
+              })
+              .catch(() => undefined)
           }
           try {
-            const stateRes = await fetch(`${CONTROL_URL}/rooms/${encodeURIComponent(roomName)}/review`, {
-              headers: { authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}` },
-            })
+            const stateRes = await fetch(
+              `${CONTROL_URL}/rooms/${encodeURIComponent(roomName)}/review`,
+              {
+                headers: {
+                  authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}`,
+                },
+              },
+            )
             if (!stateRes.ok) return
             const state = (await stateRes.json()) as {
               rev: number
-              pr: { number: number; repo: string; title: string; headRef: string; headSha: string } | null
-              concerns: Array<{ id: string; anchor?: { path: string; side: string; line: number }; body: string; status: string; decision?: { note: string } }>
-              revisions: Array<{ id: string; concernIds: string[]; instruction: string; agentId: string; status: string }>
+              pr: {
+                number: number
+                repo: string
+                title: string
+                headRef: string
+                headSha: string
+              } | null
+              concerns: Array<{
+                id: string
+                anchor?: { path: string; side: string; line: number }
+                body: string
+                status: string
+                decision?: { note: string }
+              }>
+              revisions: Array<{
+                id: string
+                concernIds: string[]
+                instruction: string
+                agentId: string
+                status: string
+              }>
             }
             const rev = state.revisions.find((r) => r.id === msg.revisionId)
             if (!rev) return
             // Mark working so the panel timeline moves
-            const progressRes = await fetch(`${CONTROL_URL}/rooms/${encodeURIComponent(roomName)}/review/ops`, {
-              method: "POST",
-              headers: { "content-type": "application/json", authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}` },
-              body: JSON.stringify({ actor: agentActor, op: { op: "revision-progress", id: rev.id, note: "started" } }),
-            })
+            const progressRes = await fetch(
+              `${CONTROL_URL}/rooms/${encodeURIComponent(roomName)}/review/ops`,
+              {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                  authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}`,
+                },
+                body: JSON.stringify({
+                  actor: agentActor,
+                  op: { op: "revision-progress", id: rev.id, note: "started" },
+                }),
+              },
+            )
             if (progressRes.ok) {
-              const body = (await progressRes.json().catch(() => ({}))) as { rev?: number }
-              if (typeof body.rev === "number") broadcastSync(body.rev, "revision-progress", rev.id, entry.id)
+              const body = (await progressRes.json().catch(() => ({}))) as {
+                rev?: number
+              }
+              if (typeof body.rev === "number")
+                broadcastSync(body.rev, "revision-progress", rev.id, entry.id)
             }
             // Build detailed prompt per plan §4 step 6
             const pr = state.pr
-            const prLabel = pr ? `PR #${pr.number} ${pr.repo} "${pr.title}" on branch ${pr.headRef}` : `PR on branch`
-            const concernLines = rev.concernIds.map((cid, i) => {
-              const c = state.concerns.find((x) => x.id === cid)
-              if (!c) return `${i + 1}. ${cid}`
-              const anchor = c.anchor ? ` (${c.anchor.path}:${c.anchor.line})` : ""
-              const note = c.decision?.note ? ` — decision note: ${c.decision.note}` : ""
-              return `${i + 1}. (${c.anchor?.path ?? "PR"}:${c.anchor?.line ?? ""})${anchor} ${c.body}${note}`
-            }).join("\n")
+            const prLabel = pr
+              ? `PR #${pr.number} ${pr.repo} "${pr.title}" on branch ${pr.headRef}`
+              : `PR on branch`
+            const concernLines = rev.concernIds
+              .map((cid, i) => {
+                const c = state.concerns.find((x) => x.id === cid)
+                if (!c) return `${i + 1}. ${cid}`
+                const anchor = c.anchor
+                  ? ` (${c.anchor.path}:${c.anchor.line})`
+                  : ""
+                const note = c.decision?.note
+                  ? ` — decision note: ${c.decision.note}`
+                  : ""
+                return `${i + 1}. (${c.anchor?.path ?? "PR"}:${c.anchor?.line ?? ""})${anchor} ${c.body}${note}`
+              })
+              .join("\n")
             const prompt =
               `[revision-request ${rev.id}] You are asked to revise ${prLabel}.\n` +
               `Address these agreed concerns, commit to the branch, and push:\n${concernLines}\n` +
@@ -551,21 +573,47 @@ export default defineAgent({
             let reply = ""
             try {
               reply = await collectBrainReply(
-                rawBrain.runTurn(prompt) as AsyncIterable<import("./looped-tty.js").TtyServerFrame>,
+                rawBrain.runTurn(prompt) as AsyncIterable<
+                  import("./looped-tty.js").TtyServerFrame
+                >,
                 (frame) => {
                   const at = Date.now()
                   if (frame.type === "tool_call") {
-                    publishActivity({ type: "tool_call", agentId: entry.id, name: frame.name, arguments: frame.arguments, at })
+                    publishActivity({
+                      type: "tool_call",
+                      agentId: entry.id,
+                      name: frame.name,
+                      arguments: frame.arguments,
+                      at,
+                    })
                   } else if (frame.type === "tool_result") {
-                    publishActivity({ type: "tool_result", agentId: entry.id, name: frame.name, content: String(frame.content).slice(0, 8000), durationMs: frame.durationMs, at })
+                    publishActivity({
+                      type: "tool_result",
+                      agentId: entry.id,
+                      name: frame.name,
+                      content: String(frame.content).slice(0, 8000),
+                      durationMs: frame.durationMs,
+                      at,
+                    })
                   }
                 },
               )
             } catch (err) {
-              const message = err instanceof Error ? err.message : "agent disconnected"
-              await postReviewOp(roomName, { actor: agentActor, op: { op: "revision-failed", id: rev.id, error: message.slice(0, 1000) } }).then((r) => {
-                if (r.ok && typeof r.rev === "number") broadcastSync(r.rev, "revision-failed", rev.id, entry.id)
-              }).catch(() => undefined)
+              const message =
+                err instanceof Error ? err.message : "agent disconnected"
+              await postReviewOp(roomName, {
+                actor: agentActor,
+                op: {
+                  op: "revision-failed",
+                  id: rev.id,
+                  error: message.slice(0, 1000),
+                },
+              })
+                .then((r) => {
+                  if (r.ok && typeof r.rev === "number")
+                    broadcastSync(r.rev, "revision-failed", rev.id, entry.id)
+                })
+                .catch(() => undefined)
               return
             }
             // Extract review blocks from the brain reply and POST each as an envelope
@@ -576,40 +624,108 @@ export default defineAgent({
             for (const block of blocks) {
               const parsed = parseReviewBlock(block)
               if ("error" in parsed) {
-                publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: parsed.error, durationMs: 0, at: Date.now() })
+                publishActivity({
+                  type: "tool_result",
+                  agentId: entry.id,
+                  name: "review",
+                  content: parsed.error,
+                  durationMs: 0,
+                  at: Date.now(),
+                })
                 pushBounded([], parsed.error)
                 continue
               }
               const op = parsed.op
-              const result = await postReviewOp(roomName, { actor: agentActor, op })
+              const result = await postReviewOp(roomName, {
+                actor: agentActor,
+                op,
+              })
               if (!result.ok) {
-                publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: result.error ?? "review op failed", durationMs: 0, at: Date.now() })
+                publishActivity({
+                  type: "tool_result",
+                  agentId: entry.id,
+                  name: "review",
+                  content: result.error ?? "review op failed",
+                  durationMs: 0,
+                  at: Date.now(),
+                })
                 if (/in progress|disconnected/.test(result.error ?? "")) {
                   // fatal for revision — mark failed
-                  await postReviewOp(roomName, { actor: agentActor, op: { op: "revision-failed", id: rev.id, error: result.error!.slice(0, 1000) } }).then((r) => {
-                    if (r.ok && typeof r.rev === "number") broadcastSync(r.rev, "revision-failed", rev.id, entry.id)
-                  }).catch(() => undefined)
+                  await postReviewOp(roomName, {
+                    actor: agentActor,
+                    op: {
+                      op: "revision-failed",
+                      id: rev.id,
+                      error: result.error!.slice(0, 1000),
+                    },
+                  })
+                    .then((r) => {
+                      if (r.ok && typeof r.rev === "number")
+                        broadcastSync(
+                          r.rev,
+                          "revision-failed",
+                          rev.id,
+                          entry.id,
+                        )
+                    })
+                    .catch(() => undefined)
                   break
                 }
               } else {
                 postedAny = true
-                if (typeof result.rev === "number") broadcastSync(result.rev, op.op, (op as { id?: string }).id ?? rev.id, entry.id)
-                publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: `review ${op.op} ok rev ${result.rev}`, durationMs: 0, at: Date.now() })
+                if (typeof result.rev === "number")
+                  broadcastSync(
+                    result.rev,
+                    op.op,
+                    (op as { id?: string }).id ?? rev.id,
+                    entry.id,
+                  )
+                publishActivity({
+                  type: "tool_result",
+                  agentId: entry.id,
+                  name: "review",
+                  content: `review ${op.op} ok rev ${result.rev}`,
+                  durationMs: 0,
+                  at: Date.now(),
+                })
               }
             }
             if (!postedAny && !reply.trim()) {
-              await postReviewOp(roomName, { actor: agentActor, op: { op: "revision-failed", id: rev.id, error: "agent produced no review block" } }).then((r) => {
-                if (r.ok && typeof r.rev === "number") broadcastSync(r.rev, "revision-failed", rev.id, entry.id)
-              }).catch(() => undefined)
+              await postReviewOp(roomName, {
+                actor: agentActor,
+                op: {
+                  op: "revision-failed",
+                  id: rev.id,
+                  error: "agent produced no review block",
+                },
+              })
+                .then((r) => {
+                  if (r.ok && typeof r.rev === "number")
+                    broadcastSync(r.rev, "revision-failed", rev.id, entry.id)
+                })
+                .catch(() => undefined)
             }
           } catch (err) {
             // Ensure a failed revision doesn't stay dispatched forever
             try {
               const revId = msg.revisionId ? String(msg.revisionId) : undefined
               if (revId) {
-                await postReviewOp(roomName, { actor: agentActor, op: { op: "revision-failed", id: revId, error: err instanceof Error ? err.message.slice(0, 1000) : "revision failed" } }).then((r) => {
-                  if (r.ok && typeof r.rev === "number") broadcastSync(r.rev, "revision-failed", revId, entry.id)
-                }).catch(() => undefined)
+                await postReviewOp(roomName, {
+                  actor: agentActor,
+                  op: {
+                    op: "revision-failed",
+                    id: revId,
+                    error:
+                      err instanceof Error
+                        ? err.message.slice(0, 1000)
+                        : "revision failed",
+                  },
+                })
+                  .then((r) => {
+                    if (r.ok && typeof r.rev === "number")
+                      broadcastSync(r.rev, "revision-failed", revId, entry.id)
+                  })
+                  .catch(() => undefined)
               }
             } catch {}
           }
@@ -1200,29 +1316,83 @@ export default defineAgent({
         for (const block of reviewBlocks) {
           const parsed = parseReviewBlock(block)
           if ("error" in parsed) {
-            publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: parsed.error, durationMs: 0, at: Date.now() })
+            publishActivity({
+              type: "tool_result",
+              agentId: entry.id,
+              name: "review",
+              content: parsed.error,
+              durationMs: 0,
+              at: Date.now(),
+            })
           } else {
-            const op = parsed.op as Record<string,unknown>
+            const op = parsed.op as Record<string, unknown>
             // POST as agent actor to the review store
             try {
-              const CONTROL_URL = process.env.CONTROL_URL ?? "http://localhost:8090"
-              const res = await fetch(`${CONTROL_URL}/rooms/${encodeURIComponent(roomName)}/review/ops`, {
-                method: "POST",
-                headers: { "content-type": "application/json", authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}` },
-                body: JSON.stringify({ actor: { identity: `agent-${entry.id}`, name: entry.name, kind: "agent" }, op }),
-              })
+              const CONTROL_URL =
+                process.env.CONTROL_URL ?? "http://localhost:8090"
+              const res = await fetch(
+                `${CONTROL_URL}/rooms/${encodeURIComponent(roomName)}/review/ops`,
+                {
+                  method: "POST",
+                  headers: {
+                    "content-type": "application/json",
+                    authorization: `Bearer ${process.env.BRIDGE_TOKEN ?? ""}`,
+                  },
+                  body: JSON.stringify({
+                    actor: {
+                      identity: `agent-${entry.id}`,
+                      name: entry.name,
+                      kind: "agent",
+                    },
+                    op,
+                  }),
+                },
+              )
               const body = await res.json().catch(() => ({}))
               if (!res.ok) {
-                publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: String((body as Record<string,unknown>).error ?? "review op failed"), durationMs: 0, at: Date.now() })
+                publishActivity({
+                  type: "tool_result",
+                  agentId: entry.id,
+                  name: "review",
+                  content: String(
+                    (body as Record<string, unknown>).error ??
+                      "review op failed",
+                  ),
+                  durationMs: 0,
+                  at: Date.now(),
+                })
               } else {
                 // Broadcast review-sync so clients refetch
                 try {
-                  await local.publishData(new TextEncoder().encode(JSON.stringify({ type: "review-sync", rev: body.rev, opKind: op.op })), { reliable: true, topic: "review" as never })
+                  await local.publishData(
+                    new TextEncoder().encode(
+                      JSON.stringify({
+                        type: "review-sync",
+                        rev: body.rev,
+                        opKind: op.op,
+                      }),
+                    ),
+                    { reliable: true, topic: "review" as never },
+                  )
                 } catch {}
-                publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: `review ${String(op.op)} ok rev ${body.rev}`, durationMs: 0, at: Date.now() })
+                publishActivity({
+                  type: "tool_result",
+                  agentId: entry.id,
+                  name: "review",
+                  content: `review ${String(op.op)} ok rev ${body.rev}`,
+                  durationMs: 0,
+                  at: Date.now(),
+                })
               }
             } catch (e) {
-              publishActivity({ type: "tool_result", agentId: entry.id, name: "review", content: String(e), durationMs: 0, at: Date.now() })
+              publishActivity({
+                type: "tool_result",
+                agentId: entry.id,
+                name: "review",
+                content: String(e),
+                durationMs: 0,
+                at: Date.now(),
+              })
             }
           }
         }

@@ -159,30 +159,24 @@ class AgentManager {
         }
       },
       onStatus: (s) => this._set(roomSlug, { state: s }),
-    })
-    // Send hello once gateway connects
-    const origConnect = gateway.connect.bind(gateway)
-    gateway.connect = async () => {
-      await origConnect()
-      // Give WS a moment then send hello
-      setTimeout(() => {
-        gateway.sendFrame({ type: "hello", handle: "claude", conversation_id: `${roomSlug}-${mint.agentId}`, name: `${repo.name} Claude Code`, description: `${repo.name}@${repo.branch}` })
+      // Sent from the socket's own open event — a timer here raced the
+      // handshake and could silently drop the hello, so the agent never
+      // joined and no error surfaced. Re-sent on resume reconnects too;
+      // the gateway caches the first hello and relays ignore repeats.
+      onOpen: () => {
+        gateway.sendFrame({
+          type: "hello",
+          handle: "claude",
+          conversation_id: `${roomSlug}-${mint.agentId}`,
+          name: `${repo.name} Claude Code`,
+          description: `${repo.name}@${repo.branch}`,
+        })
         this._set(roomSlug, { state: "online" })
-      }, 200)
-    }
+      },
+    })
     gateway.connect()
 
     this._set(roomSlug, { state: "connecting", runner, gateway, repoPath: repo.path, repoName: repo.name, resumeToken: mint.resumeToken, gatewayUrl: mint.gatewayUrl })
-
-    // Crash restart with backoff ×3
-    let restarts = 0
-    const monitor = setInterval(() => {
-      const cur = this.byRoom.get(roomSlug)
-      if (!cur?.runner) { clearInterval(monitor); return }
-      // Simple liveness: if runner process died, restart
-      // ClaudeRunner doesn't expose child pid in SDK mode; skip for now
-    }, 10000)
-    monitor.unref?.()
 
     return { ok: true }
   }

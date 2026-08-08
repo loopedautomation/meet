@@ -54,14 +54,20 @@ import { $cameraEffect } from "@/stores/cameraEffect"
 import { $agentDrawing, $canvasOpen, $canvasUnseen } from "@/stores/canvas"
 import { type DeviceKind, setDevicePref } from "@/stores/devicePrefs"
 import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
-import { $openPanel, $reviewOnStage, togglePanel, toggleWhiteboard, openReviewOnStage } from "@/stores/panels"
-import { $review } from "@/stores/review"
+import {
+  $openPanel,
+  $reviewOnStage,
+  openReviewOnStage,
+  togglePanel,
+  toggleWhiteboard,
+} from "@/stores/panels"
 import { $pipWindow, closePip, openPip } from "@/stores/pip"
 import {
   $autoDataSaver,
   $meetingSounds,
   $pushToTalk,
 } from "@/stores/preferences"
+import { $review } from "@/stores/review"
 import { $videoTransform } from "@/stores/videoTransform"
 import { $voiceIsolation } from "@/stores/voiceIsolation"
 
@@ -95,9 +101,14 @@ export function ControlBar({
   const agentDrawing = useStore($agentDrawing)
   const review = useStore($review)
   const reviewOnStage = useStore($reviewOnStage)
-  const openConcernCount = (review?.concerns ?? []).filter((c) => c.status === "open").length
-  const hasReviewSnapshot = !!review?.pr
+  const openConcernCount = (review?.concerns ?? []).filter(
+    (c) => c.status === "open",
+  ).length
   const participants = useParticipants()
+  // Reachable before a PR lands too: with an agent in the room, the review
+  // surface's empty state is what teaches the "load PR 123" flow.
+  const hasReviewSnapshot =
+    !!review?.pr || participants.some((p) => p.identity.startsWith("agent-"))
   const waitingCount = participants.filter(
     (p) => parseParticipantMeta(p.metadata)?.kind === "waiting",
   ).length
@@ -570,7 +581,11 @@ export function ControlBar({
               }}
               aria-label="Review"
             >
-              {openConcernCount > 0 && <span className="badge indicator-item badge-warning badge-xs">{openConcernCount}</span>}
+              {openConcernCount > 0 && (
+                <span className="badge indicator-item badge-warning badge-xs">
+                  {openConcernCount}
+                </span>
+              )}
               <GitPullRequest className="size-5" />
             </button>
           </div>
@@ -620,7 +635,9 @@ export function ControlBar({
               ["transcript", "Transcript", ScrollText],
               ["chat", "Chat", MessageSquare],
               ["doc", "Doc", FileText],
-              ...(hasReviewSnapshot ? [["review", "Review", GitPullRequest] as const] : []),
+              ...(hasReviewSnapshot
+                ? [["review", "Review", GitPullRequest] as const]
+                : []),
               ["settings", "Settings", Settings],
             ] as const
           ).map(([panel, label, Icon]) => (

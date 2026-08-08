@@ -1,18 +1,19 @@
 // Native WebSocket client for the agent gateway (wss://:8093/gateway/agent?ticket=...)
 
 class GatewayClient {
-  constructor({ gatewayUrl, ticket, resumeToken, onFrame, onStatus }) {
+  constructor({ gatewayUrl, ticket, resumeToken, onFrame, onStatus, onOpen }) {
     this.gatewayUrl = gatewayUrl
     this.ticket = ticket
     this.resumeToken = resumeToken
     this.onFrame = onFrame
     this.onStatus = onStatus
+    this.onOpen = onOpen
     this.ws = null
     this.closed = false
     this.reconnectDelay = 1000
   }
 
-  async connect() {
+  connect() {
     if (this.closed) return
     const url = this.ticket
       ? `${this.gatewayUrl}?ticket=${this.ticket}`
@@ -21,8 +22,14 @@ class GatewayClient {
     // Use native WebSocket (Electron 38 = Node 22 has global WebSocket)
 
     this.ws.onopen = () => {
+      // The ticket is single-use: after the first successful open, further
+      // dials must be resumes.
+      this.ticket = null
       this.reconnectDelay = 1000
       this.onStatus?.("online")
+      // Fired only once the socket can actually carry frames — hello and
+      // anything else sent earlier would be silently dropped by sendFrame.
+      this.onOpen?.()
     }
     this.ws.onmessage = (ev) => {
       try {

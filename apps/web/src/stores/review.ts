@@ -1,31 +1,54 @@
+import type { PrSnapshot, ReviewOp, ReviewState } from "@meet/shared/review"
 import { atom, map } from "nanostores"
-import type { ReviewState } from "@meet/shared/review"
+import { readHostKey } from "@/lib/hostKey"
+import { roomAuthHeaders } from "@/lib/roomAuth"
+
+// Client replica of the room's review state. Bulk rides HTTP (the bridge
+// review store, via the proxied routes); DataTopic.Review carries only
+// "state changed" pings and presenter focus. Components mutate through
+// useReviewOps (hooks/useReviewOps.ts), which posts the op, broadcasts the
+// sync ping, and refetches — plain fetches here never mutate.
 
 export const $review = atom<ReviewState | null>(null)
-export const $reviewSnapshots = map<Record<string, unknown>>({})
-export const $reviewFocus = atom<{ path: string; line?: number; side?: string; at: number } | null>(null)
+export const $reviewSnapshots = map<Record<string, PrSnapshot>>({})
+export const $reviewFocus = atom<{
+  path: string
+  line?: number
+  side?: "old" | "new"
+  at: number
+} | null>(null)
 export const $followReview = atom<boolean>(true)
 
+/**
+ * Highest rev applied, so a slow response can't clobber a newer one.
+ * Per-room state — reset alongside the atoms or a rejoined room whose rev
+ * restarts lower would never load.
+ */
 let lastRev = -1
 
-let _reviewSlug: string | null = null
-export function setReviewSlug(slug: string) { _reviewSlug = slug }
-
-export async function fetchReviewState(slug?: string, token?: string): Promise<void> {
-  const effectiveSlug = slug ?? _reviewSlug
-  if (!effectiveSlug) return
-  const headers: Record<string,string> = {}
-  // Prefer explicit token, else use roomAuthHeaders (LiveKit JWT + host key) like doc/canvas do
-  if (token) headers.authorization = `Bearer ${token}`
-  else {
-    try {
-      const { roomAuthHeaders } = await import("@/lib/roomAuth")
-      Object.assign(headers, roomAuthHeaders(effectiveSlug))
-    } catch {}
+let reviewSlug: string | null = null
+export function setReviewSlug(slug: string) {
+  if (reviewSlug !== slug) {
+    reviewSlug = slug
+    lastRev = -1
   }
-  const res = await fetch(`/api/rooms/${encodeURIComponent(effectiveSlug)}/review`, {
-    headers,
-  })
+}
+
+function authHeaders(slug: string): Record<string, string> {
+  const hostKey = readHostKey(slug)
+  return {
+    ...roomAuthHeaders(slug),
+    ...(hostKey ? { "x-host-key": hostKey } : {}),
+  }
+}
+
+export async function fetchReviewState(slug?: string): Promise<void> {
+  const effectiveSlug = slug ?? reviewSlug
+  if (!effectiveSlug) return
+  const res = await fetch(
+    `/api/rooms/${encodeURIComponent(effectiveSlug)}/review`,
+    { headers: authHeaders(effectiveSlug) },
+  )
   if (!res.ok) return
   const data = (await res.json()) as ReviewState
   if (data.rev > lastRev) {
@@ -34,33 +57,57 @@ export async function fetchReviewState(slug?: string, token?: string): Promise<v
   }
 }
 
-export async function fetchSnapshot(slug: string, token: string, sha: string): Promise<unknown | null> {
+export async function fetchSnapshot(
+  slug: string,
+  sha: string,
+): Promise<PrSnapshot | null> {
   const existing = $reviewSnapshots.get()[sha]
   if (existing) return existing
-  const res = await fetch(`/api/rooms/${encodeURIComponent(slug)}/review/pr?sha=${encodeURIComponent(sha)}`, {
-    headers: { authorization: `Bearer ${token}` },
-  })
+  const res = await fetch(
+    `/api/rooms/${encodeURIComponent(slug)}/review/pr?sha=${encodeURIComponent(sha)}`,
+    { headers: authHeaders(slug) },
+  )
   if (!res.ok) return null
-  const data = (await res.json()) as { snapshot: unknown }
+  const data = (await res.json()) as { snapshot: PrSnapshot }
   $reviewSnapshots.setKey(sha, data.snapshot)
   return data.snapshot
 }
 
-export async function postReviewOp(slug: string, token: string, op: unknown, hostKey?: string): Promise<{ ok: boolean; rev?: number; error?: string }> {
+/**
+ * Post one review op as the caller. Authorization rides the caller's own
+ * LiveKit token (roomAuthHeaders) — the route stamps the actor from it.
+ * Prefer useReviewOps in components: it also broadcasts review-sync so the
+ * rest of the room (and the executing agent) hears about the change.
+ */
+export async function postReviewOp(
+  slug: string,
+  op: ReviewOp,
+): Promise<{ ok: boolean; rev?: number; error?: string }> {
   const res = await fetch(`/api/rooms/${encodeURIComponent(slug)}/review/ops`, {
     method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${token}`,
-      ...(hostKey ? { "x-host-key": hostKey } : {}),
-    },
+    headers: { "content-type": "application/json", ...authHeaders(slug) },
     body: JSON.stringify(op),
   })
-  const data = await res.json().catch(() => ({})) as Record<string, unknown>
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>
   if (!res.ok) return { ok: false, error: String(data.error ?? "failed") }
   return { ok: true, rev: data.rev as number }
 }
 
-export function resetReview() { $review.set(null); $reviewSnapshots.set({} as Record<string, unknown>); }
+export function resetReview() {
+  $review.set(null)
+  $reviewSnapshots.set({})
+  $reviewFocus.set(null)
+  lastRev = -1
+  reviewSlug = null
+}
 
-export function setReviewFocus(focus: { path: string; line?: number; side?: string; at: number } | null) { $reviewFocus.set(focus) }
+export function setReviewFocus(
+  focus: {
+    path: string
+    line?: number
+    side?: "old" | "new"
+    at: number
+  } | null,
+) {
+  $reviewFocus.set(focus)
+}

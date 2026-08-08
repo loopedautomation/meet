@@ -1,41 +1,69 @@
 "use client"
+import type { ConcernAnchor } from "@meet/shared/review"
 import { useState } from "react"
-import { postReviewOp } from "@/stores/review"
+import { toast } from "react-toastify"
+import { useReviewOps } from "@/hooks/useReviewOps"
 
-export function NewConcernPopover({ slug, anchor, onClose }: { slug: string; anchor: { path: string; side: "new"|"old"; line: number; sha: string }; onClose: () => void }) {
+export function NewConcernPopover({
+  slug,
+  anchor,
+  onClose,
+}: {
+  slug: string
+  anchor: ConcernAnchor
+  onClose: () => void
+}) {
+  const { postOp } = useReviewOps(slug)
   const [body, setBody] = useState("")
   const [busy, setBusy] = useState(false)
+
   const submit = async () => {
     if (!body.trim()) return
     setBusy(true)
-    // We need a token - try to get from LiveKit room (fallback: try without token, server will reject but we attempt)
-    // For now, call postReviewOp with empty token; RoomDataListener will refetch after broadcast
-    // The route requires LiveKit JWT, so this will fail without a proper token - show message
-    // In real flow, the component receives token via props/context; stub: use document cookie trick
-    const token = "" // placeholder - real wiring passes LiveKit token via context
-    const op = { op: "raise-concern" as const, id: `c-${Date.now()}`, anchor, body }
-    const res = await postReviewOp(slug, token, op)
+    const res = await postOp({
+      op: "raise-concern",
+      id: `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+      anchor,
+      body: body.trim(),
+    })
     setBusy(false)
-    if (res.ok) {
-      // broadcast review-sync via data channel (client does it)
-      try {
-        const { Room } = await import("livekit-client")
-        // stub: rely on server broadcast
-      } catch {}
-      onClose()
-    } else {
-      alert(res.error ?? "failed")
-    }
+    if (res.ok) onClose()
+    else toast.error(res.error ?? "could not raise the concern")
   }
+
   return (
-    <div className="rounded border bg-base-100 p-3 shadow-xl space-y-2">
-      <p className="text-xs font-semibold">Raise concern at {anchor.path}:{anchor.line}</p>
-      <textarea className="textarea textarea-bordered w-full text-xs" rows={3} value={body} onChange={e=>setBody(e.target.value)} placeholder="What worries you?" />
+    <div className="space-y-2 rounded border border-base-300 bg-base-100 p-3 shadow-xl">
+      <p className="font-semibold text-xs">
+        Raise concern at {anchor.path}:{anchor.line}
+        {anchor.endLine ? `-${anchor.endLine}` : ""}
+      </p>
+      <textarea
+        className="textarea textarea-bordered w-full text-xs"
+        rows={3}
+        value={body}
+        onChange={(e) => setBody(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit()
+        }}
+        placeholder="What worries you about this change?"
+      />
       <div className="flex justify-end gap-2">
-        <button className="btn btn-ghost btn-xs" onClick={onClose}>Cancel</button>
-        <button className="btn btn-primary btn-xs" disabled={busy || !body.trim()} onClick={submit}>{busy ? "..." : "Raise"}</button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-xs"
+          onClick={onClose}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="btn btn-primary btn-xs"
+          disabled={busy || !body.trim()}
+          onClick={submit}
+        >
+          {busy ? "…" : "Raise concern"}
+        </button>
       </div>
-      <p className="text-[10px] opacity-50">Tip: select lines in the diff to anchor a concern.</p>
     </div>
   )
 }

@@ -58,35 +58,43 @@ class ClaudeRunner {
         return { behavior: "allow", updatedInput: input }
       },
     }
-    // Start SDK session (query style: sdk.query(prompt, opts) returns async iterable)
-    // We hold the session for turn-by-turn queries via streaming-input iterable.
     this.sdk = sdk
     this.opts = opts
     this.onEvent?.({ type: "hello", handle: "claude", name: "Claude Code", description: `${path.basename(this.repoPath)}` })
   }
 
-  async runTurn(text, images) {
+  async runTurn(text, _images) {
     if (!this.sdk) return
     try {
-      // Simple path: one-shot query per turn, streaming
-      const iterable = this.sdk.query(text, { ...this.opts, resume: this.sessionId ?? undefined })
-      for await (const ev of iterable) {
-        // Capture session id
+      // One query per turn, resumed by session id so the conversation (and
+      // the CLI process's context) carries across turns. The SDK takes a
+      // single {prompt, options} argument. Images from the TTY frame are
+      // dropped for now — text-mode agents never receive screenshare frames.
+      const query = this.sdk.query({
+        prompt: text,
+        options: { ...this.opts, resume: this.sessionId ?? undefined },
+      })
+      this.activeQuery = query
+      for await (const ev of query) {
         if (ev.session_id) this.sessionId = ev.session_id
-        // Map to TTY frames and emit
         const frames = mapSdkEvent(ev)
         for (const f of frames) this.onEvent?.(f)
       }
     } catch (err) {
       this.onEvent?.({ type: "error", error: err.message ?? String(err) })
+    } finally {
+      this.activeQuery = null
     }
   }
 
   interrupt() {
-    // SDK interruption: not formally exposed in all versions; close and mark for resume
+    // Stops the in-flight turn but keeps sessionId for resume — mirrors the
+    // bridge's abortTurn() semantics (socket drop aborts, conversation lives).
+    try { this.activeQuery?.interrupt?.() } catch {}
   }
 
   kill() {
+    try { this.activeQuery?.interrupt?.() } catch {}
     try { this.sdkSession?.close?.() } catch {}
   }
 }
