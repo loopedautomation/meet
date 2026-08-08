@@ -257,6 +257,11 @@ ipcMain.handle("agent:recentRepos", () => agentManager.recentRepos())
 ipcMain.handle("agent:start", (_e, opts) => agentManager.start(opts))
 ipcMain.handle("agent:stop", (_e, opts) => agentManager.stop(opts))
 ipcMain.handle("agent:status", () => agentManager.status())
+// Synchronous on purpose: the sandboxed preload builds window.meetShell.info
+// at load time and can't require package.json itself.
+ipcMain.on("shell:info", (event) => {
+  event.returnValue = { version: app.getVersion(), platform: process.platform }
+})
 
 function createConnectWindow(step) {
   const win = new BrowserWindow({
