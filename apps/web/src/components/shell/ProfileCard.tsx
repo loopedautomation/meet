@@ -3,6 +3,7 @@
 import { useStore } from "@nanostores/react"
 import { LogOut, Settings } from "lucide-react"
 import { useEffect, useState } from "react"
+import { SignOutLink } from "@/components/desktop/SignOutLink"
 import { Avatar } from "@/components/ui/Avatar"
 import { Select } from "@/components/ui/Select"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
@@ -191,13 +192,10 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
           <Settings className="size-4" />
           Settings
         </a>
-        <a
-          href="/auth/logout"
-          className="flex items-center gap-2 rounded-btn px-2 py-1.5 text-sm hover:bg-base-200"
-        >
+        <SignOutLink className="flex items-center gap-2 rounded-btn px-2 py-1.5 text-sm hover:bg-base-200">
           <LogOut className="size-4" />
           Sign out
-        </a>
+        </SignOutLink>
       </div>
     </div>
   )
