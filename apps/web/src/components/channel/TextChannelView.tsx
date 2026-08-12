@@ -18,6 +18,7 @@ import { toast } from "react-toastify"
 import { Markdown } from "@/components/Markdown"
 import { Modal } from "@/components/ui/Modal"
 import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
+import { $activeChannelSlug } from "@/stores/activeChannel"
 
 const QUICK_EMOJI = ["👍", "❤️", "😂", "🎉", "👀"]
 
@@ -72,6 +73,14 @@ export function TextChannelView({
   useEffect(() => {
     if (resumingCall) router.replace(`/c/${slug}?call=1`)
   }, [resumingCall, router, slug])
+  // Tracked so an incoming-message notification can skip this channel while
+  // it's the one actually on screen (see useMessageNotifications).
+  useEffect(() => {
+    $activeChannelSlug.set(slug)
+    return () => {
+      if ($activeChannelSlug.get() === slug) $activeChannelSlug.set(null)
+    }
+  }, [slug])
   const [messages, setMessages] = useState<ChannelMessage[] | null>(null)
   const [draft, setDraft] = useState("")
   const [sending, setSending] = useState(false)
