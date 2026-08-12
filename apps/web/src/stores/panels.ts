@@ -38,6 +38,12 @@ export function togglePanel(panel: Exclude<Panel, null>) {
   $openPanel.set(opening ? panel : null)
 }
 
+export function openSettingsPanel() {
+  if ($openPanel.get() !== "settings")
+    track("panel_opened", { panel: "settings" })
+  $openPanel.set("settings")
+}
+
 export function openWhiteboard() {
   $canvasOpen.set(true)
   $canvasUnseen.set(false)

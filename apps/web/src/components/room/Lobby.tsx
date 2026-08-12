@@ -1,15 +1,22 @@
 "use client"
 
 import { Mic, MicOff, Video as VideoIcon, VideoOff } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import type { JoinPreferences } from "@/components/room/RoomClient"
+import { JoinDefaultsSection } from "@/components/settings/JoinDefaultsSection"
+import { Modal } from "@/components/ui/Modal"
 import { Select } from "@/components/ui/Select"
 import { useMediaPreview } from "@/hooks/useMediaPreview"
+import { usePreferencesShortcut } from "@/hooks/usePreferencesShortcut"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
-import { readDevicePref, setDevicePref } from "@/stores/devicePrefs"
+import {
+  type DeviceKind,
+  readDevicePref,
+  setDevicePref,
+} from "@/stores/devicePrefs"
 import { $joinCameraOff, $joinMuted } from "@/stores/preferences"
 
 function readStoredString(key: string): string {
@@ -75,6 +82,8 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
   const [audioDeviceId, setAudioDeviceId] = useState<string>()
   const [videoDeviceId, setVideoDeviceId] = useState<string>()
   const [joining, setJoining] = useState(false)
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
+  usePreferencesShortcut(useCallback(() => setPreferencesOpen(true), []))
 
   const { mics, cameras, mediaError, stopStream } = useMediaPreview({
     audioEnabled,
@@ -135,6 +144,12 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
         <Wordmark />
         <ThemeToggle />
       </header>
+      <LobbyPreferencesModal
+        isOpen={preferencesOpen}
+        onClose={() => setPreferencesOpen(false)}
+        onJoinMutedEnabled={() => setAudioEnabled(false)}
+        onJoinCameraOffEnabled={() => setVideoEnabled(false)}
+      />
 
       <div className="grid flex-1 content-center gap-8 pb-16 lg:grid-cols-2">
         <div className="relative aspect-video overflow-hidden rounded-box bg-base-300">
@@ -202,45 +217,23 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
             onChange={(e) => setDisplayName(e.target.value)}
           />
 
-          {mics.length > 0 && (
-            <label className="form-control w-full">
-              <span className="label-text pb-1 text-xs">Microphone</span>
-              <Select
-                size="md"
-                value={audioDeviceId ?? ""}
-                onChange={(e) => {
-                  const id = e.target.value || undefined
-                  setAudioDeviceId(id)
-                  setDevicePref("audioinput", id ?? "")
-                }}
-                placeholder="Default microphone"
-                options={mics.map((d) => ({
-                  value: d.deviceId,
-                  label: cleanDeviceLabel(d.label) || "Microphone",
-                }))}
-              />
-            </label>
-          )}
+          <DeviceSelectField
+            kind="audioinput"
+            label="Microphone"
+            placeholder="Default microphone"
+            devices={mics}
+            value={audioDeviceId}
+            onChange={setAudioDeviceId}
+          />
 
-          {cameras.length > 0 && (
-            <label className="form-control w-full">
-              <span className="label-text pb-1 text-xs">Camera</span>
-              <Select
-                size="md"
-                value={videoDeviceId ?? ""}
-                onChange={(e) => {
-                  const id = e.target.value || undefined
-                  setVideoDeviceId(id)
-                  setDevicePref("videoinput", id ?? "")
-                }}
-                placeholder="Default camera"
-                options={cameras.map((d) => ({
-                  value: d.deviceId,
-                  label: cleanDeviceLabel(d.label) || "Camera",
-                }))}
-              />
-            </label>
-          )}
+          <DeviceSelectField
+            kind="videoinput"
+            label="Camera"
+            placeholder="Default camera"
+            devices={cameras}
+            value={videoDeviceId}
+            onChange={setVideoDeviceId}
+          />
 
           <button
             type="submit"
@@ -253,5 +246,85 @@ export function Lobby({ slug, onJoin }: LobbyProps) {
         </form>
       </div>
     </main>
+  )
+}
+
+type DeviceOption = Pick<MediaDeviceInfo, "deviceId" | "label">
+
+function DeviceSelectField({
+  kind,
+  label,
+  placeholder,
+  devices,
+  value,
+  onChange,
+}: {
+  kind: DeviceKind
+  label: string
+  placeholder: string
+  devices: readonly DeviceOption[]
+  value?: string
+  onChange: (value: string | undefined) => void
+}) {
+  if (devices.length === 0) return null
+
+  return (
+    <div className="form-control w-full">
+      <span className="label-text pb-1 text-xs">{label}</span>
+      <Select
+        aria-label={label}
+        size="md"
+        value={value ?? ""}
+        onChange={(e) => {
+          const id = e.target.value || undefined
+          onChange(id)
+          setDevicePref(kind, id ?? "")
+        }}
+        placeholder={placeholder}
+        options={devices.map((d) => ({
+          value: d.deviceId,
+          label: cleanDeviceLabel(d.label) || label,
+        }))}
+      />
+    </div>
+  )
+}
+
+function LobbyPreferencesModal({
+  isOpen,
+  onClose,
+  onJoinMutedEnabled,
+  onJoinCameraOffEnabled,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  onJoinMutedEnabled: () => void
+  onJoinCameraOffEnabled: () => void
+}) {
+  return (
+    <Modal isOpen={isOpen} onClose={onClose} className="max-w-md">
+      <div className="flex flex-col gap-5">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="font-semibold text-lg">Preferences</h2>
+          <button
+            type="button"
+            className="btn btn-primary btn-sm"
+            onClick={onClose}
+          >
+            Done
+          </button>
+        </div>
+
+        <section className="flex flex-col gap-3">
+          <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
+            Meeting
+          </h3>
+          <JoinDefaultsSection
+            onMutedEnabled={onJoinMutedEnabled}
+            onCameraOffEnabled={onJoinCameraOffEnabled}
+          />
+        </section>
+      </div>
+    </Modal>
   )
 }
