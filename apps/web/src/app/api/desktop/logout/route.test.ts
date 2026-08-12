@@ -65,7 +65,9 @@ describe("desktop logout route", () => {
   })
 
   it("supports DELETE as an alias for POST", async () => {
-    const response = await DELETE(request("http://meet.test/api/desktop/logout"))
+    const response = await DELETE(
+      request("http://meet.test/api/desktop/logout"),
+    )
 
     expect(response.status).toBe(200)
     expect(state.revokeDesktopSession).toHaveBeenCalledWith("desktop-token")

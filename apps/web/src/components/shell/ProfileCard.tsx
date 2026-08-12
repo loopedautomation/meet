@@ -144,7 +144,7 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
           />
         </label>
         {mics.length > 0 && (
-          <label className="block px-2 py-1">
+          <div className="block px-2 py-1">
             <span className="block pb-1 text-base-content/60 text-xs">
               Microphone
             </span>
@@ -161,10 +161,10 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
                 label: cleanDeviceLabel(d.label) || "Microphone",
               }))}
             />
-          </label>
+          </div>
         )}
         {cameras.length > 0 && (
-          <label className="block px-2 py-1">
+          <div className="block px-2 py-1">
             <span className="block pb-1 text-base-content/60 text-xs">
               Camera
             </span>
@@ -181,7 +181,7 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
                 label: cleanDeviceLabel(d.label) || "Camera",
               }))}
             />
-          </label>
+          </div>
         )}
 
         <div className="divider my-1" />
