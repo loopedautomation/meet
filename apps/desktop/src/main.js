@@ -6,6 +6,7 @@
 // notifications, auto-launch.
 const crypto = require("node:crypto")
 const fs = require("node:fs")
+const os = require("node:os")
 const path = require("node:path")
 const {
   app,
@@ -25,19 +26,61 @@ const { autoUpdater } = require("electron-updater")
 // file, this path covers dev runs and Linux/Windows windows.
 const APP_ICON = path.join(__dirname, "..", "build", "icon.png")
 
-// Dev runs get their own userData directory, mirroring looped whisper's
-// "(Dev)" split. Without this a `pnpm dev` session and an installed release
-// share one settings file, and a dev server URL leaks into the packaged app
-// — which presents as a blank window pointed at a localhost that isn't
-// running. Must happen before anything reads app.getPath("userData").
+// Dev runs keep their own Electron userData directory, mirroring looped
+// whisper's "(Dev)" split. Settings now live in the shared dotfile below, but
+// the split still matters when migrating from the correct legacy directory.
 if (!app.isPackaged) app.setName(`${app.getName()} (Dev)`)
 
-const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json")
+const SETTINGS_FILE = () =>
+  path.join(os.homedir(), ".looped", "meet", "settings.json")
+const LEGACY_SETTINGS_FILE = () =>
+  path.join(app.getPath("userData"), "settings.json")
+let settingsMigrationChecked = false
+
+function chmodSettingsFile(file) {
+  try {
+    fs.chmodSync(file, 0o600)
+  } catch (error) {
+    console.warn(`Couldn't set settings file permissions for ${file}:`, error)
+  }
+}
+
+function migrateSettingsFile() {
+  if (settingsMigrationChecked) return
+  settingsMigrationChecked = true
+
+  const file = SETTINGS_FILE()
+  if (fs.existsSync(file)) return
+
+  const legacyFile = LEGACY_SETTINGS_FILE()
+  if (!fs.existsSync(legacyFile)) return
+
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.copyFileSync(legacyFile, file, fs.constants.COPYFILE_EXCL)
+    chmodSettingsFile(file)
+    console.info(`Migrated desktop settings from ${legacyFile} to ${file}`)
+  } catch (error) {
+    if (error && error.code === "EEXIST") return
+    console.warn(
+      `Couldn't migrate desktop settings from ${legacyFile} to ${file}:`,
+      error,
+    )
+  }
+}
 
 function loadSettings() {
+  migrateSettingsFile()
+
   try {
     return JSON.parse(fs.readFileSync(SETTINGS_FILE(), "utf8"))
-  } catch {
+  } catch (error) {
+    if (error && error.code !== "ENOENT") {
+      console.warn(
+        `Couldn't read desktop settings from ${SETTINGS_FILE()}:`,
+        error,
+      )
+    }
     return {}
   }
 }
@@ -45,7 +88,10 @@ function loadSettings() {
 function saveSettings(patch) {
   const next = { ...loadSettings(), ...patch }
   fs.mkdirSync(path.dirname(SETTINGS_FILE()), { recursive: true })
-  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(next, null, 2))
+  fs.writeFileSync(SETTINGS_FILE(), JSON.stringify(next, null, 2), {
+    mode: 0o600,
+  })
+  chmodSettingsFile(SETTINGS_FILE())
   return next
 }
 
