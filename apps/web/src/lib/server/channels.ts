@@ -88,15 +88,25 @@ export async function createChannel(opts: {
   return channel
 }
 
+/** The deterministic slug for a DM between exactly this set of members —
+ * same people (any order), same slug, always. Exported so callers can ask
+ * "does a channel already exist for this pair" (the friend-request
+ * grandfathering check in POST /api/dms) without going through
+ * findOrCreateDm's create-on-miss behavior. */
+export function dmSlugFor(memberIds: string[]): string {
+  const ids = [...new Set(memberIds)].sort()
+  return `dm-${createHash("sha256").update(ids.join(":")).digest("hex").slice(0, 16)}`
+}
+
 /**
  * A DM is a private text channel between a fixed set of people, addressed
  * deterministically: the same members always land in the same conversation.
  * Creation is idempotent by construction (unique slug from sorted ids).
  */
 export async function findOrCreateDm(memberIds: string[]): Promise<Channel> {
-  const ids = [...new Set(memberIds)].sort()
+  const ids = [...new Set(memberIds)]
   if (ids.length < 2) throw new Error("a DM needs at least two people")
-  const slug = `dm-${createHash("sha256").update(ids.join(":")).digest("hex").slice(0, 16)}`
+  const slug = dmSlugFor(ids)
   const db = getDb()
   const existing = await db.query.channels.findFirst({
     where: eq(schema.channels.slug, slug),

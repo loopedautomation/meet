@@ -2,7 +2,13 @@ import { eq, getDb, inArray, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
-import { findOrCreateAgentDm, findOrCreateDm } from "@/lib/server/channels"
+import {
+  dmSlugFor,
+  findOrCreateAgentDm,
+  findOrCreateDm,
+  getChannelBySlug,
+} from "@/lib/server/channels"
+import { connectedUserIds } from "@/lib/server/friendRequests"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import { getMemberUser } from "@/lib/server/session"
 
@@ -56,6 +62,22 @@ export async function POST(request: Request) {
     .where(inArray(schema.memberships.userId, others))
   if (memberRows.length !== others.length) {
     return NextResponse.json({ error: "unknown member" }, { status: 400 })
+  }
+  // The friend-request gate: 1:1 human DMs only (group DMs — others.length
+  // > 1 — stay ungated, out of scope for #284). An existing DM channel for
+  // this exact pair always wins first, so every DM that predates this
+  // feature keeps working with zero migration/backfill.
+  if (others.length === 1) {
+    const existing = await getChannelBySlug(dmSlugFor([user.id, others[0]]))
+    if (!existing) {
+      const connected = await connectedUserIds(user.id)
+      if (!connected.has(others[0])) {
+        return NextResponse.json(
+          { error: "friend request required", code: "request_required" },
+          { status: 403 },
+        )
+      }
+    }
   }
   const dm = await findOrCreateDm([user.id, ...others])
   return NextResponse.json({ slug: dm.slug })
