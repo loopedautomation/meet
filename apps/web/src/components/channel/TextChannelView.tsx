@@ -478,7 +478,7 @@ export function TextChannelView({
                         <button
                           key={emoji}
                           type="button"
-                          className={`badge badge-sm cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
+                          className={`badge badge-md cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
                           onClick={() => void react(m, emoji)}
                         >
                           {emoji} {r.count}
