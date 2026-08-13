@@ -24,7 +24,7 @@ export async function GET(request: Request) {
 
   const results = await getDb().execute(sql`
     select m.id, m.content, m.created_at, c.slug, c.is_dm,
-           coalesce(u.name, u.email, m.author_agent_id, 'someone') as author,
+           coalesce(u.display_name, u.name, u.email, m.author_agent_id, 'someone') as author,
            ts_headline('english', m.content, plainto_tsquery('english', ${q}),
                        'MaxWords=18, MinWords=8, StartSel=**, StopSel=**') as snippet
     from messages m

@@ -16,9 +16,9 @@ export async function GET() {
   const rows = await getDb()
     .select({
       id: schema.users.id,
-      name: schema.users.name,
+      name: schema.effectiveUserName,
       email: schema.users.email,
-      image: schema.users.image,
+      image: schema.effectiveUserAvatar,
       statusText: schema.users.statusText,
       presence: schema.users.presence,
       role: schema.memberships.role,
