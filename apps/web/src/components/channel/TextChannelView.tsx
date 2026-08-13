@@ -378,7 +378,7 @@ export function TextChannelView({
                   )}
                   <div className="flex items-start justify-between gap-2">
                     <span className="min-w-0">
-                      {m.text && <Markdown text={m.text} className="text-sm" />}
+                      {m.text && <Markdown text={m.text} size="base" />}
                       {m.attachments?.map((a) =>
                         a.type.startsWith("image/") ? (
                           <button

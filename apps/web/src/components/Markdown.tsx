@@ -12,13 +12,23 @@ import remarkGfm from "remark-gfm"
 export function Markdown({
   text,
   className = "",
+  size = "sm",
 }: {
   text: string
   className?: string
+  /**
+   * Typography-plugin scale, applied as the literal `prose-sm`/`prose-base`
+   * modifier (not a trailing `text-*` utility) — layering a `text-*` class
+   * on top would set `font-size` from two different sources on the same
+   * element, which Tailwind resolves by generated-CSS order rather than
+   * class-list order, so it's not something to rely on. Defaults to `"sm"`
+   * to keep existing callers (chat bubbles, doc preview) unchanged.
+   */
+  size?: "sm" | "base"
 }) {
   return (
     <div
-      className={`prose prose-sm max-w-none break-words prose-headings:font-medium prose-pre:rounded-box prose-pre:bg-base-200 prose-pre:text-base-content prose-code:before:content-none prose-code:after:content-none ${className}`}
+      className={`prose ${size === "base" ? "prose-base" : "prose-sm"} max-w-none break-words prose-headings:font-medium prose-pre:rounded-box prose-pre:bg-base-200 prose-pre:text-base-content prose-code:before:content-none prose-code:after:content-none ${className}`}
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkEmoji]}
