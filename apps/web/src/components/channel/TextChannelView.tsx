@@ -352,10 +352,15 @@ export function TextChannelView({
                   className={`group rounded-box transition-colors duration-500 ${grouped ? "mt-0.5" : "mt-3"} ${m.id === highlightedId ? "bg-warning/15 ring-1 ring-warning/40" : ""}`}
                 >
                   {parent && (
-                    <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => jumpToMessage(parent.id)}
+                      title="Jump to original message"
+                      className="mb-0.5 block w-full border-primary/40 border-l-2 pl-2 text-left text-base-content/50 text-xs hover:text-base-content/80"
+                    >
                       <span className="font-medium">{parent.fromName}</span>:{" "}
                       {parent.text.slice(0, 80)}
-                    </div>
+                    </button>
                   )}
                   {!grouped && (
                     <div className="text-xs">
