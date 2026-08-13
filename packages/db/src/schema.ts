@@ -9,6 +9,7 @@ import {
   primaryKey,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core"
 
@@ -159,6 +160,48 @@ export const channelMembers = pgTable(
       .defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.channelId, t.userId] })],
+)
+
+// A consent gate in front of 1:1 human DMs (group and agent DMs stay
+// ungated — see POST /api/dms). An `accepted` row *is* the persistent
+// "these two are connected" record; there is no separate friends table.
+// Decline is discard-only (no block): the same sender can re-request later.
+export const friendRequests = pgTable(
+  "friend_requests",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    requesterId: uuid("requester_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    recipientId: uuid("recipient_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+  },
+  (t) => [
+    check(
+      "friend_requests_status_check",
+      sql`${t.status} in ('pending', 'accepted', 'declined', 'canceled')`,
+    ),
+    check(
+      "friend_requests_not_self",
+      sql`${t.requesterId} <> ${t.recipientId}`,
+    ),
+    // At most one PENDING row per ordered (requester, recipient) pair —
+    // guards a double-send race the way findOrCreateDm's
+    // onConflictDoNothing guards concurrent channel creation. Declined,
+    // canceled and accepted rows are exempt so history and re-request
+    // after a decline both work.
+    uniqueIndex("friend_requests_pending_pair_idx")
+      .on(t.requesterId, t.recipientId)
+      .where(sql`${t.status} = 'pending'`),
+    index("friend_requests_recipient_status_idx").on(t.recipientId, t.status),
+    index("friend_requests_requester_status_idx").on(t.requesterId, t.status),
+  ],
 )
 
 // Agents invited to the server: DMable, addable to group chats, listed in
