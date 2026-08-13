@@ -6,6 +6,7 @@ import {
   Bot,
   ChevronDown,
   Hash,
+  Inbox,
   MessageCircle,
   PhoneCall,
   Plus,
@@ -24,6 +25,7 @@ import { $mobileSidebarOpen } from "@/stores/mobileSidebar"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
 import { DmStart } from "./DmStart"
+import { MessageRequestsModal } from "./MessageRequestsModal"
 import { type Presence, ProfileCard } from "./ProfileCard"
 import { SearchBox } from "./SearchBox"
 
@@ -87,6 +89,8 @@ export function AppSidebar({
   const canCreate = user.role !== "member"
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [showRequests, setShowRequests] = useState(false)
+  const [incomingRequestCount, setIncomingRequestCount] = useState(0)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = useCallback(async () => {
@@ -97,6 +101,25 @@ export function AppSidebar({
       setChannels(data.channels)
     } catch {}
   }, [])
+
+  // The "Message requests" inbox badge — polled on its own light interval
+  // rather than folded into the presence SSE stream, which is scoped to
+  // occupancy/channel-list data (see #284's plan for why this stays a
+  // separate, simpler poll instead of extending that infra).
+  const loadRequestCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/friend-requests")
+      if (!res.ok) return
+      const data = (await res.json()) as { incoming: unknown[] }
+      setIncomingRequestCount(data.incoming.length)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    void loadRequestCount()
+    const timer = setInterval(() => void loadRequestCount(), 20_000)
+    return () => clearInterval(timer)
+  }, [loadRequestCount])
 
   useEffect(() => {
     let source: EventSource | null = null
@@ -432,7 +455,20 @@ export function AppSidebar({
             <>
               <div className="flex items-center justify-between border-base-300 border-b px-4 py-3">
                 <span className="font-semibold">Direct messages</span>
-                <DmStart />
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    className="btn btn-ghost btn-xs relative"
+                    title="Message requests"
+                    onClick={() => setShowRequests(true)}
+                  >
+                    <Inbox className="size-3.5" />
+                    {incomingRequestCount > 0 && (
+                      <span className="-top-0.5 -right-0.5 absolute size-2 rounded-full bg-primary ring-2 ring-base-200" />
+                    )}
+                  </button>
+                  <DmStart />
+                </div>
               </div>
               <div className="px-3 pt-3">
                 <SearchBox />
@@ -531,6 +567,20 @@ export function AppSidebar({
         onClose={() => setShowCreate(false)}
         onCreated={(slug) => {
           void load()
+          router.push(`/c/${slug}`)
+        }}
+      />
+
+      <MessageRequestsModal
+        isOpen={showRequests}
+        onClose={() => {
+          setShowRequests(false)
+          void loadRequestCount()
+        }}
+        onAccepted={(slug) => {
+          setShowRequests(false)
+          void load()
+          void loadRequestCount()
           router.push(`/c/${slug}`)
         }}
       />
