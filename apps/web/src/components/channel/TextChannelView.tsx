@@ -7,6 +7,7 @@ import {
   PhoneCall,
   Pin,
   Reply,
+  Search,
   SendHorizontal,
   Trash2,
   Users,
@@ -15,6 +16,7 @@ import {
 import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
+import { ChannelSearchPanel } from "@/components/channel/ChannelSearchPanel"
 import { Markdown } from "@/components/Markdown"
 import { Modal } from "@/components/ui/Modal"
 import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
@@ -97,6 +99,10 @@ export function TextChannelView({
     url: string
     name: string
   } | null>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  // Transient scroll-to-match pulse — keyed by message id (not a one-time
+  // DOM class stamp) so it survives the 5s poll re-rendering `messages`.
+  const [highlightedId, setHighlightedId] = useState<string | null>(null)
 
   useEffect(() => {
     void fetch("/api/me")
@@ -231,6 +237,28 @@ export function TextChannelView({
   const byId = new Map((messages ?? []).map((m) => [m.id, m]))
   const pinned = (messages ?? []).filter((m) => m.pinned)
 
+  // v1: jump-to-match only covers what's already in the loaded `messages`
+  // array (no pagination/virtualization in this view yet). A match older
+  // than what's loaded just closes the panel and says so — no "load
+  // messages around X" fetch, that's out of scope for now.
+  const jumpToMessage = (id: string) => {
+    setSearchOpen(false)
+    if (!byId.has(id)) {
+      toast.info("That message is older than what's currently loaded.")
+      return
+    }
+    stickToBottom.current = false
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`msg-${id}`)
+        ?.scrollIntoView({ block: "center", behavior: "smooth" })
+    })
+    setHighlightedId(id)
+    window.setTimeout(() => {
+      setHighlightedId((cur) => (cur === id ? null : cur))
+    }, 2000)
+  }
+
   if (resumingCall) {
     return (
       <main className="flex h-full items-center justify-center">
@@ -240,325 +268,349 @@ export function TextChannelView({
   }
 
   return (
-    <main className="mx-auto flex h-full max-w-3xl flex-col px-4">
-      <header className="flex items-center justify-between gap-3 border-base-300 border-b py-3">
-        <span className="flex items-center gap-1 font-semibold">
-          {label.startsWith("#") ? (
-            <Hash className="size-4 text-base-content/60" />
-          ) : (
-            <Users className="size-4 text-base-content/60" />
-          )}
-          {label.replace(/^#/, "")}
-        </span>
-        {kind === "voice" ? (
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            // Same tab: the call is this page's other state, not a side
-            // conversation to escalate into (unlike a DM huddle).
-            onClick={() => router.push(`/c/${slug}?call=1`)}
-          >
-            <PhoneCall className="size-4" />
-            Join call
-          </button>
-        ) : (
-          // Huddles are a DM escalation only — text channels stay text.
-          !label.startsWith("#") && (
+    <div className="flex h-full min-w-0">
+      <main className="mx-auto flex h-full min-w-0 max-w-3xl flex-1 flex-col px-4">
+        <header className="flex items-center justify-between gap-3 border-base-300 border-b py-3">
+          <span className="flex items-center gap-1 font-semibold">
+            {label.startsWith("#") ? (
+              <Hash className="size-4 text-base-content/60" />
+            ) : (
+              <Users className="size-4 text-base-content/60" />
+            )}
+            {label.replace(/^#/, "")}
+          </span>
+          <span className="flex items-center gap-2">
             <button
               type="button"
-              className="btn btn-primary btn-sm"
-              // The huddle opens in its own tab so the conversation stays put.
-              onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+              className="btn btn-ghost btn-circle btn-sm"
+              title="Search this channel"
+              aria-label="Search this channel"
+              onClick={() => setSearchOpen((open) => !open)}
             >
-              <PhoneCall className="size-4" />
-              Start a huddle
+              <Search className="size-4" />
             </button>
-          )
-        )}
-      </header>
-
-      {pinned.length > 0 && (
-        <div className="border-base-300 border-b bg-base-200/30 px-2 py-1.5 text-xs">
-          <Pin className="mr-1 inline size-3" />
-          {pinned[pinned.length - 1].text.slice(0, 120)}
-        </div>
-      )}
-
-      <ul
-        className="flex-1 overflow-y-auto py-4"
-        onScroll={(e) => {
-          const el = e.currentTarget
-          stickToBottom.current =
-            el.scrollHeight - el.scrollTop - el.clientHeight < 80
-        }}
-      >
-        {messages === null ? (
-          <li className="flex justify-center py-8">
-            <span className="loading loading-spinner loading-sm" />
-          </li>
-        ) : messages.length === 0 ? (
-          <li className="py-8 text-center text-base-content/50 text-sm">
-            Nothing here yet — say something.
-          </li>
-        ) : (
-          messages.map((m, i) => {
-            const grouped =
-              i > 0 && messages[i - 1].from === m.from && !m.replyToId
-            const parent = m.replyToId ? byId.get(m.replyToId) : undefined
-            return (
-              <li key={m.id} className={`group ${grouped ? "mt-0.5" : "mt-3"}`}>
-                {parent && (
-                  <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
-                    <span className="font-medium">{parent.fromName}</span>:{" "}
-                    {parent.text.slice(0, 80)}
-                  </div>
-                )}
-                {!grouped && (
-                  <div className="text-xs">
-                    <span className="font-medium">{m.fromName}</span>
-                    <span className="ml-2 text-base-content/40">
-                      {new Date(m.at).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                    {m.editedAt && (
-                      <span className="ml-1 text-base-content/40">
-                        (edited)
-                      </span>
-                    )}
-                    {m.pinned && (
-                      <Pin className="ml-1 inline size-3 text-primary" />
-                    )}
-                  </div>
-                )}
-                <div className="flex items-start justify-between gap-2">
-                  <span className="min-w-0">
-                    {m.text && <Markdown text={m.text} className="text-sm" />}
-                    {m.attachments?.map((a) =>
-                      a.type.startsWith("image/") ? (
-                        <button
-                          key={a.key}
-                          type="button"
-                          className="mt-1 block cursor-zoom-in"
-                          onClick={() =>
-                            setLightbox({
-                              url: `/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`,
-                              name: a.name,
-                            })
-                          }
-                        >
-                          <img
-                            src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                            alt={a.name}
-                            className="max-h-64 max-w-full rounded-box"
-                          />
-                        </button>
-                      ) : (
-                        <a
-                          key={a.key}
-                          href={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                          className="link mt-1 flex items-center gap-1 text-sm"
-                          download={a.name}
-                        >
-                          <Paperclip className="size-3.5" />
-                          {a.name}
-                          <span className="text-base-content/40 text-xs">
-                            ({Math.max(1, Math.round(a.size / 1024))} KB)
-                          </span>
-                        </a>
-                      ),
-                    )}
-                  </span>
-                  <span className="invisible flex shrink-0 items-center group-hover:visible">
-                    {QUICK_EMOJI.slice(0, 3).map((e) => (
-                      <button
-                        key={e}
-                        type="button"
-                        className="btn btn-ghost btn-xs px-1"
-                        onClick={() => void react(m, e)}
-                      >
-                        {e}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-xs px-1"
-                      title="Reply"
-                      onClick={() => {
-                        setReplyTo(m)
-                        setEditing(null)
-                      }}
-                    >
-                      <Reply className="size-3.5" />
-                    </button>
-                    {m.own && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs px-1"
-                        title="Edit"
-                        onClick={() => {
-                          setEditing(m)
-                          setReplyTo(null)
-                          setDraft(m.text)
-                        }}
-                      >
-                        <Pencil className="size-3.5" />
-                      </button>
-                    )}
-                    {canModerate && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs px-1"
-                        title={m.pinned ? "Unpin" : "Pin"}
-                        onClick={() => void togglePin(m)}
-                      >
-                        <Pin className="size-3.5" />
-                      </button>
-                    )}
-                    {(m.own || canModerate) && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs px-1"
-                        title="Delete"
-                        onClick={() => void remove(m)}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </button>
-                    )}
-                  </span>
-                </div>
-                {Object.keys(m.reactions).length > 0 && (
-                  <div className="mt-0.5 flex flex-wrap gap-1">
-                    {Object.entries(m.reactions).map(([emoji, r]) => (
-                      <button
-                        key={emoji}
-                        type="button"
-                        className={`badge badge-sm cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
-                        onClick={() => void react(m, emoji)}
-                      >
-                        {emoji} {r.count}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </li>
-            )
-          })
-        )}
-        <div ref={bottomRef} />
-      </ul>
-
-      {(replyTo || editing) && (
-        <div className="flex items-center justify-between rounded-t-box bg-base-200/60 px-3 py-1 text-xs">
-          <span className="truncate">
-            {editing
-              ? "Editing message"
-              : `Replying to ${replyTo?.fromName}: ${replyTo?.text.slice(0, 60)}`}
-          </span>
-          <button
-            type="button"
-            className="btn btn-ghost btn-xs btn-square"
-            onClick={() => {
-              setReplyTo(null)
-              setEditing(null)
-              setDraft("")
-            }}
-          >
-            <X className="size-3.5" />
-          </button>
-        </div>
-      )}
-      {pending.length > 0 && (
-        <div className="flex flex-wrap gap-2 pt-2">
-          {pending.map((a) => (
-            <span key={a.key} className="badge badge-ghost gap-1">
-              {a.type.startsWith("image/") ? (
-                <img
-                  src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                  alt=""
-                  className="size-4 rounded object-cover"
-                />
-              ) : (
-                <Paperclip className="size-3" />
-              )}
-              {a.name}
+            {kind === "voice" ? (
               <button
                 type="button"
-                className="ml-1"
-                onClick={() =>
-                  setPending((prev) => prev.filter((p) => p.key !== a.key))
-                }
+                className="btn btn-primary btn-sm"
+                // Same tab: the call is this page's other state, not a side
+                // conversation to escalate into (unlike a DM huddle).
+                onClick={() => router.push(`/c/${slug}?call=1`)}
               >
-                <X className="size-3" />
+                <PhoneCall className="size-4" />
+                Join call
               </button>
+            ) : (
+              // Huddles are a DM escalation only — text channels stay text.
+              !label.startsWith("#") && (
+                <button
+                  type="button"
+                  className="btn btn-primary btn-sm"
+                  // The huddle opens in its own tab so the conversation stays put.
+                  onClick={() => window.open(`/c/${slug}?huddle=1`, "_blank")}
+                >
+                  <PhoneCall className="size-4" />
+                  Start a huddle
+                </button>
+              )
+            )}
+          </span>
+        </header>
+
+        {pinned.length > 0 && (
+          <div className="border-base-300 border-b bg-base-200/30 px-2 py-1.5 text-xs">
+            <Pin className="mr-1 inline size-3" />
+            {pinned[pinned.length - 1].text.slice(0, 120)}
+          </div>
+        )}
+
+        <ul
+          className="flex-1 overflow-y-auto py-4"
+          onScroll={(e) => {
+            const el = e.currentTarget
+            stickToBottom.current =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 80
+          }}
+        >
+          {messages === null ? (
+            <li className="flex justify-center py-8">
+              <span className="loading loading-spinner loading-sm" />
+            </li>
+          ) : messages.length === 0 ? (
+            <li className="py-8 text-center text-base-content/50 text-sm">
+              Nothing here yet — say something.
+            </li>
+          ) : (
+            messages.map((m, i) => {
+              const grouped =
+                i > 0 && messages[i - 1].from === m.from && !m.replyToId
+              const parent = m.replyToId ? byId.get(m.replyToId) : undefined
+              return (
+                <li
+                  key={m.id}
+                  id={`msg-${m.id}`}
+                  className={`group rounded-box transition-colors duration-500 ${grouped ? "mt-0.5" : "mt-3"} ${m.id === highlightedId ? "bg-warning/15 ring-1 ring-warning/40" : ""}`}
+                >
+                  {parent && (
+                    <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
+                      <span className="font-medium">{parent.fromName}</span>:{" "}
+                      {parent.text.slice(0, 80)}
+                    </div>
+                  )}
+                  {!grouped && (
+                    <div className="text-xs">
+                      <span className="font-medium">{m.fromName}</span>
+                      <span className="ml-2 text-base-content/40">
+                        {new Date(m.at).toLocaleTimeString([], {
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </span>
+                      {m.editedAt && (
+                        <span className="ml-1 text-base-content/40">
+                          (edited)
+                        </span>
+                      )}
+                      {m.pinned && (
+                        <Pin className="ml-1 inline size-3 text-primary" />
+                      )}
+                    </div>
+                  )}
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="min-w-0">
+                      {m.text && <Markdown text={m.text} size="base" />}
+                      {m.attachments?.map((a) =>
+                        a.type.startsWith("image/") ? (
+                          <button
+                            key={a.key}
+                            type="button"
+                            className="mt-1 block cursor-zoom-in"
+                            onClick={() =>
+                              setLightbox({
+                                url: `/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`,
+                                name: a.name,
+                              })
+                            }
+                          >
+                            <img
+                              src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                              alt={a.name}
+                              className="max-h-64 max-w-full rounded-box"
+                            />
+                          </button>
+                        ) : (
+                          <a
+                            key={a.key}
+                            href={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                            className="link mt-1 flex items-center gap-1 text-sm"
+                            download={a.name}
+                          >
+                            <Paperclip className="size-3.5" />
+                            {a.name}
+                            <span className="text-base-content/40 text-xs">
+                              ({Math.max(1, Math.round(a.size / 1024))} KB)
+                            </span>
+                          </a>
+                        ),
+                      )}
+                    </span>
+                    <span className="invisible flex shrink-0 items-center group-hover:visible">
+                      {QUICK_EMOJI.slice(0, 3).map((e) => (
+                        <button
+                          key={e}
+                          type="button"
+                          className="btn btn-ghost btn-xs px-1"
+                          onClick={() => void react(m, e)}
+                        >
+                          {e}
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        className="btn btn-ghost btn-xs px-1"
+                        title="Reply"
+                        onClick={() => {
+                          setReplyTo(m)
+                          setEditing(null)
+                        }}
+                      >
+                        <Reply className="size-3.5" />
+                      </button>
+                      {m.own && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs px-1"
+                          title="Edit"
+                          onClick={() => {
+                            setEditing(m)
+                            setReplyTo(null)
+                            setDraft(m.text)
+                          }}
+                        >
+                          <Pencil className="size-3.5" />
+                        </button>
+                      )}
+                      {canModerate && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs px-1"
+                          title={m.pinned ? "Unpin" : "Pin"}
+                          onClick={() => void togglePin(m)}
+                        >
+                          <Pin className="size-3.5" />
+                        </button>
+                      )}
+                      {(m.own || canModerate) && (
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-xs px-1"
+                          title="Delete"
+                          onClick={() => void remove(m)}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </span>
+                  </div>
+                  {Object.keys(m.reactions).length > 0 && (
+                    <div className="mt-0.5 flex flex-wrap gap-1">
+                      {Object.entries(m.reactions).map(([emoji, r]) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          className={`badge badge-sm cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
+                          onClick={() => void react(m, emoji)}
+                        >
+                          {emoji} {r.count}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </li>
+              )
+            })
+          )}
+          <div ref={bottomRef} />
+        </ul>
+
+        {(replyTo || editing) && (
+          <div className="flex items-center justify-between rounded-t-box bg-base-200/60 px-3 py-1 text-xs">
+            <span className="truncate">
+              {editing
+                ? "Editing message"
+                : `Replying to ${replyTo?.fromName}: ${replyTo?.text.slice(0, 60)}`}
             </span>
-          ))}
-        </div>
-      )}
-      <form
-        onSubmit={send}
-        className="flex items-center gap-2 border-base-300 border-t py-3"
-      >
-        {canAttach && !editing && (
-          <>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              onChange={(e) => {
-                const file = e.target.files?.[0]
-                if (file) void upload(file)
-                e.target.value = ""
-              }}
-            />
             <button
               type="button"
-              className="btn btn-ghost btn-square"
-              title="Attach a file"
-              disabled={uploading}
-              onClick={() => fileInputRef.current?.click()}
+              className="btn btn-ghost btn-xs btn-square"
+              onClick={() => {
+                setReplyTo(null)
+                setEditing(null)
+                setDraft("")
+              }}
             >
-              {uploading ? (
-                <span className="loading loading-spinner loading-sm" />
-              ) : (
-                <Paperclip className="size-5" />
-              )}
+              <X className="size-3.5" />
             </button>
-          </>
+          </div>
         )}
-        <input
-          className="input w-full"
-          placeholder={`Message ${label}`}
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-        />
-        <button
-          type="submit"
-          className="btn btn-primary"
-          disabled={(!draft.trim() && pending.length === 0) || sending}
+        {pending.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-2">
+            {pending.map((a) => (
+              <span key={a.key} className="badge badge-ghost gap-1">
+                {a.type.startsWith("image/") ? (
+                  <img
+                    src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                    alt=""
+                    className="size-4 rounded object-cover"
+                  />
+                ) : (
+                  <Paperclip className="size-3" />
+                )}
+                {a.name}
+                <button
+                  type="button"
+                  className="ml-1"
+                  onClick={() =>
+                    setPending((prev) => prev.filter((p) => p.key !== a.key))
+                  }
+                >
+                  <X className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <form
+          onSubmit={send}
+          className="flex items-center gap-2 border-base-300 border-t py-3"
         >
-          {sending ? (
-            <span className="loading loading-spinner loading-sm" />
-          ) : (
-            <SendHorizontal className="size-5" />
+          {canAttach && !editing && (
+            <>
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0]
+                  if (file) void upload(file)
+                  e.target.value = ""
+                }}
+              />
+              <button
+                type="button"
+                className="btn btn-ghost btn-square"
+                title="Attach a file"
+                disabled={uploading}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                {uploading ? (
+                  <span className="loading loading-spinner loading-sm" />
+                ) : (
+                  <Paperclip className="size-5" />
+                )}
+              </button>
+            </>
           )}
-        </button>
-      </form>
-      <Modal
-        isOpen={lightbox !== null}
-        onClose={() => setLightbox(null)}
-        className="max-w-none bg-transparent p-0 shadow-none"
-      >
-        {lightbox && (
-          <img
-            src={lightbox.url}
-            alt={lightbox.name}
-            className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-box"
-            onClick={() => setLightbox(null)}
+          <input
+            className="input w-full"
+            placeholder={`Message ${label}`}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
           />
-        )}
-      </Modal>
-    </main>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={(!draft.trim() && pending.length === 0) || sending}
+          >
+            {sending ? (
+              <span className="loading loading-spinner loading-sm" />
+            ) : (
+              <SendHorizontal className="size-5" />
+            )}
+          </button>
+        </form>
+        <Modal
+          isOpen={lightbox !== null}
+          onClose={() => setLightbox(null)}
+          className="max-w-none bg-transparent p-0 shadow-none"
+        >
+          {lightbox && (
+            <img
+              src={lightbox.url}
+              alt={lightbox.name}
+              className="max-h-[85vh] max-w-[90vw] cursor-zoom-out rounded-box"
+              onClick={() => setLightbox(null)}
+            />
+          )}
+        </Modal>
+      </main>
+      {searchOpen && (
+        <ChannelSearchPanel
+          room={room}
+          onClose={() => setSearchOpen(false)}
+          onResultClick={jumpToMessage}
+        />
+      )}
+    </div>
   )
 }
