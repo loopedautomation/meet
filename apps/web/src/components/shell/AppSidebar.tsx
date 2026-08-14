@@ -20,6 +20,7 @@ import { toast } from "react-toastify"
 import { Avatar } from "@/components/ui/Avatar"
 import { handleIncomingMessage } from "@/lib/messageNotifications"
 import { $activeCall } from "@/stores/activeCall"
+import { markDesktopReady } from "@/stores/desktopReady"
 import { $mobileSidebarOpen } from "@/stores/mobileSidebar"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
@@ -76,9 +77,11 @@ export type SidebarUser = {
 export function AppSidebar({
   user,
   serverName,
+  isElectron,
 }: {
   user: SidebarUser
   serverName: string
+  isElectron: boolean
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -89,14 +92,25 @@ export function AppSidebar({
   const [showCreate, setShowCreate] = useState(false)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
+  // The shared landing spot for every channel list update, whichever
+  // source it came from — the desktop shell only needs to hear about the
+  // first one, not each fetch/SSE call site separately.
+  const reportChannels = useCallback(
+    (rows: ChannelRow[]) => {
+      setChannels(rows)
+      if (isElectron) markDesktopReady()
+    },
+    [isElectron],
+  )
+
   const load = useCallback(async () => {
     try {
       const res = await fetch("/api/channels")
       if (!res.ok) return
       const data = (await res.json()) as { channels: ChannelRow[] }
-      setChannels(data.channels)
+      reportChannels(data.channels)
     } catch {}
-  }, [])
+  }, [reportChannels])
 
   useEffect(() => {
     let source: EventSource | null = null
@@ -110,7 +124,7 @@ export function AppSidebar({
       source.onmessage = (e) => {
         try {
           const data = JSON.parse(e.data) as { channels: ChannelRow[] }
-          setChannels(data.channels)
+          reportChannels(data.channels)
         } catch {}
       }
       source.onerror = () => {
@@ -134,7 +148,7 @@ export function AppSidebar({
       if (pollTimer.current) clearInterval(pollTimer.current)
       pollTimer.current = null
     }
-  }, [load, user.id, router])
+  }, [load, reportChannels, user.id, router])
 
   // The drawer covers the page it navigated to below md — close it once
   // the route it was opened for has changed. pathname itself is unused
