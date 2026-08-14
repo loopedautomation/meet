@@ -771,6 +771,24 @@ function HostControls({ slug }: { slug: string }) {
           }
         />
       </label>
+      <label className="flex cursor-pointer items-center justify-between gap-4">
+        <span className="flex flex-col">
+          <span className="text-sm">Others can prompt agents</span>
+          <span className="text-base-content/60 text-xs">
+            Use the Agents panel's dedicated prompt box to give an agent a turn.
+            Off leaves the box visible to others but inert — @mentions in chat
+            still reach the agent either way.
+          </span>
+        </span>
+        <input
+          type="checkbox"
+          className="toggle toggle-primary"
+          checked={effective.participantsCanPromptAgents}
+          onChange={(e) =>
+            update("participantsCanPromptAgents", e.target.checked)
+          }
+        />
+      </label>
     </section>
   )
 }

@@ -18,6 +18,18 @@ export const $agentStats = atom<Record<string, AgentStatsEvent>>({})
 export const $typingAgents = atom<Record<string, { name: string; at: number }>>(
   {},
 )
+/**
+ * Prompts waiting on each agent's turn queue (the in-flight turn, if any, is
+ * covered by $typingAgents instead) — a full per-agent snapshot, replaced on
+ * every "prompt-queue" event, so the Agents panel can show a submitted
+ * prompt was received and roughly when it'll run.
+ */
+export const $agentPromptQueues = atom<
+  Record<
+    string,
+    { id: string; from: string; fromName: string; text: string; at: number }[]
+  >
+>({})
 
 export function addChatMessage(message: ChatMessage) {
   const current = $chatMessages.get()
@@ -58,6 +70,13 @@ export function removeChatMessage(id: string, by: string) {
 export function addAgentActivity(event: AgentActivityEvent) {
   if (event.type === "stats") {
     $agentStats.set({ ...$agentStats.get(), [event.agentId]: event })
+    return
+  }
+  if (event.type === "prompt-queue") {
+    $agentPromptQueues.set({
+      ...$agentPromptQueues.get(),
+      [event.agentId]: event.queue,
+    })
     return
   }
   $agentActivity.set([...$agentActivity.get().slice(-199), event])
@@ -102,4 +121,5 @@ export function resetRoomData() {
   $agentActivity.set([])
   $agentStats.set({})
   $typingAgents.set({})
+  $agentPromptQueues.set({})
 }

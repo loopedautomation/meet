@@ -3,6 +3,7 @@ import {
   type AgentControl,
   agentActivityEventSchema,
   agentControlSchema,
+  agentPromptSchema,
   applyDocUpdateB64,
   type CanvasRecord,
   canvasOpBatchSchema,
@@ -10,6 +11,7 @@ import {
   chatMessageSchema,
   chatOpSchema,
   chunkCanvasChanges,
+  DataTopic,
   defaultRoomSettings,
   describeAgentControl,
   docSyncMessageSchema,
@@ -133,11 +135,13 @@ describe("parseRoomSettings", () => {
       settings: {
         participantsCanControlAgents: false,
         participantsCanInviteAgents: false,
+        participantsCanPromptAgents: false,
       },
     })
     expect(parseRoomSettings(raw)).toEqual({
       participantsCanControlAgents: false,
       participantsCanInviteAgents: false,
+      participantsCanPromptAgents: false,
     })
   })
 
@@ -148,7 +152,15 @@ describe("parseRoomSettings", () => {
     expect(parseRoomSettings(raw)).toEqual({
       participantsCanControlAgents: true,
       participantsCanInviteAgents: false,
+      participantsCanPromptAgents: true,
     })
+  })
+
+  it("defaults prompting to true, independent of the other two toggles", () => {
+    const raw = JSON.stringify({
+      settings: { participantsCanControlAgents: false },
+    })
+    expect(parseRoomSettings(raw).participantsCanPromptAgents).toBe(true)
   })
 
   it("falls back to open rather than throwing on junk", () => {
@@ -397,6 +409,23 @@ describe("agentActivityEventSchema typing", () => {
     })
     expect(parsed.success).toBe(false)
   })
+
+  it("accepts a prompt-queue snapshot, including an empty queue", () => {
+    const withItems = agentActivityEventSchema.safeParse({
+      type: "prompt-queue",
+      agentId: "scout",
+      queue: [{ id: "p1", from: "u1", fromName: "Yashay", text: "hi", at: 1 }],
+      at: 2,
+    })
+    expect(withItems.success).toBe(true)
+    const empty = agentActivityEventSchema.safeParse({
+      type: "prompt-queue",
+      agentId: "scout",
+      queue: [],
+      at: 2,
+    })
+    expect(empty.success).toBe(true)
+  })
 })
 
 describe("mentionsName", () => {
@@ -506,5 +535,55 @@ describe("chatMessageSchema / chatOpSchema", () => {
     expect(chatMessageSchema.safeParse(op).success).toBe(false)
     const message = { id: "m1", from: "a", fromName: "A", text: "hi", at: 1 }
     expect(chatOpSchema.safeParse(message).success).toBe(false)
+  })
+})
+
+describe("agentPromptSchema", () => {
+  it("accepts a panel prompt", () => {
+    const prompt = {
+      agentId: "scout",
+      id: "p1",
+      from: "user-1",
+      fromName: "Yashay",
+      text: "check the build",
+      at: 1,
+    }
+    expect(agentPromptSchema.safeParse(prompt).success).toBe(true)
+  })
+
+  it("never matches a chat message against the prompt schema, or vice versa", () => {
+    // A panel prompt must never be mistaken for a chat message (and land in
+    // room chat) — the two are deliberately separate schemas/topics.
+    const message = { id: "m1", from: "a", fromName: "A", text: "hi", at: 1 }
+    expect(agentPromptSchema.safeParse(message).success).toBe(false)
+    const prompt = {
+      agentId: "scout",
+      id: "p1",
+      from: "a",
+      fromName: "A",
+      text: "hi",
+      at: 1,
+    }
+    expect(chatMessageSchema.safeParse(prompt).success).toBe(true) // superset of fields is fine…
+    expect(agentPromptSchema.safeParse(message).success).toBe(false) // …but the reverse needs agentId
+  })
+
+  it("rejects a prompt missing the target agent", () => {
+    expect(
+      agentPromptSchema.safeParse({
+        id: "p1",
+        from: "a",
+        fromName: "A",
+        text: "hi",
+        at: 1,
+      }).success,
+    ).toBe(false)
+  })
+})
+
+describe("DataTopic", () => {
+  it("has a dedicated topic for panel prompts, separate from chat", () => {
+    expect(DataTopic.AgentPrompt).toBe("agent-prompt")
+    expect(DataTopic.AgentPrompt).not.toBe(DataTopic.Chat)
   })
 })

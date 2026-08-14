@@ -71,4 +71,39 @@ describe("controlAllowed", () => {
   it("treats a legacy room with no metadata as open", () => {
     expect(controlAllowed({ metadata: undefined }, human("user-1"))).toBe(true)
   })
+
+  it("checks a different settings key when given one, e.g. prompting", () => {
+    const room = {
+      metadata: roomMeta({
+        participantsCanControlAgents: true,
+        participantsCanPromptAgents: false,
+      }),
+    }
+    // Controls are open, but prompting specifically is reserved — the two
+    // keys are independent, not aliases of each other.
+    expect(controlAllowed(room, human("user-1"))).toBe(true)
+    expect(
+      controlAllowed(room, human("user-1"), "participantsCanPromptAgents"),
+    ).toBe(false)
+  })
+
+  it("allows only the host when prompting is reserved, mirroring the control-key checks", () => {
+    const room = {
+      metadata: roomMeta({ participantsCanPromptAgents: false }, "user-host"),
+    }
+    expect(
+      controlAllowed(room, human("user-host"), "participantsCanPromptAgents"),
+    ).toBe(true)
+    expect(
+      controlAllowed(room, human("user-other"), "participantsCanPromptAgents"),
+    ).toBe(false)
+  })
+
+  it("defaults to checking participantsCanControlAgents when no key is given", () => {
+    const room = {
+      metadata: roomMeta({ participantsCanControlAgents: false }, "user-host"),
+    }
+    expect(controlAllowed(room, human("user-host"))).toBe(true)
+    expect(controlAllowed(room, human("user-other"))).toBe(false)
+  })
 })
