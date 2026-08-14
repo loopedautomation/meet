@@ -61,6 +61,25 @@ export class SessionState {
    * can change it mid-call (see the "set-turn-policy" control).
    */
   turnPolicy: TurnPolicy = "open"
+  /**
+   * Whether this session's activity (prompts, assistant text, tool
+   * calls/results) broadcasts to the whole room instead of staying private
+   * to its owner. Off by default and never persisted — a fresh session
+   * always starts private, satisfying the "resets off by default" scope
+   * decision (see the "set-broadcast" control).
+   */
+  broadcastEnabled = false
+  /**
+   * The session's owner for privacy purposes: whoever sent the most recent
+   * chat prompt (`message.from` at the `replyInChat` call site). This is a
+   * UX/attribution concept, not an auth boundary — no per-agent ownership
+   * identity exists anywhere else in the control model, so "set-broadcast"
+   * is authorized the same way every other agent control is, not restricted
+   * to this identity.
+   */
+  lastPromptBy: string | null = null
+  /** Display name to go with `lastPromptBy`, for the room's broadcast indicator. */
+  lastPromptByName: string | null = null
 }
 
 /** Room facts fed to the brain alongside each turn. */

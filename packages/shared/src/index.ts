@@ -49,6 +49,39 @@ export const AGENT_BARGE_IN_ATTRIBUTE = "agent.bargein"
 export const AGENT_CHATTINESS_ATTRIBUTE = "agent.chattiness"
 
 /**
+ * Participant attribute holding whether an agent's session log (its inbound
+ * prompts, assistant text, and tool calls/results) is being broadcast to the
+ * whole room instead of staying private to whoever is prompting it. Off by
+ * default and reset every session — see `serializeAgentBroadcast` for the
+ * encoded value.
+ */
+export const AGENT_BROADCAST_ATTRIBUTE = "agent.broadcast"
+
+/** Whether an agent's session log is being broadcast, and to attribute it. */
+export type AgentBroadcastState = { on: boolean; by?: string; byName?: string }
+
+/**
+ * Encode broadcast state as a participant attribute value: empty when off
+ * (matching `AGENT_MUTED_ATTRIBUTE`'s "1"/absent convention), else
+ * `<by>|<byName>` so onlookers can tell "you're watching your own session"
+ * from "you're watching someone else's" without a second round trip.
+ */
+export function serializeAgentBroadcast(s: AgentBroadcastState): string {
+  if (!s.on) return ""
+  const by = (s.by ?? "").replace(/\|/g, "")
+  const byName = (s.byName ?? "").replace(/\|/g, "")
+  return `${by}|${byName}`
+}
+
+export function parseAgentBroadcast(
+  raw: string | undefined,
+): AgentBroadcastState {
+  if (!raw) return { on: false }
+  const [by, byName] = raw.split("|")
+  return { on: true, by: by || undefined, byName: byName || undefined }
+}
+
+/**
  * How a participant's camera feed should be displayed, e.g. "90,h" —
  * rotation degrees plus flip flags. Published as an attribute so every
  * client renders the same orientation with plain CSS; the encoded track
@@ -331,6 +364,14 @@ export const agentControlSchema = z.object({
     "set-barge-in",
     // Change how much the agent says when it speaks. Carries `chattiness`.
     "set-chattiness",
+    // Toggle whether the agent's session log (prompts, assistant text, tool
+    // calls/results) broadcasts to the whole room instead of staying
+    // private to whoever's prompting it. Carries `broadcast`. Authorized the
+    // same way every other agent control is (shared ground, or host-only
+    // when reserved) — "session owner" is attribution, not an auth
+    // boundary, since no per-agent ownership identity exists elsewhere in
+    // the control model.
+    "set-broadcast",
     // Not a control the bridge acts on — removal goes through the control
     // API. Broadcast purely so the room can say who did it, like every
     // other agent control.
@@ -340,6 +381,7 @@ export const agentControlSchema = z.object({
   policy: turnPolicySchema.optional(),
   bargeIn: z.boolean().optional(),
   chattiness: chattinessSchema.optional(),
+  broadcast: z.boolean().optional(),
   /**
    * Who pressed the button. Optional so older clients still parse, and
    * carried on the message rather than resolved from the sender identity:
@@ -446,6 +488,10 @@ export function describeAgentControl(
       return control.bargeIn === undefined
         ? null
         : `turned barge-in ${control.bargeIn ? "on" : "off"} for ${agentName}`
+    case "set-broadcast":
+      return control.broadcast === undefined
+        ? null
+        : `turned session broadcast ${control.broadcast ? "on" : "off"} for ${agentName}`
     default:
       return null
   }
@@ -513,6 +559,25 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     agentId: z.string(),
     config: z.record(z.string(), z.string()),
     latencyMs: z.record(z.string(), z.number()),
+    at: z.number(),
+  }),
+  // The prompt sent to the agent's brain — not a `TtyServerFrame` (it's what
+  // the bridge sends, not a frame the brain sends back), so it's synthesized
+  // at the send site rather than read off the wire.
+  z.object({
+    type: z.literal("input"),
+    agentId: z.string(),
+    text: z.string(),
+    by: z.string(),
+    byName: z.string(),
+    at: z.number(),
+  }),
+  // The brain's own assistant-text frames, forwarded as activity so a
+  // session log can show them alongside its tool calls/results.
+  z.object({
+    type: z.literal("assistant"),
+    agentId: z.string(),
+    content: z.string(),
     at: z.number(),
   }),
 ])

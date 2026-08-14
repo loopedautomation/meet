@@ -10,6 +10,7 @@ import * as openai from "@livekit/agents-plugin-openai"
 import * as silero from "@livekit/agents-plugin-silero"
 import {
   AGENT_BARGE_IN_ATTRIBUTE,
+  AGENT_BROADCAST_ATTRIBUTE,
   AGENT_CHATTINESS_ATTRIBUTE,
   AGENT_DEAFENED_ATTRIBUTE,
   AGENT_MUTED_ATTRIBUTE,
@@ -47,6 +48,10 @@ import {
   TYPING_HEARTBEAT_MS,
   Y,
 } from "@meet/shared"
+import {
+  activityDestinations,
+  applySetBroadcast,
+} from "./activity-broadcast.js"
 import {
   CURSOR_FRAME_MS,
   caretSweep,
@@ -334,11 +339,19 @@ export default defineAgent({
         [AGENT_BARGE_IN_ATTRIBUTE]: bargeIn.enabled ? "1" : "0",
       })
       .catch(() => undefined)
+    // Private by default: an agent's tool activity can contain repo
+    // contents, so it's scoped to the session's owner (whoever last
+    // prompted it) until they explicitly opt into broadcasting it to the
+    // room (the "set-broadcast" control, below).
     const publishActivity = (event: AgentActivityEvent) => {
       local
         .publishData(new TextEncoder().encode(JSON.stringify(event)), {
           reliable: true,
           topic: DataTopic.AgentActivity,
+          destination_identities: activityDestinations(
+            sessionState.broadcastEnabled,
+            sessionState.lastPromptBy,
+          ),
         })
         .catch(() => undefined)
     }
@@ -890,6 +903,20 @@ export default defineAgent({
     const replyInChat = async (
       message: ChatMessage,
     ): Promise<string | null> => {
+      // The session's owner, for privacy purposes, is whoever sent the most
+      // recent prompt — no per-agent ownership identity exists elsewhere, so
+      // this doubles as both the private-activity target and the attributed
+      // name a broadcast indicator shows the room.
+      sessionState.lastPromptBy = message.from
+      sessionState.lastPromptByName = message.fromName
+      publishActivity({
+        type: "input",
+        agentId: entry.id,
+        text: message.text,
+        by: message.from,
+        byName: message.fromName,
+        at: Date.now(),
+      })
       // The brain sees its own recent messages by id, so "delete that" and
       // "fix the typo" resolve to concrete chat ops.
       const ownChat = recentChat.length
@@ -925,6 +952,13 @@ export default defineAgent({
                 name: frame.name,
                 content: frame.content.slice(0, 8000),
                 durationMs: frame.durationMs,
+                at,
+              })
+            } else if (frame.type === "assistant") {
+              publishActivity({
+                type: "assistant",
+                agentId: entry.id,
+                content: frame.content,
                 at,
               })
             }
@@ -1124,6 +1158,28 @@ export default defineAgent({
           if (control.type === "set-turn-policy" && control.policy) {
             sessionState.turnPolicy = control.policy
             publishPolicy()
+            return
+          }
+          if (
+            control.type === "set-broadcast" &&
+            control.broadcast !== undefined
+          ) {
+            // Unlike barge-in/chattiness (owned by realtime-agent.ts's own
+            // listener because they need the realtime session object),
+            // broadcast only touches sessionState + a room attribute — same
+            // shape as mute/deafen below — so it's handled here, same as the
+            // pipeline path's listener. Previously missing entirely from
+            // this switch, which meant realtime-mode agents silently
+            // ignored the control (#275): the toast fired client-side but
+            // nothing server-side ever ran.
+            local
+              .setAttributes({
+                [AGENT_BROADCAST_ATTRIBUTE]: applySetBroadcast(
+                  sessionState,
+                  control.broadcast,
+                ),
+              })
+              .catch(() => undefined)
             return
           }
           if (control.type === "zap") {
@@ -1372,6 +1428,23 @@ export default defineAgent({
             local
               .setAttributes({
                 [AGENT_BARGE_IN_ATTRIBUTE]: control.bargeIn ? "1" : "0",
+              })
+              .catch(() => undefined)
+          } else if (
+            control.type === "set-broadcast" &&
+            control.broadcast !== undefined
+          ) {
+            // Authorized the same way every other agent control is
+            // (controlAllowed, above) — not restricted to whoever's
+            // sessionState.lastPromptBy. "Session owner" is a UX/attribution
+            // concept here, not an auth boundary: no per-agent ownership
+            // identity exists anywhere else in the control model.
+            local
+              .setAttributes({
+                [AGENT_BROADCAST_ATTRIBUTE]: applySetBroadcast(
+                  sessionState,
+                  control.broadcast,
+                ),
               })
               .catch(() => undefined)
           } else if (control.type === "zap") {

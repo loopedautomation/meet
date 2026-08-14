@@ -17,8 +17,10 @@ import {
   encodeDocStateB64,
   mentionsName,
   mergeCanvasRecord,
+  parseAgentBroadcast,
   parseRoomSettings,
   readSharedDoc,
+  serializeAgentBroadcast,
   setSharedDocText,
   spokenMentionRegExp,
   Y,
@@ -45,6 +47,15 @@ describe("agentControlSchema", () => {
       agentControlSchema.safeParse({ type: "explode", agentId: "scout" })
         .success,
     ).toBe(false)
+  })
+
+  it("accepts set-broadcast with its boolean flag", () => {
+    const parsed = agentControlSchema.parse({
+      type: "set-broadcast",
+      agentId: "scout",
+      broadcast: true,
+    })
+    expect(parsed.broadcast).toBe(true)
   })
 })
 
@@ -102,6 +113,27 @@ describe("describeAgentControl", () => {
     ).toBeNull()
   })
 
+  it("names the direction when session broadcast is toggled", () => {
+    expect(
+      describeAgentControl(
+        { type: "set-broadcast", agentId: "scout", broadcast: true },
+        "Scout",
+      ),
+    ).toBe("turned session broadcast on for Scout")
+    expect(
+      describeAgentControl(
+        { type: "set-broadcast", agentId: "scout", broadcast: false },
+        "Scout",
+      ),
+    ).toBe("turned session broadcast off for Scout")
+  })
+
+  it("stays quiet on a broadcast change with no direction to report", () => {
+    expect(
+      describeAgentControl({ type: "set-broadcast", agentId: "scout" }, "S"),
+    ).toBeNull()
+  })
+
   it("covers every control type, so a new one can't ship unannounced", () => {
     for (const type of agentControlSchema.shape.type.options) {
       const control: AgentControl = {
@@ -110,6 +142,7 @@ describe("describeAgentControl", () => {
         ...(type === "set-turn-policy" ? { policy: "open" as const } : {}),
         ...(type === "set-barge-in" ? { bargeIn: true } : {}),
         ...(type === "set-chattiness" ? { chattiness: "quiet" as const } : {}),
+        ...(type === "set-broadcast" ? { broadcast: true } : {}),
       }
       expect(describeAgentControl(control, "Scout")).toBeTruthy()
     }
@@ -396,6 +429,65 @@ describe("agentActivityEventSchema typing", () => {
       at: 1,
     })
     expect(parsed.success).toBe(false)
+  })
+})
+
+describe("agentActivityEventSchema input/assistant", () => {
+  it("accepts an input event carrying the prompting participant", () => {
+    const parsed = agentActivityEventSchema.safeParse({
+      type: "input",
+      agentId: "scout",
+      text: "hello",
+      by: "user-1",
+      byName: "Gwinyai",
+      at: 1,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts an assistant event carrying the brain's reply text", () => {
+    const parsed = agentActivityEventSchema.safeParse({
+      type: "assistant",
+      agentId: "scout",
+      content: "on it",
+      at: 1,
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it("rejects an input event missing the prompt text", () => {
+    const parsed = agentActivityEventSchema.safeParse({
+      type: "input",
+      agentId: "scout",
+      by: "user-1",
+      byName: "Gwinyai",
+      at: 1,
+    })
+    expect(parsed.success).toBe(false)
+  })
+})
+
+describe("AGENT_BROADCAST_ATTRIBUTE serialization", () => {
+  it("serializes 'off' as an empty string, matching the other boolean attributes", () => {
+    expect(serializeAgentBroadcast({ on: false })).toBe("")
+  })
+
+  it("round-trips the owner identity and name when broadcasting", () => {
+    const serialized = serializeAgentBroadcast({
+      on: true,
+      by: "user-1",
+      byName: "Gwinyai",
+    })
+    expect(parseAgentBroadcast(serialized)).toEqual({
+      on: true,
+      by: "user-1",
+      byName: "Gwinyai",
+    })
+  })
+
+  it("parses a missing/empty attribute as off", () => {
+    expect(parseAgentBroadcast(undefined)).toEqual({ on: false })
+    expect(parseAgentBroadcast("")).toEqual({ on: false })
   })
 })
 

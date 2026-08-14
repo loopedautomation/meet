@@ -1,7 +1,12 @@
 "use client"
 
-import { useParticipants } from "@livekit/components-react"
 import {
+  useLocalParticipant,
+  useParticipantAttributes,
+  useParticipants,
+} from "@livekit/components-react"
+import {
+  AGENT_BROADCAST_ATTRIBUTE,
   AGENT_VOICES,
   type AgentActivityEvent,
   type AgentInfo,
@@ -9,10 +14,19 @@ import {
   GEMINI_VOICES,
   OPENAI_REALTIME_VOICE_INFO,
   OPENAI_TTS_VOICES,
+  parseAgentBroadcast,
   parseParticipantMeta,
 } from "@meet/shared"
 import { useStore } from "@nanostores/react"
-import { Bot, Brain, ChevronDown, Plus } from "lucide-react"
+import type { Participant } from "livekit-client"
+import {
+  Bot,
+  Brain,
+  ChevronDown,
+  MessageSquare,
+  Plus,
+  Radio,
+} from "lucide-react"
 import { useState } from "react"
 import { toast } from "react-toastify"
 import { AgentControls } from "@/components/room/AgentControls"
@@ -207,28 +221,47 @@ export function AgentsPanel({ slug }: { slug: string }) {
                 onToggle={() => setExpanded(open ? null : agent.id)}
               >
                 {participant ? (
-                  <AgentControls
-                    withCaption
-                    agentId={agent.id}
-                    participant={participant}
-                    disabled={!canControl}
-                    onRemove={() =>
-                      invite.mutate(
-                        { agentId: agent.id, action: "remove" },
-                        // Announced only once it actually happened — a
-                        // removal the server refused must not be reported
-                        // to the room as done.
-                        {
-                          onSuccess: () =>
-                            sendControl(
-                              { type: "remove", agentId: agent.id },
-                              agent.name,
-                            ),
-                        },
-                      )
-                    }
-                    sendControl={(control) => sendControl(control, agent.name)}
-                  />
+                  <>
+                    <AgentControls
+                      withCaption
+                      agentId={agent.id}
+                      participant={participant}
+                      disabled={!canControl}
+                      onRemove={() =>
+                        invite.mutate(
+                          { agentId: agent.id, action: "remove" },
+                          // Announced only once it actually happened — a
+                          // removal the server refused must not be reported
+                          // to the room as done.
+                          {
+                            onSuccess: () =>
+                              sendControl(
+                                { type: "remove", agentId: agent.id },
+                                agent.name,
+                              ),
+                          },
+                        )
+                      }
+                      sendControl={(control) =>
+                        sendControl(control, agent.name)
+                      }
+                    />
+                    <BroadcastControl
+                      agentName={agent.name}
+                      participant={participant}
+                      disabled={!canControl}
+                      onToggle={(broadcast) =>
+                        sendControl(
+                          {
+                            type: "set-broadcast",
+                            agentId: agent.id,
+                            broadcast,
+                          },
+                          agent.name,
+                        )
+                      }
+                    />
+                  </>
                 ) : canInvite ? (
                   (() => {
                     // No blank placeholders: the selects rest on the agent's
@@ -447,6 +480,62 @@ function AgentCard({
   )
 }
 
+/**
+ * The session-log broadcast toggle: an agent's inbound prompts, assistant
+ * text, and tool calls/results can contain repo contents, so they're
+ * private to whoever's prompting the agent until this is switched on.
+ * Privacy is enforced server-side (destination_identities), so the client
+ * needs no filtering logic of its own — this just renders the current
+ * state and lets it be flipped.
+ *
+ * Both sides get told broadcasting is live, per the issue's non-negotiable
+ * privacy requirement: the owner sees "broadcasting your session log";
+ * everyone else sees whose session they're watching.
+ */
+function BroadcastControl({
+  agentName,
+  participant,
+  disabled,
+  onToggle,
+}: {
+  agentName: string
+  participant: Participant
+  disabled: boolean
+  onToggle: (broadcast: boolean) => void
+}) {
+  const { attributes } = useParticipantAttributes({ participant })
+  const { localParticipant } = useLocalParticipant()
+  const broadcast = parseAgentBroadcast(attributes?.[AGENT_BROADCAST_ATTRIBUTE])
+  const isOwner = broadcast.on && broadcast.by === localParticipant.identity
+
+  return (
+    <div className="mt-1.5 flex items-center gap-2">
+      <button
+        type="button"
+        className={`btn btn-xs gap-1 ${broadcast.on ? "btn-primary" : "btn-ghost"}`}
+        disabled={disabled}
+        aria-label={
+          broadcast.on
+            ? `Stop broadcasting ${agentName}'s session log`
+            : `Broadcast ${agentName}'s session log to everyone`
+        }
+        title={disabled ? "The meeting's organiser only" : undefined}
+        onClick={() => onToggle(!broadcast.on)}
+      >
+        <Radio className="size-3" />
+        {broadcast.on ? "Broadcasting session" : "Broadcast session log"}
+      </button>
+      {broadcast.on && (
+        <p className="text-[11px] text-base-content/60 leading-tight">
+          {isOwner
+            ? "Broadcasting your session log to everyone"
+            : `Watching ${broadcast.byName || "someone"}'s live session — may contain their repo's code`}
+        </p>
+      )}
+    </div>
+  )
+}
+
 /** Per-agent pipeline configuration + live latency, LiveKit-benchmark style. */
 function StatsForNerds({ agents }: { agents: { id: string; name: string }[] }) {
   const stats = useStore($agentStats)
@@ -662,8 +751,28 @@ function InviteByUrl({
   )
 }
 
+/**
+ * The feed's own event types: everything a session log actually shows
+ * (prompts, assistant text, tool calls/results) — "typing"/"stats"/"status"
+ * stay out, same as before. Privacy is enforced server-side
+ * (destination_identities on the worker's publishActivity): whatever lands
+ * in `$agentActivity` is exactly what this participant is allowed to see,
+ * so no client-side filtering by owner is needed here.
+ */
+type ActivityLogEvent = Extract<
+  AgentActivityEvent,
+  { type: "tool_call" | "tool_result" | "input" | "assistant" }
+>
+
 function ActivityFeed({ activity }: { activity: AgentActivityEvent[] }) {
-  if (activity.length === 0) {
+  const relevant = activity.filter(
+    (e): e is ActivityLogEvent =>
+      e.type === "tool_call" ||
+      e.type === "tool_result" ||
+      e.type === "input" ||
+      e.type === "assistant",
+  )
+  if (relevant.length === 0) {
     return (
       <p className="px-4 py-2 text-base-content/50 text-sm">
         Tool calls will appear here while an agent works.
@@ -672,8 +781,7 @@ function ActivityFeed({ activity }: { activity: AgentActivityEvent[] }) {
   }
   return (
     <ul className="max-h-56 shrink-0 space-y-1 overflow-y-auto px-4 pb-4">
-      {activity
-        .filter((e) => e.type === "tool_call" || e.type === "tool_result")
+      {relevant
         // Newest at the top — the live call is what you came to watch.
         .reverse()
         .map((e) => (
@@ -683,11 +791,53 @@ function ActivityFeed({ activity }: { activity: AgentActivityEvent[] }) {
   )
 }
 
-function ActivityItem({
-  event: e,
-}: {
-  event: Extract<AgentActivityEvent, { type: "tool_call" | "tool_result" }>
-}) {
+/** The feed row's short label — what happened, in one line. */
+function activityLabel(e: ActivityLogEvent): string {
+  switch (e.type) {
+    case "tool_call":
+      return `→ ${e.name}`
+    case "tool_result":
+      return `← ${e.name}`
+    case "input":
+      return `${e.byName} prompted`
+    case "assistant":
+      return "assistant"
+  }
+}
+
+/** The feed row's expandable body text. */
+function activityBody(e: ActivityLogEvent): string {
+  switch (e.type) {
+    case "tool_call":
+      return e.arguments
+    case "tool_result":
+      return e.content
+    case "input":
+      return e.text
+    case "assistant":
+      return e.content
+  }
+}
+
+/**
+ * Who acted: the brain (the looped agent's own tool work) or the body
+ * (meeting-surface actions the bridge performs — drawing, doc writes) for
+ * tool events; a dedicated icon for the prompt/reply events either side of
+ * them.
+ */
+function ActivityIcon({ event: e }: { event: ActivityLogEvent }) {
+  if (e.type === "input")
+    return <MessageSquare className="size-3" aria-label="input" />
+  if (e.type === "assistant")
+    return <Brain className="size-3" aria-label="assistant" />
+  return e.source === "body" ? (
+    <Bot className="size-3" aria-label="body" />
+  ) : (
+    <Brain className="size-3" aria-label="brain" />
+  )
+}
+
+function ActivityItem({ event: e }: { event: ActivityLogEvent }) {
   const [open, setOpen] = useState(false)
   return (
     <li className="rounded-field bg-base-200 font-mono text-xs">
@@ -697,15 +847,8 @@ function ActivityItem({
         onClick={() => setOpen((v) => !v)}
       >
         <span className="flex items-center gap-1 text-primary">
-          {/* Who acted: the brain (the looped agent's own tool work) or the
-              body (meeting-surface actions the bridge performs — drawing,
-              doc writes). */}
-          {e.source === "body" ? (
-            <Bot className="size-3" aria-label="body" />
-          ) : (
-            <Brain className="size-3" aria-label="brain" />
-          )}
-          {e.type === "tool_call" ? `→ ${e.name}` : `← ${e.name}`}
+          <ActivityIcon event={e} />
+          {activityLabel(e)}
           {e.type === "tool_result" && (
             <span className="text-base-content/50">{e.durationMs}ms</span>
           )}
@@ -715,7 +858,7 @@ function ActivityItem({
             open ? "block whitespace-pre-wrap" : "line-clamp-3"
           }`}
         >
-          {e.type === "tool_call" ? e.arguments : e.content}
+          {activityBody(e)}
         </span>
       </button>
     </li>
