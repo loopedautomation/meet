@@ -37,7 +37,10 @@ export function useSendAgentControl(): (
       const value =
         control.policy ??
         control.chattiness ??
-        (control.bargeIn === undefined ? undefined : String(control.bargeIn))
+        (control.bargeIn === undefined ? undefined : String(control.bargeIn)) ??
+        (control.broadcast === undefined
+          ? undefined
+          : String(control.broadcast))
       track("agent_control_used", { control: control.type, value })
       track("agent_interaction", {
         kind: "control",
