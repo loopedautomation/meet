@@ -19,6 +19,7 @@ import {
   type AgentActivityEvent,
   type AgentState,
   agentControlSchema,
+  agentPromptSchema,
   applyDocUpdateB64,
   type CanvasDiff,
   type CanvasOp,
@@ -103,6 +104,7 @@ import {
 import { runRealtimeAgent } from "./realtime-agent.js"
 import { type AgentEntry, brainToken, loadRegistry } from "./registry.js"
 import { attachScreenFrame, ScreenCapture } from "./screen-capture.js"
+import { createTurnQueue } from "./turn-queue.js"
 
 type DispatchMeta = {
   agentId: string
@@ -879,16 +881,19 @@ export default defineAgent({
     }
 
     /**
-     * Chat mentions get a chat reply — text in, text out, straight to the
-     * brain; tool activity streams to the activity feed. Shared by both
-     * paths: pipeline agents have no other chat channel, and realtime
-     * agents route chat here too so the brain's judgment, tools and
-     * marker-block powers (doc edits, drawings) answer instead of the
-     * voice model. Returns the posted text so the realtime layer can tell
-     * its voice model what "it" said in chat.
+     * A prompt turn — text in, text out, straight to the brain; tool
+     * activity streams to the activity feed. Shared by every way a
+     * participant can drive this agent by text: room-chat @mentions (both
+     * interaction modes) and Agents-panel prompts alike, each queued
+     * through `promptQueue` below so only one turn ever runs at a time.
+     * `source` only changes the framing sentence the brain sees, so its
+     * reply can speak to which surface it's answering on. Returns the
+     * posted text so the realtime layer can tell its voice model what "it"
+     * said in chat.
      */
-    const replyInChat = async (
+    const runPromptTurn = async (
       message: ChatMessage,
+      source: "chat" | "panel",
     ): Promise<string | null> => {
       // The brain sees its own recent messages by id, so "delete that" and
       // "fix the typo" resolve to concrete chat ops.
@@ -899,10 +904,11 @@ export default defineAgent({
               ", ",
             )}]\n[${CHAT_OPS_PROTOCOL_NOTE}]\n[${LEAVE_PROTOCOL_NOTE}]`
         : `\n[${LEAVE_PROTOCOL_NOTE}]`
-      const { text: input, images } = await attachScreenFrame(
-        screen,
-        `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}${ownChat}`,
-      )
+      const framing =
+        source === "panel"
+          ? `${message.fromName} (prompted you directly via the Agents panel — reply concisely, your reply appears in the chat): ${message.text}${ownChat}`
+          : `${message.fromName} (in the meeting chat — reply concisely, your reply appears in the chat): ${message.text}${ownChat}`
+      const { text: input, images } = await attachScreenFrame(screen, framing)
       setState(sessionState.muted ? "muted" : "thinking")
       setTyping(true)
       try {
@@ -1012,6 +1018,63 @@ export default defineAgent({
       }
     }
 
+    /**
+     * Serializes every text-driven turn (chat @mentions, Agents-panel
+     * prompts) onto this agent through `runPromptTurn`, one at a time, FIFO.
+     * Replaces the old behavior where a second concurrent mention either
+     * raced the brain transport or was silently dropped behind the
+     * `/in progress/` busy-catch above (which stays as a backstop — see its
+     * comment). `onQueueChanged` republishes a full waiting-list snapshot so
+     * the Agents panel can show a submitted prompt was received and is
+     * queued, never silently.
+     */
+    const promptQueue = createTurnQueue<
+      { message: ChatMessage; source: "chat" | "panel" },
+      string | null
+    >({
+      run: ({ message, source }) => runPromptTurn(message, source),
+      onQueueChanged: (waiting) => {
+        publishActivity({
+          type: "prompt-queue",
+          agentId: entry.id,
+          queue: waiting.map((w) => ({
+            id: w.message.id,
+            from: w.message.from,
+            fromName: w.message.fromName,
+            text: w.message.text,
+            at: w.message.at,
+          })),
+          at: Date.now(),
+        })
+      },
+    })
+
+    /**
+     * The Agents panel's dedicated prompt input, on its own data topic.
+     * Identical between the realtime and pipeline paths (unlike the other
+     * topics those two `dataReceived` handlers below carry, which differ per
+     * interaction mode), so it's shared here rather than duplicated in both.
+     * Gated by its own permission — separate from participantsCanControlAgents
+     * — and never mistaken for room chat since it rides its own topic/schema.
+     */
+    const handleAgentPrompt = (
+      payload: Uint8Array,
+      sender: Parameters<typeof controlAllowed>[1],
+    ) => {
+      if (!controlAllowed(ctx.room, sender, "participantsCanPromptAgents")) {
+        return
+      }
+      try {
+        const prompt = agentPromptSchema.parse(
+          JSON.parse(new TextDecoder().decode(payload)),
+        )
+        if (prompt.agentId !== entry.id) return
+        void promptQueue.enqueue({ message: prompt, source: "panel" })
+      } catch {
+        // ignore malformed prompt messages
+      }
+    }
+
     // Realtime agents: a speech-to-speech model is the interaction layer and
     // the brain handles tool work — no STT/TTS pipeline at all.
     if (entry.realtime) {
@@ -1112,6 +1175,10 @@ export default defineAgent({
           } catch {}
           return
         }
+        if (topic === DataTopic.AgentPrompt) {
+          handleAgentPrompt(payload, sender)
+          return
+        }
         if (topic !== DataTopic.AgentControl) return
         // Enforced here, not just in the UI: only an admitted human — and
         // only the host when they've reserved controls — may drive agents.
@@ -1176,7 +1243,10 @@ export default defineAgent({
         // Chat @mentions go to the brain, not the voice model: the brain's
         // tools, memory, and marker blocks (doc edits, drawings) can answer
         // a chat request; the voice model only gets told what was said.
-        onChatMention: replyInChat,
+        // Queued (not called directly) so a mention arriving mid-turn waits
+        // its turn instead of racing or being dropped.
+        onChatMention: (message) =>
+          promptQueue.enqueue({ message, source: "chat" }),
         leaveMeeting,
         onUtterance: (fn) => utteranceListeners.push(fn),
         onSpoke: (text) =>
@@ -1432,6 +1502,8 @@ export default defineAgent({
         } catch {
           // ignore malformed control messages
         }
+      } else if (topic === DataTopic.AgentPrompt) {
+        handleAgentPrompt(payload, sender)
       } else if (topic === DataTopic.Chat) {
         try {
           const message = chatMessageSchema.parse(
@@ -1482,7 +1554,10 @@ export default defineAgent({
               // Voice turn unavailable (e.g. session draining): chat fallback.
             }
           }
-          void replyInChat({ ...message, fromName: senderName })
+          void promptQueue.enqueue({
+            message: { ...message, fromName: senderName },
+            source: "chat",
+          })
         } catch {
           // ignore malformed chat messages
         }

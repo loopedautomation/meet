@@ -24,6 +24,7 @@ export function useAgentPermissions(): {
   isHost: boolean
   canControl: boolean
   canInvite: boolean
+  canPrompt: boolean
   settings: RoomSettings
 } {
   const settings = useRoomSettings()
@@ -32,6 +33,7 @@ export function useAgentPermissions(): {
     isHost,
     canControl: isHost || settings.participantsCanControlAgents,
     canInvite: isHost || settings.participantsCanInviteAgents,
+    canPrompt: isHost || settings.participantsCanPromptAgents,
     settings,
   }
 }

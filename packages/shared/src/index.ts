@@ -7,6 +7,12 @@ export { Y }
 export const DataTopic = {
   AgentActivity: "agent-activity",
   AgentControl: "agent-control",
+  /**
+   * The Agents panel's dedicated prompt input — deliberately its own topic
+   * rather than piggybacking on Chat, so a panel prompt can never land in
+   * room chat (see agentPromptSchema).
+   */
+  AgentPrompt: "agent-prompt",
   Canvas: "canvas",
   /**
    * Bridge → one chosen client: render Mermaid with the official
@@ -360,12 +366,20 @@ export type AgentControl = z.infer<typeof agentControlSchema>
 export const roomSettingsSchema = z.object({
   participantsCanControlAgents: z.boolean().default(true),
   participantsCanInviteAgents: z.boolean().default(true),
+  /**
+   * Whether non-hosts may drive an agent's turns — chat @mentions and Agents
+   * panel prompts alike. Deliberately separate from
+   * participantsCanControlAgents: "can make it take a turn" is a different
+   * capability from "can mute/interrupt/change how it takes turns".
+   */
+  participantsCanPromptAgents: z.boolean().default(true),
 })
 export type RoomSettings = z.infer<typeof roomSettingsSchema>
 
 export const defaultRoomSettings: RoomSettings = {
   participantsCanControlAgents: true,
   participantsCanInviteAgents: true,
+  participantsCanPromptAgents: true,
 }
 
 /**
@@ -515,9 +529,31 @@ export const agentActivityEventSchema = z.discriminatedUnion("type", [
     latencyMs: z.record(z.string(), z.number()),
     at: z.number(),
   }),
+  // A full snapshot of prompts WAITING on this agent's turn queue (the
+  // in-flight turn, if any, is already covered by "typing") — replace, not
+  // append, same shape as "stats". Lets the Agents panel show a submitted
+  // prompt was received and is queued, instead of silently dropping it.
+  z.object({
+    type: z.literal("prompt-queue"),
+    agentId: z.string(),
+    queue: z.array(
+      z.object({
+        id: z.string(),
+        from: z.string(),
+        fromName: z.string(),
+        text: z.string(),
+        at: z.number(),
+      }),
+    ),
+    at: z.number(),
+  }),
 ])
 export type AgentActivityEvent = z.infer<typeof agentActivityEventSchema>
 export type AgentStatsEvent = Extract<AgentActivityEvent, { type: "stats" }>
+export type AgentPromptQueueEvent = Extract<
+  AgentActivityEvent,
+  { type: "prompt-queue" }
+>
 
 /** Messages on the `chat` data topic. */
 export const chatMessageSchema = z.object({
@@ -530,6 +566,24 @@ export const chatMessageSchema = z.object({
   editedAt: z.number().optional(),
 })
 export type ChatMessage = z.infer<typeof chatMessageSchema>
+
+/**
+ * A prompt submitted through the Agents panel's dedicated input, on the
+ * `agent-prompt` topic. Deliberately its own schema rather than reusing
+ * chatMessageSchema — despite sharing most fields — so a panel prompt can
+ * never be mistaken for (or accidentally routed into) room chat; that
+ * separation is the whole point of a prompt surface that isn't chat.
+ */
+export const agentPromptSchema = z.object({
+  /** Which agent this prompt is for — the panel is per-agent. */
+  agentId: z.string(),
+  id: z.string().max(64),
+  from: z.string().max(128),
+  fromName: z.string().max(128),
+  text: z.string().max(8000),
+  at: z.number(),
+})
+export type AgentPrompt = z.infer<typeof agentPromptSchema>
 
 /**
  * Edit/delete ops, broadcast on the same `chat` topic alongside regular

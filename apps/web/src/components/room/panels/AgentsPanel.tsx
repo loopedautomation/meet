@@ -24,10 +24,15 @@ import {
 import { useAgents } from "@/hooks/queries/useAgents"
 import { useAgentPermissions } from "@/hooks/useRoomSettings"
 import { useSendAgentControl } from "@/hooks/useSendAgentControl"
+import { useSendAgentPrompt } from "@/hooks/useSendAgentPrompt"
 import { properCase } from "@/lib/casing"
 import { readHostKey } from "@/lib/hostKey"
 import { roomAuthHeaders } from "@/lib/roomAuth"
-import { $agentActivity, $agentStats } from "@/stores/roomData"
+import {
+  $agentActivity,
+  $agentPromptQueues,
+  $agentStats,
+} from "@/stores/roomData"
 
 /**
  * The voices offerable for an invite: the namespace follows the effective
@@ -78,7 +83,7 @@ export function AgentsPanel({ slug }: { slug: string }) {
   const activity = useStore($agentActivity)
   // Agents are the room's, not the organiser's — everyone gets the controls
   // unless the host has reserved them.
-  const { canControl, canInvite } = useAgentPermissions()
+  const { canControl, canInvite, canPrompt } = useAgentPermissions()
   const sendControl = useSendAgentControl()
   // Per-agent interaction-mode choice ("" = the agent's registry default).
   // Meeting-level, not agent-level: any brain can front realtime or pipeline.
@@ -207,28 +212,37 @@ export function AgentsPanel({ slug }: { slug: string }) {
                 onToggle={() => setExpanded(open ? null : agent.id)}
               >
                 {participant ? (
-                  <AgentControls
-                    withCaption
-                    agentId={agent.id}
-                    participant={participant}
-                    disabled={!canControl}
-                    onRemove={() =>
-                      invite.mutate(
-                        { agentId: agent.id, action: "remove" },
-                        // Announced only once it actually happened — a
-                        // removal the server refused must not be reported
-                        // to the room as done.
-                        {
-                          onSuccess: () =>
-                            sendControl(
-                              { type: "remove", agentId: agent.id },
-                              agent.name,
-                            ),
-                        },
-                      )
-                    }
-                    sendControl={(control) => sendControl(control, agent.name)}
-                  />
+                  <>
+                    <AgentControls
+                      withCaption
+                      agentId={agent.id}
+                      participant={participant}
+                      disabled={!canControl}
+                      onRemove={() =>
+                        invite.mutate(
+                          { agentId: agent.id, action: "remove" },
+                          // Announced only once it actually happened — a
+                          // removal the server refused must not be reported
+                          // to the room as done.
+                          {
+                            onSuccess: () =>
+                              sendControl(
+                                { type: "remove", agentId: agent.id },
+                                agent.name,
+                              ),
+                          },
+                        )
+                      }
+                      sendControl={(control) =>
+                        sendControl(control, agent.name)
+                      }
+                    />
+                    <AgentPromptForm
+                      agentId={agent.id}
+                      agentName={agent.name}
+                      canPrompt={canPrompt}
+                    />
+                  </>
                 ) : canInvite ? (
                   (() => {
                     // No blank placeholders: the selects rest on the agent's
@@ -444,6 +458,81 @@ function AgentCard({
       </button>
       {open && children}
     </li>
+  )
+}
+
+/**
+ * A dedicated way to drive this agent's turns from the panel — an
+ * additional entry point alongside chat @mentions, not a replacement.
+ * Shows the sender's own submitted prompts still waiting on the agent's
+ * turn queue, so a queued prompt reads as "received" rather than vanishing.
+ */
+function AgentPromptForm({
+  agentId,
+  agentName,
+  canPrompt,
+}: {
+  agentId: string
+  agentName: string
+  canPrompt: boolean
+}) {
+  const queues = useStore($agentPromptQueues)
+  const queue = queues[agentId] ?? []
+  const sendPrompt = useSendAgentPrompt()
+  const [text, setText] = useState("")
+
+  if (!canPrompt) {
+    return (
+      <p className="pt-1 text-base-content/50 text-xs">
+        The meeting's organiser has reserved prompting agents.
+      </p>
+    )
+  }
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
+    const trimmed = text.trim()
+    if (!trimmed) return
+    sendPrompt(agentId, trimmed)
+    setText("")
+  }
+
+  return (
+    <div className="space-y-1.5 pt-1">
+      <form onSubmit={submit} className="flex gap-1">
+        <input
+          className="input input-sm flex-1"
+          placeholder={`Prompt ${agentName}…`}
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+        />
+        <button
+          type="submit"
+          className="btn btn-primary btn-sm"
+          disabled={!text.trim()}
+        >
+          Send
+        </button>
+      </form>
+      {queue.length > 0 && (
+        <ul className="space-y-1">
+          {queue.map((item) => (
+            <li
+              key={item.id}
+              className="flex items-center justify-between gap-2 rounded-field bg-base-300/50 px-2 py-1 text-xs"
+            >
+              <span className="min-w-0 truncate">
+                <span className="font-medium">{item.fromName}:</span>{" "}
+                {item.text}
+              </span>
+              <span className="badge badge-ghost badge-xs shrink-0">
+                waiting
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 
