@@ -3,6 +3,7 @@ import { redirect } from "next/navigation"
 import { Wordmark } from "@/components/brand/BrandMark"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
 import { DesktopDragStrip } from "@/components/desktop/DesktopDragStrip"
+import { SignOutLink } from "@/components/desktop/SignOutLink"
 import { HomeActions } from "@/components/home/HomeActions"
 import { authMode } from "@/lib/server/authMode"
 import { getSessionUser } from "@/lib/server/session"
@@ -64,7 +65,7 @@ export default async function HomePage() {
                       Not a member yet — ask for an invite
                     </li>
                     <li>
-                      <a href="/auth/logout">Sign out</a>
+                      <SignOutLink>Sign out</SignOutLink>
                     </li>
                   </ul>
                 </div>

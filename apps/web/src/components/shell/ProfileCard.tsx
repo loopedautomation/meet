@@ -3,6 +3,7 @@
 import { useStore } from "@nanostores/react"
 import { LogOut, Settings } from "lucide-react"
 import { useEffect, useState } from "react"
+import { SignOutLink } from "@/components/desktop/SignOutLink"
 import { Avatar } from "@/components/ui/Avatar"
 import { Select } from "@/components/ui/Select"
 import { cleanDeviceLabel } from "@/lib/deviceLabel"
@@ -143,7 +144,7 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
           />
         </label>
         {mics.length > 0 && (
-          <label className="block px-2 py-1">
+          <div className="block px-2 py-1">
             <span className="block pb-1 text-base-content/60 text-xs">
               Microphone
             </span>
@@ -160,10 +161,10 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
                 label: cleanDeviceLabel(d.label) || "Microphone",
               }))}
             />
-          </label>
+          </div>
         )}
         {cameras.length > 0 && (
-          <label className="block px-2 py-1">
+          <div className="block px-2 py-1">
             <span className="block pb-1 text-base-content/60 text-xs">
               Camera
             </span>
@@ -180,7 +181,7 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
                 label: cleanDeviceLabel(d.label) || "Camera",
               }))}
             />
-          </label>
+          </div>
         )}
 
         <div className="divider my-1" />
@@ -191,13 +192,10 @@ export function ProfileCard({ user }: { user: ProfileUser }) {
           <Settings className="size-4" />
           Settings
         </a>
-        <a
-          href="/auth/logout"
-          className="flex items-center gap-2 rounded-btn px-2 py-1.5 text-sm hover:bg-base-200"
-        >
+        <SignOutLink className="flex items-center gap-2 rounded-btn px-2 py-1.5 text-sm hover:bg-base-200">
           <LogOut className="size-4" />
           Sign out
-        </a>
+        </SignOutLink>
       </div>
     </div>
   )

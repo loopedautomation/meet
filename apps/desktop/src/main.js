@@ -151,6 +151,7 @@ const CLIENT_PROTOCOL = 1
 /** Oldest server protocol this shell can talk to. */
 const MIN_SERVER_PROTOCOL = 1
 const SERVICE_ID = "looped-meet"
+const DESKTOP_SESSION_COOKIE = "meet_desktop_session"
 
 /** How long the loading splash waits for the workspace to report itself
  * ready (see workspace-preload.js) before showing the window regardless.
@@ -318,6 +319,20 @@ function createConnectWindow(step, params = {}) {
   return win
 }
 
+function isServerAuthLogout(target) {
+  const base = serverUrl()
+  if (!base) return false
+  try {
+    const url = new URL(target)
+    return (
+      url.origin === new URL(base).origin &&
+      url.pathname.replace(/\/$/, "") === "/auth/logout"
+    )
+  } catch {
+    return false
+  }
+}
+
 /** Whether the configured server has accounts and this shell isn't signed
  * in — if so, launching lands on the browser sign-in step, not a workspace
  * that would only show the web login inside the shell. */
@@ -346,6 +361,7 @@ function createLoadingWindow() {
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 12, y: 12 },
     webPreferences: {
+      preload: path.join(__dirname, "main-preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
       preload: path.join(__dirname, "workspace-preload.js"),
@@ -410,9 +426,18 @@ function createMainWindow(url) {
     win.destroy()
     createConnectWindow("failed", { reason: description, url: failedUrl })
   })
+  win.webContents.on("will-navigate", (event, target) => {
+    if (!isServerAuthLogout(target)) return
+    event.preventDefault()
+    void signOut()
+  })
   // Links that leave the instance open in the default browser, not in the
   // shell — the shell is for your server only.
   win.webContents.setWindowOpenHandler(({ url: target }) => {
+    if (isServerAuthLogout(target)) {
+      void signOut()
+      return { action: "deny" }
+    }
     if (!target.startsWith(url)) {
       void shell.openExternal(target)
       return { action: "deny" }
@@ -458,6 +483,43 @@ async function fetchChannels() {
   }
 }
 
+async function signOut() {
+  const base = serverUrl()
+  if (!base) return
+  pendingVerifier = null
+  try {
+    const res = await session.defaultSession.fetch(
+      new URL("/api/desktop/logout", base).toString(),
+      {
+        method: "POST",
+        credentials: "include",
+        signal: AbortSignal.timeout(5000),
+      },
+    )
+    if (!res.ok) throw new Error(String(res.status))
+  } catch (err) {
+    console.warn("desktop logout request failed:", err?.message ?? err)
+  }
+  try {
+    await session.defaultSession.cookies.remove(base, DESKTOP_SESSION_COOKIE)
+  } catch (err) {
+    console.warn("desktop session cookie removal failed:", err?.message ?? err)
+  }
+  try {
+    await session.defaultSession.clearStorageData({
+      origin: base,
+      storages: ["cookies"],
+    })
+  } catch (err) {
+    console.warn("desktop cookie jar clearing failed:", err?.message ?? err)
+  }
+  lastChannels = null
+  lastOccupancy.clear()
+  rebuildAppMenu(null)
+  BrowserWindow.getAllWindows().forEach((w) => w.close())
+  createConnectWindow("signin")
+}
+
 /**
  * Application menu. Everything the shell offers lives here — there is no
  * tray icon: a menu-bar icon competes for space users have already run out
@@ -495,6 +557,14 @@ function rebuildAppMenu(channels = lastChannels) {
         },
       ]
     : []
+  const sessionItems = serverUrl()
+    ? [
+        {
+          label: "Sign Out",
+          click: () => void signOut(),
+        },
+      ]
+    : []
 
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -524,6 +594,7 @@ function rebuildAppMenu(channels = lastChannels) {
               createConnectWindow()
             },
           },
+          ...sessionItems,
           { type: "separator" },
           { role: "hide" },
           { role: "hideOthers" },
@@ -759,6 +830,10 @@ app.whenReady().then(() => {
   ipcMain.handle("submit-auth-code", (_e, code) =>
     completeBrowserSignIn(String(code ?? "").trim()),
   )
+  ipcMain.handle("desktop-sign-out", () => {
+    void signOut()
+    return { ok: true }
+  })
 
   rebuildAppMenu(null)
   presenceTimer = setInterval(() => void pollPresence(), 15_000)

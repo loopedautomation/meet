@@ -2,6 +2,7 @@
 
 import { LogOut, ShieldCheck } from "lucide-react"
 import { ThemeToggle } from "@/components/brand/ThemeToggle"
+import { SignOutLink } from "@/components/desktop/SignOutLink"
 
 type SettingsUser = {
   name: string | null
@@ -63,10 +64,10 @@ export function SettingsView({ user }: { user: SettingsUser }) {
                 Server admin
               </a>
             )}
-            <a href="/auth/logout" className="btn btn-outline btn-sm">
+            <SignOutLink className="btn btn-outline btn-sm">
               <LogOut className="size-4" />
               Sign out
-            </a>
+            </SignOutLink>
           </div>
         </div>
       </section>
