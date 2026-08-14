@@ -155,7 +155,17 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
         ...roomAuthHeaders(slug),
       },
       body: JSON.stringify(body),
-    }).catch(() => undefined)
+    })
+      .then((res) => {
+        if (shouldRetrySnapshotPut(res)) throw res
+      })
+      .catch((err) => {
+        snapshotDirty.current = true
+        console.warn(
+          "whiteboard: snapshot PUT failed, will retry on next scheduled tick",
+          err,
+        )
+      })
   }
 
   /**
@@ -460,6 +470,23 @@ export function WhiteboardCanvas({ slug }: { slug: string }) {
       />
     </div>
   )
+}
+
+/**
+ * Whether a snapshot PUT attempt should re-arm `snapshotDirty` so the next
+ * scheduled tick retries it. `putSnapshot` has no timer of its own — it only
+ * fires again when a local edit calls `schedulePut` — so a silently
+ * swallowed failure (network blip, or the body exceeding
+ * `MAX_CANVAS_BYTES`) leaves the durable store stale until someone happens
+ * to edit again. A late joiner in that window gets an incomplete board with
+ * no indication anything is wrong. Any failure, thrown or a non-OK
+ * response, must retry; only a clean success should not.
+ */
+export function shouldRetrySnapshotPut(
+  outcome: { ok: boolean; status?: number } | Error,
+): boolean {
+  if (outcome instanceof Error) return true
+  return !outcome.ok
 }
 
 /**
