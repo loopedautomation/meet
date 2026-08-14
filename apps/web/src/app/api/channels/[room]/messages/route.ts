@@ -53,7 +53,7 @@ export async function GET(_request: Request, { params }: Params) {
       pinnedAt: schema.messages.pinnedAt,
       createdAt: schema.messages.createdAt,
       editedAt: schema.messages.editedAt,
-      authorName: schema.users.name,
+      authorName: schema.effectiveUserName,
     })
     .from(schema.messages)
     .leftJoin(schema.users, eq(schema.users.id, schema.messages.authorUserId))

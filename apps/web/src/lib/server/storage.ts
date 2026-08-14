@@ -12,6 +12,9 @@ import {
 // membership. Unset env = attachments off, everything else unaffected.
 
 export const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+// Avatars render small (a rounded thumbnail everywhere), so a much tighter
+// cap than general attachments is plenty and keeps uploads snappy.
+export const MAX_AVATAR_BYTES = 5 * 1024 * 1024
 
 let client: S3Client | null = null
 

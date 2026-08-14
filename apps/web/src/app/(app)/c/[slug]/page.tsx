@@ -46,7 +46,10 @@ export default async function ChannelPage({ params, searchParams }: Props) {
         .filter((id) => id !== user?.id)
       const others = otherIds.length
         ? await getDb()
-            .select({ name: schema.users.name, email: schema.users.email })
+            .select({
+              name: schema.effectiveUserName,
+              email: schema.users.email,
+            })
             .from(schema.users)
             .where(inArray(schema.users.id, otherIds))
         : []

@@ -21,8 +21,18 @@ export const users = pgTable("users", {
   // Auth0 subject ("auth0|abc", "google-oauth2|123", …) — the identity key.
   auth0Sub: text("auth0_sub").notNull().unique(),
   email: text("email"),
+  // Raw IdP-sourced name/picture — overwritten on every login. Never read
+  // directly for display; go through effectiveUserName/effectiveUserAvatar
+  // below, which prefer the member's own override when set.
   name: text("name"),
   image: text("image"),
+  // Local overrides the member sets themselves (Settings → Profile), never
+  // touched by the login upsert. Null = no override, fall back to the IdP
+  // value. displayName is free text; avatarUrl is an app-relative path
+  // (`/api/avatars/<userId>`) served by our own storage proxy, not a raw
+  // bucket URL — see apps/web/src/lib/server/storage.ts.
+  displayName: text("display_name"),
+  avatarUrl: text("avatar_url"),
   // Custom status ("in deep work", "back at 3") shown next to the name.
   statusText: text("status_text"),
   // Presence indicator the member picks: active | away | dnd. The effective
@@ -35,6 +45,34 @@ export const users = pgTable("users", {
     .notNull()
     .defaultNow(),
 })
+
+// The single seam for "what name/avatar do we show for this user" — every
+// query that renders a member's identity to anyone (themselves or others)
+// should select these instead of the raw name/image columns, so the
+// override-vs-IdP precedence rule lives in exactly one place. Changing the
+// rule (e.g. adding a third fallback) touches only this file.
+export const effectiveUserName = sql<
+  string | null
+>`coalesce(${users.displayName}, ${users.name})`
+export const effectiveUserAvatar = sql<
+  string | null
+>`coalesce(${users.avatarUrl}, ${users.image})`
+
+// Same precedence rule, expressed for callers that already have a full user
+// row in hand (e.g. after an insert/update `.returning()`) and would rather
+// not add a second query just to get the coalesced value.
+export function effectiveName(u: {
+  displayName: string | null
+  name: string | null
+}): string | null {
+  return u.displayName ?? u.name
+}
+export function effectiveAvatar(u: {
+  avatarUrl: string | null
+  image: string | null
+}): string | null {
+  return u.avatarUrl ?? u.image
+}
 
 export const memberships = pgTable(
   "memberships",

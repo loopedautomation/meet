@@ -15,9 +15,19 @@ export type SessionUser = {
   /** users.id — the stable id LiveKit identities derive from (u_<id>). */
   id: string
   auth0Sub: string
+  /** Always the raw Auth0/IdP value — never overridable, never overridden. */
   email: string | null
+  /** Effective display name: the member's own override when set, else the
+   * raw IdP name. This is what every consumer should render. */
   name: string | null
+  /** Effective avatar: override when set, else the raw IdP picture. */
   image: string | null
+  /** Raw local override (Settings → Profile), or null if unset. Exposed
+   * alongside the effective `name` so the settings form can tell "has an
+   * override" apart from "showing the IdP default". */
+  displayName: string | null
+  /** Raw local override, or null if unset. See `displayName`. */
+  avatarUrl: string | null
   /** Presence indicator the member picked (active | away | dnd). */
   presence: string
   /** null = authenticated but not a member (no invite accepted yet). */
@@ -46,8 +56,10 @@ export async function getSessionUser(): Promise<SessionUser | null> {
         id: user.id,
         auth0Sub: user.auth0Sub,
         email: user.email,
-        name: user.name,
-        image: user.image,
+        name: schema.effectiveName(user),
+        image: schema.effectiveAvatar(user),
+        displayName: user.displayName,
+        avatarUrl: user.avatarUrl,
         presence: user.presence,
         role: (membership?.role as SessionUser["role"]) ?? null,
       }
@@ -59,6 +71,9 @@ export async function getSessionUser(): Promise<SessionUser | null> {
   const { sub, email, name, picture } = session.user
   const db = getDb()
 
+  // Only the raw IdP-sourced columns are ever written here — displayName/
+  // avatarUrl (the member's local overrides) are never part of this
+  // insert/update, so a login can never clobber them.
   const [user] = await db
     .insert(schema.users)
     .values({
@@ -84,8 +99,10 @@ export async function getSessionUser(): Promise<SessionUser | null> {
     id: user.id,
     auth0Sub: user.auth0Sub,
     email: user.email,
-    name: user.name,
-    image: user.image,
+    name: schema.effectiveName(user),
+    image: schema.effectiveAvatar(user),
+    displayName: user.displayName,
+    avatarUrl: user.avatarUrl,
     presence: user.presence,
     role: (membership?.role as SessionUser["role"]) ?? null,
   }

@@ -241,9 +241,9 @@ export async function listChannelsForUser(
       .select({
         channelId: schema.channelMembers.channelId,
         userId: schema.channelMembers.userId,
-        name: schema.users.name,
+        name: schema.effectiveUserName,
         email: schema.users.email,
-        image: schema.users.image,
+        image: schema.effectiveUserAvatar,
         presence: schema.users.presence,
       })
       .from(schema.channelMembers)
