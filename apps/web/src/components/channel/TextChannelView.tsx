@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation"
 import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { ChannelSearchPanel } from "@/components/channel/ChannelSearchPanel"
+import { MemberListPanel } from "@/components/channel/MemberListPanel"
 import { Markdown } from "@/components/Markdown"
 import { Modal } from "@/components/ui/Modal"
 import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
@@ -100,6 +101,11 @@ export function TextChannelView({
     name: string
   } | null>(null)
   const [searchOpen, setSearchOpen] = useState(false)
+  // Mutually exclusive with search: both panels slide into the same slot
+  // (see the render below), so having two open at once would either stack
+  // two absolute overlays on mobile or crowd two static sidebars on
+  // desktop — simpler to just let the latest toggle win.
+  const [membersOpen, setMembersOpen] = useState(false)
   // Transient scroll-to-match pulse — keyed by message id (not a one-time
   // DOM class stamp) so it survives the 5s poll re-rendering `messages`.
   const [highlightedId, setHighlightedId] = useState<string | null>(null)
@@ -285,9 +291,24 @@ export function TextChannelView({
               className="btn btn-ghost btn-circle btn-sm"
               title="Search this channel"
               aria-label="Search this channel"
-              onClick={() => setSearchOpen((open) => !open)}
+              onClick={() => {
+                setSearchOpen((open) => !open)
+                setMembersOpen(false)
+              }}
             >
               <Search className="size-4" />
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost btn-circle btn-sm"
+              title="Members"
+              aria-label="Show member list"
+              onClick={() => {
+                setMembersOpen((open) => !open)
+                setSearchOpen(false)
+              }}
+            >
+              <Users className="size-4" />
             </button>
             {kind === "voice" ? (
               <button
@@ -610,6 +631,9 @@ export function TextChannelView({
           onClose={() => setSearchOpen(false)}
           onResultClick={jumpToMessage}
         />
+      )}
+      {membersOpen && (
+        <MemberListPanel room={room} onClose={() => setMembersOpen(false)} />
       )}
     </div>
   )
