@@ -6,7 +6,11 @@ import {
   type ScreenShareControl,
   screenShareControlSchema,
 } from "@meet/shared"
-import { useEffect, useRef, useState } from "react"
+import type { Participant } from "livekit-client"
+import { useCallback, useEffect, useRef, useState } from "react"
+
+/** Minimal shape `useDataChannel` actually invokes handlers with. */
+type DataChannelMessage = { payload: Uint8Array; from?: Participant }
 
 /**
  * Enforces a single screen share on the stage. When this participant starts
@@ -31,7 +35,11 @@ export function useScreenShareTakeover(): string | undefined {
   // broadcast from an older sharer and must not stop our newer share.
   const myShareStartedAt = useRef(0)
 
-  const { send } = useDataChannel(DataTopic.ScreenShare, (msg) => {
+  // Memoized so useDataChannel's onMessage identity stays stable across
+  // renders — an inline callback here recreates the hook's internal message
+  // observable on every render, which can cascade into a React "Maximum
+  // update depth exceeded" loop under normal data-channel traffic (#294).
+  const handleScreenShare = useCallback((msg: DataChannelMessage) => {
     let parsed: ReturnType<typeof screenShareControlSchema.safeParse>
     try {
       parsed = screenShareControlSchema.safeParse(
@@ -49,7 +57,8 @@ export function useScreenShareTakeover(): string | undefined {
         .setScreenShareEnabled(false)
         .catch(() => undefined)
     }
-  })
+  }, [])
+  const { send } = useDataChannel(DataTopic.ScreenShare, handleScreenShare)
 
   // Announce a takeover on the moment our share turns on (false -> true), not
   // on every render — and only once the capture actually started, so a

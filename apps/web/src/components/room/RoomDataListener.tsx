@@ -14,8 +14,9 @@ import {
   parseParticipantMeta,
   TYPING_STALE_MS,
 } from "@meet/shared"
+import type { DataPublishOptions, Participant } from "livekit-client"
 import { RoomEvent } from "livekit-client"
-import { useEffect } from "react"
+import { useCallback, useEffect, useRef } from "react"
 import { toast } from "react-toastify"
 import { track } from "@/lib/analytics"
 import { roomAuthHeaders } from "@/lib/roomAuth"
@@ -46,11 +47,24 @@ import {
 } from "@/stores/roomData"
 import { claimAgentReplyLatency } from "@/stores/roomTelemetry"
 
+/**
+ * Minimal shape `useDataChannel` actually invokes handlers with — avoids
+ * importing `ReceivedDataMessage` from `@livekit/components-core`, which
+ * isn't a direct dependency of this app (only `@livekit/components-react`
+ * re-exports the hook, not the type).
+ */
+type DataChannelMessage = { payload: Uint8Array; from?: Participant }
+
 /** Always-mounted subscriber: chat and agent activity survive panel toggling. */
 export function RoomDataListener({ slug }: { slug: string }) {
   const room = useRoomContext()
 
-  useDataChannel(DataTopic.Chat, (msg) => {
+  // Every handler below is memoized with `useCallback`: `useDataChannel`
+  // treats its `onMessage` argument as a dependency internally, so a fresh
+  // inline callback on every render tears down and rebuilds its message
+  // observable every render too — which cascades into a React "Maximum
+  // update depth exceeded" loop under normal data-channel traffic (#294).
+  const handleChat = useCallback((msg: DataChannelMessage) => {
     try {
       const raw = JSON.parse(new TextDecoder().decode(msg.payload))
 
@@ -101,9 +115,10 @@ export function RoomDataListener({ slug }: { slug: string }) {
         removeChatMessage(op.data.id, by)
       }
     } catch {}
-  })
+  }, [])
+  useDataChannel(DataTopic.Chat, handleChat)
 
-  useDataChannel(DataTopic.AgentActivity, (msg) => {
+  const handleAgentActivity = useCallback((msg: DataChannelMessage) => {
     try {
       if (!msg.from) return
       const parsed = agentActivityEventSchema.safeParse(
@@ -143,72 +158,85 @@ export function RoomDataListener({ slug }: { slug: string }) {
       }
       return
     } catch {}
-  })
+  }, [])
+  useDataChannel(DataTopic.AgentActivity, handleAgentActivity)
 
   // The bridge has no browser, and rendering Mermaid properly needs one.
   // It addresses ONE client (destinationIdentities — only that client even
   // receives the message, so there is no election and no race) and that
   // client runs the official mermaid-to-excalidraw converter, streaming the
   // element JSON back in chunks under the data channel's size cap.
-  const { send: sendConvert } = useDataChannel(
-    DataTopic.CanvasConvert,
-    (msg) => {
-      if (!msg.from?.identity.startsWith("agent-")) return
-      const requester = msg.from.identity
-      try {
-        const parsed = canvasConvertRequestSchema.safeParse(
-          JSON.parse(new TextDecoder().decode(msg.payload)),
-        )
-        if (!parsed.success) return
-        const request = parsed.data
-        void (async () => {
-          const reply = (payload: Record<string, unknown>) =>
-            sendConvert(new TextEncoder().encode(JSON.stringify(payload)), {
+  //
+  // The handler calls `sendConvert`, which only exists once this same
+  // `useDataChannel` call returns — read through a ref instead of a direct
+  // closure so the callback identity stays stable across renders.
+  const sendConvertRef = useRef<
+    (payload: Uint8Array, options: DataPublishOptions) => Promise<void>
+  >(async () => {})
+  const handleCanvasConvert = useCallback((msg: DataChannelMessage) => {
+    if (!msg.from?.identity.startsWith("agent-")) return
+    const requester = msg.from.identity
+    try {
+      const parsed = canvasConvertRequestSchema.safeParse(
+        JSON.parse(new TextDecoder().decode(msg.payload)),
+      )
+      if (!parsed.success) return
+      const request = parsed.data
+      void (async () => {
+        const reply = (payload: Record<string, unknown>) =>
+          sendConvertRef.current(
+            new TextEncoder().encode(JSON.stringify(payload)),
+            {
               topic: DataTopic.CanvasConvert,
               reliable: true,
               destinationIdentities: [requester],
-            })
-          try {
-            // Lazy: mermaid is a heavy chunk nobody pays for until an agent
-            // actually draws a diagram.
-            const [
-              { parseMermaidToExcalidraw },
-              { convertToExcalidrawElements },
-            ] = await Promise.all([
-              import("@excalidraw/mermaid-to-excalidraw"),
-              import("@excalidraw/excalidraw"),
-            ])
-            const { elements } = await parseMermaidToExcalidraw(request.mermaid)
-            // biome-ignore lint/suspicious/noExplicitAny: opaque skeleton JSON
-            const full = convertToExcalidrawElements(elements as any)
-            const json = JSON.stringify(full)
-            const CHUNK = 10_000
-            const total = Math.max(1, Math.ceil(json.length / CHUNK))
-            for (let seq = 0; seq < total; seq++) {
-              await reply({
-                type: "canvas-convert-result",
-                id: request.id,
-                seq,
-                total,
-                part: json.slice(seq * CHUNK, (seq + 1) * CHUNK),
-              })
-            }
-          } catch (err) {
+            },
+          )
+        try {
+          // Lazy: mermaid is a heavy chunk nobody pays for until an agent
+          // actually draws a diagram.
+          const [
+            { parseMermaidToExcalidraw },
+            { convertToExcalidrawElements },
+          ] = await Promise.all([
+            import("@excalidraw/mermaid-to-excalidraw"),
+            import("@excalidraw/excalidraw"),
+          ])
+          const { elements } = await parseMermaidToExcalidraw(request.mermaid)
+          // biome-ignore lint/suspicious/noExplicitAny: opaque skeleton JSON
+          const full = convertToExcalidrawElements(elements as any)
+          const json = JSON.stringify(full)
+          const CHUNK = 10_000
+          const total = Math.max(1, Math.ceil(json.length / CHUNK))
+          for (let seq = 0; seq < total; seq++) {
             await reply({
-              type: "canvas-convert-error",
+              type: "canvas-convert-result",
               id: request.id,
-              error: ((err as Error).message || "conversion failed").slice(
-                0,
-                480,
-              ),
+              seq,
+              total,
+              part: json.slice(seq * CHUNK, (seq + 1) * CHUNK),
             })
           }
-        })()
-      } catch {}
-    },
+        } catch (err) {
+          await reply({
+            type: "canvas-convert-error",
+            id: request.id,
+            error: ((err as Error).message || "conversion failed").slice(
+              0,
+              480,
+            ),
+          })
+        }
+      })()
+    } catch {}
+  }, [])
+  const { send: sendConvert } = useDataChannel(
+    DataTopic.CanvasConvert,
+    handleCanvasConvert,
   )
+  sendConvertRef.current = sendConvert
 
-  useDataChannel(DataTopic.Doc, (msg) => {
+  const handleDoc = useCallback((msg: DataChannelMessage) => {
     try {
       const parsed = docSyncMessageSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
@@ -225,9 +253,10 @@ export function RoomDataListener({ slug }: { slug: string }) {
         })
       }
     } catch {}
-  })
+  }, [])
+  useDataChannel(DataTopic.Doc, handleDoc)
 
-  useDataChannel(DataTopic.DocPresence, (msg) => {
+  const handleDocPresence = useCallback((msg: DataChannelMessage) => {
     try {
       const parsed = docPresenceSchema.safeParse(
         JSON.parse(new TextDecoder().decode(msg.payload)),
@@ -248,38 +277,43 @@ export function RoomDataListener({ slug }: { slug: string }) {
         upsertDocPresence(presence)
       }
     } catch {}
-  })
+  }, [])
+  useDataChannel(DataTopic.DocPresence, handleDocPresence)
 
-  useDataChannel(DataTopic.Canvas, (msg) => {
-    try {
-      const parsed = canvasDiffSchema.safeParse(
-        JSON.parse(new TextDecoder().decode(msg.payload)),
-      )
-      if (!parsed.success) return
-      // The actual LiveKit sender outranks the payload's claimed one, same
-      // as chat. Own broadcasts already went through the local cache.
-      const sender = msg.from?.identity ?? parsed.data.from
-      if (sender === room.localParticipant.identity) return
-      const won = applyCanvasChanges(parsed.data.changes)
-      if (won.length === 0) return
-      const fromAgent = msg.from
-        ? parseParticipantMeta(msg.from.metadata)?.kind === "agent"
-        : parsed.data.from.startsWith("agent-")
-      const senderName = msg.from
-        ? msg.from.name || msg.from.identity
-        : parsed.data.fromName
-      if (fromAgent) noteAgentDrawing(senderName)
-      if (!$canvasOpen.get()) {
-        $canvasUnseen.set(true)
-        if (fromAgent) {
-          toast.info(`${senderName} is drawing on the whiteboard`, {
-            toastId: "canvas-agent-drawing",
-            onClick: () => openWhiteboard(),
-          })
+  const handleCanvas = useCallback(
+    (msg: DataChannelMessage) => {
+      try {
+        const parsed = canvasDiffSchema.safeParse(
+          JSON.parse(new TextDecoder().decode(msg.payload)),
+        )
+        if (!parsed.success) return
+        // The actual LiveKit sender outranks the payload's claimed one, same
+        // as chat. Own broadcasts already went through the local cache.
+        const sender = msg.from?.identity ?? parsed.data.from
+        if (sender === room.localParticipant.identity) return
+        const won = applyCanvasChanges(parsed.data.changes)
+        if (won.length === 0) return
+        const fromAgent = msg.from
+          ? parseParticipantMeta(msg.from.metadata)?.kind === "agent"
+          : parsed.data.from.startsWith("agent-")
+        const senderName = msg.from
+          ? msg.from.name || msg.from.identity
+          : parsed.data.fromName
+        if (fromAgent) noteAgentDrawing(senderName)
+        if (!$canvasOpen.get()) {
+          $canvasUnseen.set(true)
+          if (fromAgent) {
+            toast.info(`${senderName} is drawing on the whiteboard`, {
+              toastId: "canvas-agent-drawing",
+              onClick: () => openWhiteboard(),
+            })
+          }
         }
-      }
-    } catch {}
-  })
+      } catch {}
+    },
+    [room],
+  )
+  useDataChannel(DataTopic.Canvas, handleCanvas)
 
   // A dropped connection never sends a "left the editor" message, so the
   // cursor and any "typing…" are cleared when the participant itself goes away.
