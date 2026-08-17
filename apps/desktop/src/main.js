@@ -409,6 +409,17 @@ function createMainWindow(url) {
   const readyTimer = setTimeout(finish, STARTUP_READY_TIMEOUT_MS)
   ipcMain.on("workspace-ready", finish)
 
+  win.webContents.on("before-input-event", (event, input) => {
+    const key = input.key?.toLowerCase()
+    const isPreferencesShortcut =
+      (input.meta || input.control) &&
+      !input.alt &&
+      !input.shift &&
+      (key === "," || key === "comma")
+    if (!isPreferencesShortcut) return
+    event.preventDefault()
+    openPreferences()
+  })
   // A server that can't be reached leaves an empty window with no
   // explanation and no way out — the shell has no chrome of its own to
   // report through. Fall back to the connect screen, which can at least say
@@ -464,6 +475,30 @@ function showWorkspace(pathname = "/") {
     mainWindow.show()
     mainWindow.focus()
   }
+}
+
+function dispatchOpenPreferences(win) {
+  if (!win || win.isDestroyed()) return
+  const script =
+    'window.__loopedOpenPreferencesRequested = true; window.dispatchEvent(new Event("looped:open-preferences"))'
+  const run = () => {
+    if (win.isDestroyed()) return
+    void win.webContents
+      .executeJavaScript(script)
+      .catch((err) =>
+        console.warn("couldn't open preferences in workspace:", err),
+      )
+  }
+  if (win.webContents.isLoadingMainFrame()) {
+    win.webContents.once("did-finish-load", run)
+  } else {
+    run()
+  }
+}
+
+function openPreferences() {
+  showWorkspace()
+  if (mainWindow) dispatchOpenPreferences(mainWindow)
 }
 
 /** The instance's channel list, using the shell session's cookies (the
@@ -578,6 +613,11 @@ function rebuildAppMenu(channels = lastChannels) {
             click: () => void checkForUpdatesInteractive(),
           },
           ...updateItems,
+          {
+            label: "Preferences…",
+            accelerator: "CommandOrControl+Comma",
+            click: () => openPreferences(),
+          },
           { type: "separator" },
           {
             label: "Launch at Login",

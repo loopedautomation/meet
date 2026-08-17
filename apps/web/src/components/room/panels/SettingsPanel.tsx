@@ -24,6 +24,7 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { NetworkSection } from "@/components/room/CallHealth"
 import { MicTest, SpeakerTest } from "@/components/room/panels/DeviceTests"
+import { JoinDefaultsSection } from "@/components/settings/JoinDefaultsSection"
 import { Select } from "@/components/ui/Select"
 import { useIsTouchDevice } from "@/hooks/useIsTouchDevice"
 import { useAgentPermissions } from "@/hooks/useRoomSettings"
@@ -42,8 +43,6 @@ import { $incomingVideoOff, setIncomingVideoOff } from "@/stores/incomingVideo"
 import {
   $autoDataSaver,
   $autoGain,
-  $joinCameraOff,
-  $joinMuted,
   $meetingSounds,
   $mirrorSelf,
   $pushToTalk,
@@ -51,8 +50,6 @@ import {
   type SendQuality,
   setAutoDataSaver,
   setAutoGain,
-  setJoinCameraOff,
-  setJoinMuted,
   setMeetingSounds,
   setMirrorSelf,
   setPushToTalk,
@@ -78,8 +75,6 @@ export function SettingsPanel({ slug }: { slug: string }) {
   const pushToTalk = useStore($pushToTalk)
   const sendQuality = useStore($sendQuality)
   const mirrorSelf = useStore($mirrorSelf)
-  const joinMuted = useStore($joinMuted)
-  const joinCameraOff = useStore($joinCameraOff)
   const meetingSounds = useStore($meetingSounds)
   const autoDataSaver = useStore($autoDataSaver)
   const isTouchDevice = useIsTouchDevice()
@@ -215,34 +210,7 @@ export function SettingsPanel({ slug }: { slug: string }) {
         <h3 className="font-medium text-base-content/60 text-xs uppercase tracking-wide">
           Meeting
         </h3>
-        <label className="flex cursor-pointer items-center justify-between gap-4">
-          <span className="flex flex-col">
-            <span className="text-sm">Always join muted</span>
-            <span className="text-base-content/60 text-xs">
-              Saved in this browser and applied to every meeting you join here.
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className="toggle toggle-primary"
-            checked={joinMuted}
-            onChange={(e) => setJoinMuted(e.target.checked)}
-          />
-        </label>
-        <label className="flex cursor-pointer items-center justify-between gap-4">
-          <span className="flex flex-col">
-            <span className="text-sm">Always join with camera off</span>
-            <span className="text-base-content/60 text-xs">
-              Saved in this browser and applied to every meeting you join here.
-            </span>
-          </span>
-          <input
-            type="checkbox"
-            className="toggle toggle-primary"
-            checked={joinCameraOff}
-            onChange={(e) => setJoinCameraOff(e.target.checked)}
-          />
-        </label>
+        <JoinDefaultsSection />
         <label className="flex cursor-pointer items-center justify-between gap-4">
           <span className="flex flex-col">
             <span className="text-sm">Meeting sounds</span>

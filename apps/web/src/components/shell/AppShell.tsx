@@ -1,9 +1,12 @@
 "use client"
 
 import { useStore } from "@nanostores/react"
+import { useRouter } from "next/navigation"
 import { RoomClient } from "@/components/room/RoomClient"
+import { usePreferencesShortcut } from "@/hooks/usePreferencesShortcut"
 import { $activeCall } from "@/stores/activeCall"
 import { $channelRoom } from "@/stores/channelContext"
+import { openSettingsPanel } from "@/stores/panels"
 import { ActiveCallBar } from "./ActiveCallBar"
 import { AppSidebar, type SidebarUser } from "./AppSidebar"
 
@@ -30,6 +33,12 @@ export function AppShell({
   const activeCall = useStore($activeCall)
   const viewedRoom = useStore($channelRoom)
   const viewingCall = activeCall?.room === viewedRoom
+  const router = useRouter()
+
+  usePreferencesShortcut(() => {
+    if (activeCall && viewingCall) openSettingsPanel()
+    else router.push("/settings")
+  })
 
   return (
     <div className="flex min-h-0 flex-1">
