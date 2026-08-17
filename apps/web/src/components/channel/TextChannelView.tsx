@@ -14,11 +14,12 @@ import {
   X,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
-import { useCallback, useEffect, useRef, useState } from "react"
+import { Fragment, useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { ChannelSearchPanel } from "@/components/channel/ChannelSearchPanel"
 import { Markdown } from "@/components/Markdown"
 import { Modal } from "@/components/ui/Modal"
+import { dayLabel, isSameDay } from "@/lib/dayLabel"
 import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
 import { $activeChannelSlug } from "@/stores/activeChannel"
 
@@ -342,151 +343,169 @@ export function TextChannelView({
             </li>
           ) : (
             messages.map((m, i) => {
+              // A separator always breaks up consecutive-sender grouping —
+              // the first message of a new day gets its own full header
+              // even if it's the same sender as the last message of the
+              // previous day, same as Discord/Slack.
+              const daySeparator =
+                i === 0 ||
+                !isSameDay(new Date(messages[i - 1].at), new Date(m.at))
               const grouped =
-                i > 0 && messages[i - 1].from === m.from && !m.replyToId
+                !daySeparator &&
+                i > 0 &&
+                messages[i - 1].from === m.from &&
+                !m.replyToId
               const parent = m.replyToId ? byId.get(m.replyToId) : undefined
               return (
-                <li
-                  key={m.id}
-                  id={`msg-${m.id}`}
-                  className={`group rounded-box transition-colors duration-500 ${grouped ? "mt-0.5" : "mt-3"} ${m.id === highlightedId ? "bg-warning/15 ring-1 ring-warning/40" : ""}`}
-                >
-                  {parent && (
-                    <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
-                      <span className="font-medium">{parent.fromName}</span>:{" "}
-                      {parent.text.slice(0, 80)}
-                    </div>
+                <Fragment key={m.id}>
+                  {daySeparator && (
+                    <li>
+                      <div className="divider my-2 text-base-content/60 text-xs font-medium">
+                        {dayLabel(m.at)}
+                      </div>
+                    </li>
                   )}
-                  {!grouped && (
-                    <div className="text-xs">
-                      <span className="font-medium">{m.fromName}</span>
-                      <span className="ml-2 text-base-content/40">
-                        {new Date(m.at).toLocaleTimeString([], {
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
-                      </span>
-                      {m.editedAt && (
-                        <span className="ml-1 text-base-content/40">
-                          (edited)
+                  <li
+                    id={`msg-${m.id}`}
+                    className={`group rounded-box transition-colors duration-500 ${grouped ? "mt-0.5" : "mt-3"} ${m.id === highlightedId ? "bg-warning/15 ring-1 ring-warning/40" : ""}`}
+                  >
+                    {parent && (
+                      <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
+                        <span className="font-medium">{parent.fromName}</span>:{" "}
+                        {parent.text.slice(0, 80)}
+                      </div>
+                    )}
+                    {!grouped && (
+                      <div className="text-xs">
+                        <span className="font-medium">{m.fromName}</span>
+                        <span className="ml-2 text-base-content/40">
+                          {new Date(m.at).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
                         </span>
-                      )}
-                      {m.pinned && (
-                        <Pin className="ml-1 inline size-3 text-primary" />
-                      )}
-                    </div>
-                  )}
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="min-w-0">
-                      {m.text && <Markdown text={m.text} size="base" />}
-                      {m.attachments?.map((a) =>
-                        a.type.startsWith("image/") ? (
+                        {m.editedAt && (
+                          <span className="ml-1 text-base-content/40">
+                            (edited)
+                          </span>
+                        )}
+                        {m.pinned && (
+                          <Pin className="ml-1 inline size-3 text-primary" />
+                        )}
+                      </div>
+                    )}
+                    <div className="flex items-start justify-between gap-2">
+                      <span className="min-w-0">
+                        {m.text && <Markdown text={m.text} size="base" />}
+                        {m.attachments?.map((a) =>
+                          a.type.startsWith("image/") ? (
+                            <button
+                              key={a.key}
+                              type="button"
+                              className="mt-1 block cursor-zoom-in"
+                              onClick={() =>
+                                setLightbox({
+                                  url: `/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`,
+                                  name: a.name,
+                                })
+                              }
+                            >
+                              <img
+                                src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                                alt={a.name}
+                                className="max-h-64 max-w-full rounded-box"
+                              />
+                            </button>
+                          ) : (
+                            <a
+                              key={a.key}
+                              href={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
+                              className="link mt-1 flex items-center gap-1 text-sm"
+                              download={a.name}
+                            >
+                              <Paperclip className="size-3.5" />
+                              {a.name}
+                              <span className="text-base-content/40 text-xs">
+                                ({Math.max(1, Math.round(a.size / 1024))} KB)
+                              </span>
+                            </a>
+                          ),
+                        )}
+                      </span>
+                      <span className="invisible flex shrink-0 items-center group-hover:visible">
+                        {QUICK_EMOJI.slice(0, 3).map((e) => (
                           <button
-                            key={a.key}
+                            key={e}
                             type="button"
-                            className="mt-1 block cursor-zoom-in"
-                            onClick={() =>
-                              setLightbox({
-                                url: `/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`,
-                                name: a.name,
-                              })
-                            }
+                            className="btn btn-ghost btn-xs px-1"
+                            onClick={() => void react(m, e)}
                           >
-                            <img
-                              src={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                              alt={a.name}
-                              className="max-h-64 max-w-full rounded-box"
-                            />
+                            {e}
                           </button>
-                        ) : (
-                          <a
-                            key={a.key}
-                            href={`/api/channels/${room}/attachments?key=${encodeURIComponent(a.key)}`}
-                            className="link mt-1 flex items-center gap-1 text-sm"
-                            download={a.name}
-                          >
-                            <Paperclip className="size-3.5" />
-                            {a.name}
-                            <span className="text-base-content/40 text-xs">
-                              ({Math.max(1, Math.round(a.size / 1024))} KB)
-                            </span>
-                          </a>
-                        ),
-                      )}
-                    </span>
-                    <span className="invisible flex shrink-0 items-center group-hover:visible">
-                      {QUICK_EMOJI.slice(0, 3).map((e) => (
-                        <button
-                          key={e}
-                          type="button"
-                          className="btn btn-ghost btn-xs px-1"
-                          onClick={() => void react(m, e)}
-                        >
-                          {e}
-                        </button>
-                      ))}
-                      <button
-                        type="button"
-                        className="btn btn-ghost btn-xs px-1"
-                        title="Reply"
-                        onClick={() => {
-                          setReplyTo(m)
-                          setEditing(null)
-                        }}
-                      >
-                        <Reply className="size-3.5" />
-                      </button>
-                      {m.own && (
+                        ))}
                         <button
                           type="button"
                           className="btn btn-ghost btn-xs px-1"
-                          title="Edit"
+                          title="Reply"
                           onClick={() => {
-                            setEditing(m)
-                            setReplyTo(null)
-                            setDraft(m.text)
+                            setReplyTo(m)
+                            setEditing(null)
                           }}
                         >
-                          <Pencil className="size-3.5" />
+                          <Reply className="size-3.5" />
                         </button>
-                      )}
-                      {canModerate && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-xs px-1"
-                          title={m.pinned ? "Unpin" : "Pin"}
-                          onClick={() => void togglePin(m)}
-                        >
-                          <Pin className="size-3.5" />
-                        </button>
-                      )}
-                      {(m.own || canModerate) && (
-                        <button
-                          type="button"
-                          className="btn btn-ghost btn-xs px-1"
-                          title="Delete"
-                          onClick={() => void remove(m)}
-                        >
-                          <Trash2 className="size-3.5" />
-                        </button>
-                      )}
-                    </span>
-                  </div>
-                  {Object.keys(m.reactions).length > 0 && (
-                    <div className="mt-0.5 flex flex-wrap gap-1">
-                      {Object.entries(m.reactions).map(([emoji, r]) => (
-                        <button
-                          key={emoji}
-                          type="button"
-                          className={`badge badge-sm cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
-                          onClick={() => void react(m, emoji)}
-                        >
-                          {emoji} {r.count}
-                        </button>
-                      ))}
+                        {m.own && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs px-1"
+                            title="Edit"
+                            onClick={() => {
+                              setEditing(m)
+                              setReplyTo(null)
+                              setDraft(m.text)
+                            }}
+                          >
+                            <Pencil className="size-3.5" />
+                          </button>
+                        )}
+                        {canModerate && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs px-1"
+                            title={m.pinned ? "Unpin" : "Pin"}
+                            onClick={() => void togglePin(m)}
+                          >
+                            <Pin className="size-3.5" />
+                          </button>
+                        )}
+                        {(m.own || canModerate) && (
+                          <button
+                            type="button"
+                            className="btn btn-ghost btn-xs px-1"
+                            title="Delete"
+                            onClick={() => void remove(m)}
+                          >
+                            <Trash2 className="size-3.5" />
+                          </button>
+                        )}
+                      </span>
                     </div>
-                  )}
-                </li>
+                    {Object.keys(m.reactions).length > 0 && (
+                      <div className="mt-0.5 flex flex-wrap gap-1">
+                        {Object.entries(m.reactions).map(([emoji, r]) => (
+                          <button
+                            key={emoji}
+                            type="button"
+                            className={`badge badge-sm cursor-pointer ${r.mine ? "badge-primary badge-soft" : "badge-ghost"}`}
+                            onClick={() => void react(m, emoji)}
+                          >
+                            {emoji} {r.count}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+                </Fragment>
               )
             })
           )}
