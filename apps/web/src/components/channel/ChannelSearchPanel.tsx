@@ -3,6 +3,7 @@
 import { Search, X } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
 import { Avatar } from "@/components/ui/Avatar"
+import { dayLabel } from "@/lib/dayLabel"
 
 type SearchResult = {
   id: string
@@ -31,21 +32,6 @@ function Snippet({ text }: { text: string }) {
       )}
     </>
   )
-}
-
-function dayLabel(at: number): string {
-  const d = new Date(at)
-  const today = new Date()
-  const sameDay = (a: Date, b: Date) => a.toDateString() === b.toDateString()
-  if (sameDay(d, today)) return "Today"
-  const yesterday = new Date(today)
-  yesterday.setDate(yesterday.getDate() - 1)
-  if (sameDay(d, yesterday)) return "Yesterday"
-  return d.toLocaleDateString([], {
-    month: "short",
-    day: "numeric",
-    year: d.getFullYear() === today.getFullYear() ? undefined : "numeric",
-  })
 }
 
 /**
