@@ -64,6 +64,13 @@
       "when": 1786618542654,
       "tag": "0008_stiff_abomination",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786121347977,
+      "tag": "0009_spicy_saracen",
+      "breakpoints": true
     }
   ]
 }

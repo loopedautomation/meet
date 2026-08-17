@@ -1,9 +1,10 @@
 import { and, asc, eq, getDb, inArray, isNull, schema, uuidv7 } from "@meet/db"
-import { NextResponse } from "next/server"
+import { after, NextResponse } from "next/server"
 import { z } from "zod"
 import { respondAsAgents } from "@/lib/server/agentChat"
 import { authMode } from "@/lib/server/authMode"
 import { canAccessChannel, getChannelByRoomName } from "@/lib/server/channels"
+import { extractFirstUrl, fetchLinkPreview } from "@/lib/server/linkPreview"
 import { notifyMessagePosted } from "@/lib/server/presence"
 import { clientKey, rateLimited } from "@/lib/server/rateLimit"
 import { getMemberUser } from "@/lib/server/session"
@@ -50,6 +51,7 @@ export async function GET(_request: Request, { params }: Params) {
       content: schema.messages.content,
       replyToId: schema.messages.replyToId,
       attachments: schema.messages.attachments,
+      linkPreview: schema.messages.linkPreview,
       pinnedAt: schema.messages.pinnedAt,
       createdAt: schema.messages.createdAt,
       editedAt: schema.messages.editedAt,
@@ -101,6 +103,7 @@ export async function GET(_request: Request, { params }: Params) {
       ...(r.editedAt ? { editedAt: r.editedAt.getTime() } : {}),
       ...(r.replyToId ? { replyToId: r.replyToId } : {}),
       ...(r.attachments ? { attachments: r.attachments } : {}),
+      ...(r.linkPreview ? { linkPreview: r.linkPreview } : {}),
       ...(r.pinnedAt ? { pinned: true } : {}),
       reactions: reactionsFor.get(r.id) ?? {},
       own: r.authorUserId === user.id,
@@ -151,6 +154,24 @@ export async function POST(request: Request, { params }: Params) {
   // Agents that belong to this channel get their turn (DMs always;
   // shared channels on @mention). Never blocks the send.
   void respondAsAgents(channel, body.data.text, senderName)
+  // OG metadata for the message's first link, if any — fetched after the
+  // fact so a slow/unreachable link never delays the send; the client
+  // picks up the result on its next poll. Never blocks, never surfaces an
+  // error to the sender. Scheduled with `after()` rather than a bare
+  // unawaited promise: Next.js can tear down a route handler's request
+  // context (including its patched fetch) once the response is sent, and
+  // `after()` is the supported way to keep doing work past that point.
+  const previewUrl = extractFirstUrl(body.data.text)
+  if (previewUrl) {
+    after(async () => {
+      const preview = await fetchLinkPreview(previewUrl)
+      if (!preview) return
+      await getDb()
+        .update(schema.messages)
+        .set({ linkPreview: preview })
+        .where(eq(schema.messages.id, id))
+    })
+  }
   // Notification fan-out to anyone not actively viewing this channel —
   // never blocks the send on a failure to notify.
   void notifyMessagePosted({
