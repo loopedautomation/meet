@@ -48,15 +48,25 @@ export async function getChannelBySlug(slug: string): Promise<Channel | null> {
   return channel ?? null
 }
 
-/** Whether this member may enter the channel. Public channels are open to
- * every member; private ones require a channel_members row. */
+/** Whether this member may enter the channel. Requires membership on the
+ * channel's own server first — isolation between servers — then, for
+ * public channels, that's enough; private ones also need a
+ * channel_members row. */
 export async function canAccessChannel(
   channel: Channel,
   userId: string,
 ): Promise<boolean> {
   if (channel.archivedAt) return false
+  const db = getDb()
+  const serverMembership = await db.query.memberships.findFirst({
+    where: and(
+      eq(schema.memberships.serverId, channel.serverId),
+      eq(schema.memberships.userId, userId),
+    ),
+  })
+  if (!serverMembership) return false
   if (!channel.isPrivate) return true
-  const row = await getDb().query.channelMembers.findFirst({
+  const row = await db.query.channelMembers.findFirst({
     where: and(
       eq(schema.channelMembers.channelId, channel.id),
       eq(schema.channelMembers.userId, userId),
@@ -66,6 +76,7 @@ export async function canAccessChannel(
 }
 
 export async function createChannel(opts: {
+  serverId: string
   slug: string
   name: string
   kind?: "voice" | "text"
@@ -76,6 +87,7 @@ export async function createChannel(opts: {
   const [channel] = await getDb()
     .insert(schema.channels)
     .values({
+      serverId: opts.serverId,
       publicId: publicId(),
       slug: opts.slug,
       name: opts.name,
@@ -93,10 +105,18 @@ export async function createChannel(opts: {
  * deterministically: the same members always land in the same conversation.
  * Creation is idempotent by construction (unique slug from sorted ids).
  */
-export async function findOrCreateDm(memberIds: string[]): Promise<Channel> {
+export async function findOrCreateDm(
+  serverId: string,
+  memberIds: string[],
+): Promise<Channel> {
   const ids = [...new Set(memberIds)].sort()
   if (ids.length < 2) throw new Error("a DM needs at least two people")
-  const slug = `dm-${createHash("sha256").update(ids.join(":")).digest("hex").slice(0, 16)}`
+  // Server-scoped so the same two people get separate DMs per server they
+  // share, matching every other channel's isolation.
+  const slug = `dm-${createHash("sha256")
+    .update(`${serverId}:${ids.join(":")}`)
+    .digest("hex")
+    .slice(0, 16)}`
   const db = getDb()
   const existing = await db.query.channels.findFirst({
     where: eq(schema.channels.slug, slug),
@@ -106,6 +126,7 @@ export async function findOrCreateDm(memberIds: string[]): Promise<Channel> {
     const [channel] = await tx
       .insert(schema.channels)
       .values({
+        serverId,
         publicId: publicId(),
         slug,
         name: "Direct message",
@@ -134,10 +155,11 @@ export async function findOrCreateDm(memberIds: string[]): Promise<Channel> {
 /** A DM with an agent: you're the only human member; the agent is attached
  * via channel_agents and answers every message. Deterministic like any DM. */
 export async function findOrCreateAgentDm(
+  serverId: string,
   userId: string,
   agentId: string,
 ): Promise<Channel> {
-  const slug = `dm-${createHash("sha256").update(`u:${userId}:a:${agentId}`).digest("hex").slice(0, 16)}`
+  const slug = `dm-${createHash("sha256").update(`s:${serverId}:u:${userId}:a:${agentId}`).digest("hex").slice(0, 16)}`
   const db = getDb()
   const existing = await db.query.channels.findFirst({
     where: eq(schema.channels.slug, slug),
@@ -147,6 +169,7 @@ export async function findOrCreateAgentDm(
     const [channel] = await tx
       .insert(schema.channels)
       .values({
+        serverId,
         publicId: publicId(),
         slug,
         name: "Direct message",
@@ -204,6 +227,7 @@ export type ChannelWithPresence = Channel & {
 /** Channels this member can see, with live occupancy from room_presence
  * (fed by the LiveKit webhook — humans and agents count, services don't). */
 export async function listChannelsForUser(
+  serverId: string,
   userId: string,
 ): Promise<ChannelWithPresence[]> {
   const db = getDb()
@@ -220,7 +244,12 @@ export async function listChannelsForUser(
         eq(schema.channelMembers.userId, userId),
       ),
     )
-    .where(isNull(schema.channels.archivedAt))
+    .where(
+      and(
+        eq(schema.channels.serverId, serverId),
+        isNull(schema.channels.archivedAt),
+      ),
+    )
     .orderBy(asc(schema.channels.position), asc(schema.channels.createdAt))
   const visible = rows.filter(
     (r) => !r.channel.isPrivate || r.memberRow !== null,

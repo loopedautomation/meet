@@ -5,7 +5,7 @@ import { RoomClient } from "@/components/room/RoomClient"
 import { $activeCall } from "@/stores/activeCall"
 import { $channelRoom } from "@/stores/channelContext"
 import { ActiveCallBar } from "./ActiveCallBar"
-import { AppSidebar, type SidebarUser } from "./AppSidebar"
+import { AppSidebar, type ServerSummary, type SidebarUser } from "./AppSidebar"
 
 /**
  * The member app shell: sidebar + main content area. Lives above route
@@ -20,11 +20,16 @@ export function AppShell({
   user,
   serverName,
   isElectron,
+  servers,
+  activeServerId,
   children,
 }: {
   user: SidebarUser
   serverName: string
   isElectron: boolean
+  /** Every server this member belongs to — the switcher rail's data. */
+  servers: ServerSummary[]
+  activeServerId: string | null
   children: React.ReactNode
 }) {
   const activeCall = useStore($activeCall)
@@ -33,7 +38,18 @@ export function AppShell({
 
   return (
     <div className="flex min-h-0 flex-1">
-      <AppSidebar user={user} serverName={serverName} isElectron={isElectron} />
+      <AppSidebar
+        // Remount on server switch — AppSidebar owns client-side state
+        // (loaded channels, the presence SSE connection) that a prop
+        // change alone wouldn't reset, so without this key it keeps
+        // showing the previous server's channels after switching.
+        key={activeServerId}
+        user={user}
+        serverName={serverName}
+        isElectron={isElectron}
+        servers={servers}
+        activeServerId={activeServerId}
+      />
       <main className="relative min-w-0 flex-1 overflow-hidden">
         <div className={activeCall && !viewingCall ? "hidden" : "contents"}>
           {children}

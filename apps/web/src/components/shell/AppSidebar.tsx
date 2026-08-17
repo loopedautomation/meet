@@ -24,6 +24,7 @@ import { markDesktopReady } from "@/stores/desktopReady"
 import { $mobileSidebarOpen } from "@/stores/mobileSidebar"
 import { AgentAssign } from "./AgentAssign"
 import { CreateChannelModal } from "./CreateChannelModal"
+import { CreateServerModal } from "./CreateServerModal"
 import { DmStart } from "./DmStart"
 import { type Presence, ProfileCard } from "./ProfileCard"
 import { SearchBox } from "./SearchBox"
@@ -68,20 +69,34 @@ export type SidebarUser = {
   role: "owner" | "admin" | "member"
 }
 
+export type ServerSummary = {
+  id: string
+  slug: string
+  name: string
+  iconUrl: string | null
+  role: "owner" | "admin" | "member"
+}
+
 /**
  * The persistent app shell sidebar — Discord-style. Lives in the (app)
  * layout so it survives navigation: the presence SSE connection (which
  * also registers this member as online) stays open while moving between
  * channels, DMs, settings and admin. Slow polling covers SSE gaps.
  */
+// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: this is the app shell's root component — the branching is panel/mobile-drawer/resize state that's clearer inline than split across files
 export function AppSidebar({
   user,
   serverName,
   isElectron,
+  servers,
+  activeServerId,
 }: {
   user: SidebarUser
   serverName: string
   isElectron: boolean
+  /** Every server this member belongs to — the switcher rail's data. */
+  servers: ServerSummary[]
+  activeServerId: string | null
 }) {
   const router = useRouter()
   const pathname = usePathname()
@@ -90,6 +105,8 @@ export function AppSidebar({
   const canCreate = user.role !== "member"
   const [channels, setChannels] = useState<ChannelRow[] | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [showCreateServer, setShowCreateServer] = useState(false)
+  const [switching, setSwitching] = useState(false)
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // The shared landing spot for every channel list update, whichever
@@ -102,6 +119,27 @@ export function AppSidebar({
     },
     [isElectron],
   )
+
+  const switchServer = async (serverId: string) => {
+    if (serverId === activeServerId || switching) return
+    setSwitching(true)
+    try {
+      const res = await fetch("/api/servers/active", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ serverId }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        toast.error(data.error ?? "Could not switch servers.")
+        return
+      }
+      router.push("/home")
+      router.refresh()
+    } finally {
+      setSwitching(false)
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -281,27 +319,44 @@ export function AppSidebar({
             )}
           </button>
           <div className="h-px w-8 bg-base-300" />
+          {/* Server switcher — one button per server this member belongs
+              to (Discord-style rail). Clicking a non-active one switches
+              the active server and reloads the shell around it. */}
+          {servers.map((s) => {
+            const isActiveServer = s.id === activeServerId
+            return (
+              <ServerRailButton
+                key={s.id}
+                server={s}
+                active={isActiveServer && panel === "server"}
+                showUnread={
+                  isActiveServer && serverUnread && panel !== "server"
+                }
+                disabled={switching}
+                railButtonClass={railButton}
+                onSelect={() => {
+                  setRailChoice("server")
+                  if (!isActiveServer) void switchServer(s.id)
+                }}
+              />
+            )
+          })}
           <button
             type="button"
-            className={railButton(panel === "server")}
-            title={serverName}
-            onClick={() => setRailChoice("server")}
+            className="flex size-11 items-center justify-center rounded-2xl bg-base-300/60 text-success transition-all hover:rounded-xl hover:bg-success/20"
+            title="Add a server"
+            onClick={() => setShowCreateServer(true)}
           >
-            <span className="font-semibold text-sm">
-              {serverName.slice(0, 2).toUpperCase()}
-            </span>
-            {serverUnread && panel !== "server" && (
-              <span className="absolute top-0 right-0 size-2.5 rounded-full bg-primary ring-2 ring-base-100" />
-            )}
+            <Plus className="size-5" />
           </button>
         </div>
 
         {/* Swappable panel + shared footer. Capped to a fraction of the
-          viewport (not just MAX_PANEL) so a width resized wide on a
-          desktop screen — panelWidth is shared/persisted across every
-          screen size — can't blow the mobile drawer past the viewport
-          it's sliding into; harmless on desktop, where 88vw always
-          exceeds MAX_PANEL anyway. */}
+            viewport (not just MAX_PANEL) so a width resized wide on a
+            desktop screen — panelWidth is shared/persisted across every
+            screen size — can't blow the mobile drawer past the viewport
+            it's sliding into; harmless on desktop, where 88vw always
+            exceeds MAX_PANEL anyway. */}
         <div
           className="relative flex h-full flex-col border-base-300 border-r bg-base-200 md:bg-base-200/40"
           style={{ width: `min(${panelWidth}px, calc(88vw - 4rem))` }}
@@ -539,7 +594,6 @@ export function AppSidebar({
           />
         </div>
       </aside>
-
       <CreateChannelModal
         isOpen={showCreate}
         onClose={() => setShowCreate(false)}
@@ -548,6 +602,55 @@ export function AppSidebar({
           router.push(`/c/${slug}`)
         }}
       />
+      <CreateServerModal
+        isOpen={showCreateServer}
+        onClose={() => setShowCreateServer(false)}
+        onCreated={(defaultChannelSlug) => {
+          router.push(`/c/${defaultChannelSlug}`)
+          router.refresh()
+        }}
+      />
     </>
+  )
+}
+
+function ServerRailButton({
+  server,
+  active,
+  showUnread,
+  disabled,
+  railButtonClass,
+  onSelect,
+}: {
+  server: ServerSummary
+  active: boolean
+  showUnread: boolean
+  disabled: boolean
+  railButtonClass: (active: boolean) => string
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      className={railButtonClass(active)}
+      title={server.name}
+      disabled={disabled}
+      onClick={onSelect}
+    >
+      {server.iconUrl ? (
+        <img
+          src={server.iconUrl}
+          alt=""
+          className="size-full rounded-2xl object-cover"
+        />
+      ) : (
+        <span className="font-semibold text-sm">
+          {server.name.slice(0, 2).toUpperCase()}
+        </span>
+      )}
+      {showUnread && (
+        <span className="absolute top-0 right-0 size-2.5 rounded-full bg-primary ring-2 ring-base-100" />
+      )}
+    </button>
   )
 }

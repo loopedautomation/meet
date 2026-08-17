@@ -28,8 +28,9 @@ export async function GET() {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
+  const serverId = user.serverId
 
   const encoder = new TextEncoder()
   const listener = createPgClient()
@@ -42,7 +43,7 @@ export async function GET() {
       const send = async () => {
         if (closed) return
         try {
-          const channels = await listChannelsForUser(user.id)
+          const channels = await listChannelsForUser(serverId, user.id)
           const payload = channels.map((c) => ({
             slug: c.slug,
             name: c.name,

@@ -1,4 +1,4 @@
-import { eq, getDb, inArray, schema } from "@meet/db"
+import { and, eq, getDb, inArray, schema } from "@meet/db"
 import { NextResponse } from "next/server"
 import { z } from "zod"
 import { authMode } from "@/lib/server/authMode"
@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   if (authMode() === "none")
     return NextResponse.json({ error: "not found" }, { status: 404 })
   const user = await getMemberUser()
-  if (!user)
+  if (!user || !user.serverId)
     return NextResponse.json({ error: "membership required" }, { status: 401 })
   if (rateLimited(`dm-create:${clientKey(request)}`, 30, 10 * 60 * 1000)) {
     return NextResponse.json({ error: "slow down" }, { status: 429 })
@@ -31,7 +31,10 @@ export async function POST(request: Request) {
   // DM an agent: it must be invited to the server first.
   if ("agentId" in body.data) {
     const invited = await getDb().query.serverAgents.findFirst({
-      where: eq(schema.serverAgents.agentId, body.data.agentId),
+      where: and(
+        eq(schema.serverAgents.serverId, user.serverId),
+        eq(schema.serverAgents.agentId, body.data.agentId),
+      ),
     })
     if (!invited) {
       return NextResponse.json(
@@ -39,7 +42,11 @@ export async function POST(request: Request) {
         { status: 404 },
       )
     }
-    const dm = await findOrCreateAgentDm(user.id, body.data.agentId)
+    const dm = await findOrCreateAgentDm(
+      user.serverId,
+      user.id,
+      body.data.agentId,
+    )
     return NextResponse.json({ slug: dm.slug })
   }
   const others = body.data.userIds.filter((id) => id !== user.id)
@@ -49,14 +56,20 @@ export async function POST(request: Request) {
       { status: 400 },
     )
   }
-  // Every participant must be an instance member — a DM can't reach outside.
+  // Every participant must be a member of this same server — a DM can't
+  // reach outside it.
   const memberRows = await getDb()
     .select({ userId: schema.memberships.userId })
     .from(schema.memberships)
-    .where(inArray(schema.memberships.userId, others))
+    .where(
+      and(
+        eq(schema.memberships.serverId, user.serverId),
+        inArray(schema.memberships.userId, others),
+      ),
+    )
   if (memberRows.length !== others.length) {
     return NextResponse.json({ error: "unknown member" }, { status: 400 })
   }
-  const dm = await findOrCreateDm([user.id, ...others])
+  const dm = await findOrCreateDm(user.serverId, [user.id, ...others])
   return NextResponse.json({ slug: dm.slug })
 }

@@ -1,6 +1,6 @@
 {
-  "id": "ffbd2a7f-d847-4010-915e-02b122dbd547",
-  "prevId": "fa7ba5ec-d41a-4376-a20a-9bf504600d09",
+  "id": "09cdd9d7-2c37-475a-8d59-129ea735f108",
+  "prevId": "0d1a3e7d-c303-4dd3-8b01-9f2b2a1e6d1a",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -14,6 +14,12 @@
           "primaryKey": true,
           "notNull": true,
           "default": "gen_random_uuid()"
+        },
+        "server_id": {
+          "name": "server_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
         },
         "token_hash": {
           "name": "token_hash",
@@ -55,6 +61,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "agent_registration_tokens_server_id_servers_id_fk": {
+          "name": "agent_registration_tokens_server_id_servers_id_fk",
+          "tableFrom": "agent_registration_tokens",
+          "tableTo": "servers",
+          "columnsFrom": [
+            "server_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "agent_registration_tokens_created_by_users_id_fk": {
           "name": "agent_registration_tokens_created_by_users_id_fk",
           "tableFrom": "agent_registration_tokens",
@@ -301,6 +320,12 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "server_id": {
+          "name": "server_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "public_id": {
           "name": "public_id",
           "type": "text",
@@ -375,6 +400,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "channels_server_id_servers_id_fk": {
+          "name": "channels_server_id_servers_id_fk",
+          "tableFrom": "channels",
+          "tableTo": "servers",
+          "columnsFrom": [
+            "server_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "channels_created_by_users_id_fk": {
           "name": "channels_created_by_users_id_fk",
           "tableFrom": "channels",
@@ -748,6 +786,12 @@
           "notNull": true,
           "default": "gen_random_uuid()"
         },
+        "server_id": {
+          "name": "server_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "code": {
           "name": "code",
           "type": "text",
@@ -802,6 +846,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "invites_server_id_servers_id_fk": {
+          "name": "invites_server_id_servers_id_fk",
+          "tableFrom": "invites",
+          "tableTo": "servers",
+          "columnsFrom": [
+            "server_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "invites_created_by_users_id_fk": {
           "name": "invites_created_by_users_id_fk",
           "tableFrom": "invites",
@@ -839,10 +896,16 @@
       "name": "memberships",
       "schema": "",
       "columns": {
+        "server_id": {
+          "name": "server_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "user_id": {
           "name": "user_id",
           "type": "uuid",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "role": {
@@ -861,6 +924,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "memberships_server_id_servers_id_fk": {
+          "name": "memberships_server_id_servers_id_fk",
+          "tableFrom": "memberships",
+          "tableTo": "servers",
+          "columnsFrom": [
+            "server_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "memberships_user_id_users_id_fk": {
           "name": "memberships_user_id_users_id_fk",
           "tableFrom": "memberships",
@@ -875,7 +951,15 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "memberships_server_id_user_id_pk": {
+          "name": "memberships_server_id_user_id_pk",
+          "columns": [
+            "server_id",
+            "user_id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
@@ -1199,10 +1283,16 @@
       "name": "server_agents",
       "schema": "",
       "columns": {
+        "server_id": {
+          "name": "server_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
         "agent_id": {
           "name": "agent_id",
           "type": "text",
-          "primaryKey": true,
+          "primaryKey": false,
           "notNull": true
         },
         "name": {
@@ -1227,6 +1317,19 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "server_agents_server_id_servers_id_fk": {
+          "name": "server_agents_server_id_servers_id_fk",
+          "tableFrom": "server_agents",
+          "tableTo": "servers",
+          "columnsFrom": [
+            "server_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "server_agents_added_by_users_id_fk": {
           "name": "server_agents_added_by_users_id_fk",
           "tableFrom": "server_agents",
@@ -1241,10 +1344,109 @@
           "onUpdate": "no action"
         }
       },
-      "compositePrimaryKeys": {},
+      "compositePrimaryKeys": {
+        "server_agents_server_id_agent_id_pk": {
+          "name": "server_agents_server_id_agent_id_pk",
+          "columns": [
+            "server_id",
+            "agent_id"
+          ]
+        }
+      },
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.servers": {
+      "name": "servers",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "slug": {
+          "name": "slug",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "icon_url": {
+          "name": "icon_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "registration": {
+          "name": "registration",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'invite'"
+        },
+        "retention_days": {
+          "name": "retention_days",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_by": {
+          "name": "created_by",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "servers_created_by_users_id_fk": {
+          "name": "servers_created_by_users_id_fk",
+          "tableFrom": "servers",
+          "tableTo": "users",
+          "columnsFrom": [
+            "created_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "servers_slug_unique": {
+          "name": "servers_slug_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "slug"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "servers_registration_check": {
+          "name": "servers_registration_check",
+          "value": "\"servers\".\"registration\" in ('invite', 'open')"
+        }
+      },
       "isRLSEnabled": false
     },
     "public.users": {
