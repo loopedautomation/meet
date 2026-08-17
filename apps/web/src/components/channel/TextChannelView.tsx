@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { toast } from "react-toastify"
 import { ChannelSearchPanel } from "@/components/channel/ChannelSearchPanel"
 import { Markdown } from "@/components/Markdown"
+import { Avatar } from "@/components/ui/Avatar"
 import { Modal } from "@/components/ui/Modal"
 import { isRejoinFresh, readRejoin } from "@/lib/rejoinStore"
 import { $activeChannelSlug } from "@/stores/activeChannel"
@@ -52,6 +53,7 @@ type ChannelMessage = {
   id: string
   from: string
   fromName: string
+  fromAvatar: string | null
   text: string
   at: number
   editedAt?: number
@@ -378,6 +380,16 @@ export function TextChannelView({
                   className={`group relative rounded-box pl-12 transition-colors duration-500 ${grouped ? "mt-0.5" : "mt-3"} ${m.id === highlightedId ? "bg-warning/15 ring-1 ring-warning/40" : ""}`}
                 >
                   <GroupedTimestamp grouped={grouped} at={m.at} />
+                  {!grouped && (
+                    <span className="absolute top-0 left-0">
+                      <Avatar
+                        name={m.fromName}
+                        image={m.fromAvatar}
+                        isAgent={!m.from.startsWith("u_")}
+                        size="md"
+                      />
+                    </span>
+                  )}
                   {parent && (
                     <div className="mb-0.5 border-primary/40 border-l-2 pl-2 text-base-content/50 text-xs">
                       <span className="font-medium">{parent.fromName}</span>:{" "}

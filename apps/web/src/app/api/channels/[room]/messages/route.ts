@@ -56,6 +56,7 @@ export async function GET(_request: Request, { params }: Params) {
       createdAt: schema.messages.createdAt,
       editedAt: schema.messages.editedAt,
       authorName: schema.effectiveUserName,
+      authorAvatar: schema.effectiveUserAvatar,
     })
     .from(schema.messages)
     .leftJoin(schema.users, eq(schema.users.id, schema.messages.authorUserId))
@@ -98,6 +99,7 @@ export async function GET(_request: Request, { params }: Params) {
         ? `u_${r.authorUserId}`
         : (r.authorAgentId ?? "unknown"),
       fromName: r.authorName ?? r.authorAgentId ?? "someone",
+      fromAvatar: r.authorAvatar,
       text: r.content,
       at: r.createdAt.getTime(),
       ...(r.editedAt ? { editedAt: r.editedAt.getTime() } : {}),
