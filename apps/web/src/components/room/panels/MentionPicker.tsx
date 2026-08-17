@@ -3,6 +3,7 @@
 import { useParticipants } from "@livekit/components-react"
 import { parseParticipantMeta } from "@meet/shared"
 import { Bot, User } from "lucide-react"
+import { useMemo } from "react"
 
 export type Mentionable = {
   name: string
@@ -11,24 +12,32 @@ export type Mentionable = {
   agentId?: string
 }
 
-/** Everyone in the call who can be @-mentioned (excludes yourself). */
+/**
+ * Everyone in the call who can be @-mentioned (excludes yourself). Memoized
+ * so callers (e.g. ChatPanel) don't get a new array identity on every render
+ * when the participant list hasn't actually changed.
+ */
 export function useMentionables(): Mentionable[] {
   const participants = useParticipants()
-  return participants
-    .filter((p) => !p.isLocal && (p.name || p.identity))
-    .filter((p) => {
-      const kind = parseParticipantMeta(p.metadata)?.kind
-      return kind !== "service" && kind !== "waiting"
-    })
-    .map((p) => {
-      const meta = parseParticipantMeta(p.metadata)
-      return {
-        name: p.name || p.identity,
-        isAgent: meta?.kind === "agent",
-        agentId:
-          meta?.kind === "agent" ? (meta.agentId ?? "unknown") : undefined,
-      }
-    })
+  return useMemo(
+    () =>
+      participants
+        .filter((p) => !p.isLocal && (p.name || p.identity))
+        .filter((p) => {
+          const kind = parseParticipantMeta(p.metadata)?.kind
+          return kind !== "service" && kind !== "waiting"
+        })
+        .map((p) => {
+          const meta = parseParticipantMeta(p.metadata)
+          return {
+            name: p.name || p.identity,
+            isAgent: meta?.kind === "agent",
+            agentId:
+              meta?.kind === "agent" ? (meta.agentId ?? "unknown") : undefined,
+          }
+        }),
+    [participants],
+  )
 }
 
 /**

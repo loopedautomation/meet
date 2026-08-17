@@ -7,8 +7,12 @@ import {
   describeAgentControl,
   parseParticipantMeta,
 } from "@meet/shared"
-import { useRef } from "react"
+import type { Participant } from "livekit-client"
+import { useCallback, useRef } from "react"
 import { toast } from "react-toastify"
+
+/** Minimal shape `useDataChannel` actually invokes handlers with. */
+type DataChannelMessage = { payload: Uint8Array; from?: Participant }
 
 /**
  * Rapid repeats of the same control on the same agent share one toast slot.
@@ -40,7 +44,11 @@ export function useAgentControlToasts(): void {
   const participantsRef = useRef(participants)
   participantsRef.current = participants
 
-  useDataChannel(DataTopic.AgentControl, (msg) => {
+  // Memoized so useDataChannel's onMessage identity stays stable across
+  // renders — an inline callback here recreates the hook's internal message
+  // observable on every render, which can cascade into a React "Maximum
+  // update depth exceeded" loop under normal data-channel traffic (#294).
+  const handleAgentControl = useCallback((msg: DataChannelMessage) => {
     let parsed: ReturnType<typeof agentControlSchema.safeParse>
     try {
       parsed = agentControlSchema.safeParse(
@@ -68,7 +76,8 @@ export function useAgentControlToasts(): void {
       `agent-control-${control.agentId}-${control.type}`,
       `${control.byName} ${description}`,
     )
-  })
+  }, [])
+  useDataChannel(DataTopic.AgentControl, handleAgentControl)
 }
 
 /**
